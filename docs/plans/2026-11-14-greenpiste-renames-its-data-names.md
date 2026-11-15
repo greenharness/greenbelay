@@ -315,5 +315,7 @@ reads left are the ones the census list names.
   has no outside users; old rows and committed corpus files are read, never
   rewritten.
 - 2026-11-14 — major version 5.0.0: env and config names change.
+- 2026-11-15 — the migration lock is greenpiste's own `flock` helper, moved to `greenpiste-guard::lock`, not `greenharness-slots`': greenpiste takes no `greenharness-*` crate (every part stays optional), and the lock only guards greenpiste's own migration.
+- 2026-11-15 — the greengate Phase 1 reviews found that a provenance payload still in the old directory was skipped once the new root existed; greengate now reads per payload, so Phase 3 needs no ordering constraint on provenance.
 
 <!-- panel: repos=amont-agent,relais,amont,grh,greenharness-skills,dotfiles,decisions adds=contract reviewers=backend,lang:rust,lang:typescript body-sha=2f09c81bd251 -->

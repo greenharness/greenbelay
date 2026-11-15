@@ -60,6 +60,19 @@ pub const PROVENANCE_PRODUCER: &str = "greenpiste";
 /// The prefix of an atomic write's temporary file.
 pub const TEMP_PREFIX: &str = ".greenpiste-tmp-";
 
+/// The lock file of the one-time migration, directly in the config directory
+/// (never inside a root that moves).
+pub const MIGRATE_LOCK_FILE: &str = "greenpiste-migrate.lock";
+
+/// Written when the migration finished; its presence short-circuits every hook.
+pub const MIGRATE_DONE_MARKER: &str = "greenpiste-migrated";
+
+/// Written by the reverse: a hook never migrates forward while it exists.
+pub const MIGRATE_REVERSED_MARKER: &str = "greenpiste-migrate-reversed";
+
+/// Written when a step failed, with the step and what to fix.
+pub const MIGRATE_FAILED_MARKER: &str = "greenpiste-migrate-failed";
+
 /// The git config section every key this tool reads or writes lives under.
 pub const CONFIG_PREFIX: &str = "greenpiste.";
 

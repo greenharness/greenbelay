@@ -393,87 +393,10 @@ fn json_list<'a>(items: impl IntoIterator<Item = &'a String>) -> serde_json::Val
     serde_json::Value::Array(items.into_iter().map(|s| s.as_str().into()).collect())
 }
 
-/// An exclusive lock on the ledger's lock file, held until dropped. Two
-/// `record` calls on one transcript would otherwise both read "not yet
-/// recorded" and append the same reviewers twice.
-pub(crate) struct Lock {
-    _held: std::fs::File,
-}
-
-#[cfg(unix)]
-pub(crate) fn lock(path: &Path) -> std::io::Result<Lock> {
-    use std::os::unix::fs::OpenOptionsExt;
-    use std::os::unix::io::AsRawFd;
-    extern "C" {
-        fn flock(fd: i32, op: i32) -> i32;
-    }
-    const LOCK_EX: i32 = 2;
-    let f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .mode(0o600)
-        .open(path)?;
-    greenpiste_guard::journal::private(path, 0o600);
-    if unsafe { flock(f.as_raw_fd(), LOCK_EX) } != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(Lock { _held: f })
-}
-
-// holds-until: two `record` calls run at once on Windows. No lock is taken
-// there: `File::lock` needs Rust 1.89, above the 1.85 floor, and plan
-// reviews run on unix machines. Ends when the floor reaches 1.89.
-#[cfg(not(unix))]
-pub(crate) fn lock(path: &Path) -> std::io::Result<Lock> {
-    let f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
-    Ok(Lock { _held: f })
-}
+pub(crate) use greenpiste_guard::lock::lock;
 
 /// The longest the PostToolUse hook waits for the ledger lock.
 const HOOK_LOCK_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
-/// Pause between two non-blocking lock attempts.
-const HOOK_LOCK_RETRY: std::time::Duration = std::time::Duration::from_millis(25);
-
-/// Like [`lock`], but takes the lock with `LOCK_NB` and retries for at most
-/// `budget`; `TimedOut` when another process still holds it.
-#[cfg(unix)]
-pub(crate) fn lock_within(path: &Path, budget: std::time::Duration) -> std::io::Result<Lock> {
-    use std::os::unix::fs::OpenOptionsExt;
-    use std::os::unix::io::AsRawFd;
-    extern "C" {
-        fn flock(fd: i32, op: i32) -> i32;
-    }
-    const LOCK_EX_NB: i32 = 2 | 4;
-    let f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .mode(0o600)
-        .open(path)?;
-    greenpiste_guard::journal::private(path, 0o600);
-    let deadline = std::time::Instant::now() + budget;
-    loop {
-        if unsafe { flock(f.as_raw_fd(), LOCK_EX_NB) } == 0 {
-            return Ok(Lock { _held: f });
-        }
-        let e = std::io::Error::last_os_error();
-        if e.kind() != std::io::ErrorKind::WouldBlock {
-            return Err(e);
-        }
-        if std::time::Instant::now() >= deadline {
-            return Err(std::io::ErrorKind::TimedOut.into());
-        }
-        std::thread::sleep(HOOK_LOCK_RETRY);
-    }
-}
-
-// holds-until: see `lock`; no lock is taken off unix, so there is nothing to wait for.
-#[cfg(not(unix))]
-pub(crate) fn lock_within(path: &Path, _budget: std::time::Duration) -> std::io::Result<Lock> {
-    lock(path)
-}
 
 const HOOK_RULE: &str = "plan-review-record";
 
@@ -498,22 +421,23 @@ pub fn on_plan_answered(ev: &greenpiste_guard::payload::PlanAnswered) {
     let Some(plan) = &ev.plan_file else { return };
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let store = prepare_store()?;
-        let held = match lock_within(&store.join(LOCK_FILE), HOOK_LOCK_BUDGET) {
-            Ok(l) => l,
-            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                let sha = std::fs::read_to_string(plan)
-                    .map(|t| crate::plan_text::body_sha(&t))
-                    .unwrap_or_default();
-                let real = plan_review::real(plan);
-                hook_note(
-                    "skipped",
-                    &ev.session,
-                    &format!("{} {}", sha.get(..12).unwrap_or("-"), real.display()),
-                );
-                return Ok(());
-            }
-            Err(e) => return Err(format!("cannot lock the ledger: {e}")),
-        };
+        let held =
+            match greenpiste_guard::lock::lock_within(&store.join(LOCK_FILE), HOOK_LOCK_BUDGET) {
+                Ok(Some(l)) => l,
+                Ok(None) => {
+                    let sha = std::fs::read_to_string(plan)
+                        .map(|t| crate::plan_text::body_sha(&t))
+                        .unwrap_or_default();
+                    let real = plan_review::real(plan);
+                    hook_note(
+                        "skipped",
+                        &ev.session,
+                        &format!("{} {}", sha.get(..12).unwrap_or("-"), real.display()),
+                    );
+                    return Ok(());
+                }
+                Err(e) => return Err(format!("cannot lock the ledger: {e}")),
+            };
         let done = record_locked(&store, plan, ev.transcript.clone(), &[]).map(|_| ());
         drop(held);
         done

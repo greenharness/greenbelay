@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- **greenpiste 5.0.0 migrates this machine's state directories once, under a
+  lock, and never blocks a hook.** The move is reversible with `greenpiste
+  migrate --reverse` (the command arrives in a later change).
+
 ### Changed
 
 - **The state directory, the `tool` record field, the journal and corpus

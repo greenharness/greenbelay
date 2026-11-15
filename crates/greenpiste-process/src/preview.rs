@@ -935,9 +935,10 @@ fn approve(regs: &[Registration], channel: &str) -> bool {
         return fail("the state directory cannot be created");
     }
     let _lock =
-        match crate::review_outcomes::lock_within(&d.join("approvals.lock"), APPROVALS_LOCK_BUDGET)
+        match greenpiste_guard::lock::lock_within(&d.join("approvals.lock"), APPROVALS_LOCK_BUDGET)
         {
-            Ok(lock) => lock,
+            Ok(Some(lock)) => lock,
+            Ok(None) => return fail("the approvals lock was not taken: timed out"),
             Err(why) => return fail(&format!("the approvals lock was not taken: {why}")),
         };
     let mut kept = approvals();
