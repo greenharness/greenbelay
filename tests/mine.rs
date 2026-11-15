@@ -29,7 +29,7 @@ struct Transcript {
 impl Transcript {
     fn new(name: &str) -> Transcript {
         let dir =
-            std::env::temp_dir().join(format!("amont-agent-mine-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-mine-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("projects/p")).expect("scratch dir");
         std::fs::write(dir.join("global"), "").expect("global config");
@@ -183,7 +183,7 @@ fn format_cases_emits_unreviewed_lines_in_the_corpus_format() {
         t.other().other().other().other();
     }
     let out = t.run(&["mine", "--format", "cases"]);
-    assert!(out.starts_with("# amont-agent-cases-v1\n"), "{out}");
+    assert!(out.starts_with("# greenpiste-cases-v1\n"), "{out}");
     let cases: Vec<&str> = out.lines().skip(1).filter(|l| !l.is_empty()).collect();
     assert!(!cases.is_empty(), "no cases emitted:\n{out}");
     for line in &cases {

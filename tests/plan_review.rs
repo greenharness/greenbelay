@@ -63,7 +63,7 @@ fn install_agents(config: &Path) {
 impl World {
     fn new(name: &str) -> World {
         let root = std::env::temp_dir().join(format!(
-            "amont-agent-plan-review-{name}-{}-{:?}",
+            "greenpiste-plan-review-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -226,7 +226,7 @@ impl World {
     fn store(&self) -> PathBuf {
         self.root
             .join("claude")
-            .join("amont-agent")
+            .join("greenpiste")
             .join("plan-review")
     }
 }
@@ -1079,13 +1079,9 @@ fn a_formatted_copy_keeps_its_review() {
         Said::Silent,
         "formatting is not an edit"
     );
-    let journal = std::fs::read_to_string(
-        w.root
-            .join("claude")
-            .join("amont-agent")
-            .join("journal.log"),
-    )
-    .unwrap();
+    let journal =
+        std::fs::read_to_string(w.root.join("claude").join("greenpiste").join("journal.log"))
+            .unwrap();
     let line = journal
         .lines()
         .rfind(|l| l.contains("plan-review-panel"))
@@ -1193,13 +1189,9 @@ fn a_review_bound_before_2_25_still_passes_and_is_journalled() {
         t.review(&w, agent, &at_old(w.block(&plan, None)), Done::Foreground);
     }
     assert_eq!(w.present(&plan, &t), Said::Silent);
-    let journal = std::fs::read_to_string(
-        w.root
-            .join("claude")
-            .join("amont-agent")
-            .join("journal.log"),
-    )
-    .unwrap();
+    let journal =
+        std::fs::read_to_string(w.root.join("claude").join("greenpiste").join("journal.log"))
+            .unwrap();
     let line = journal
         .lines()
         .rfind(|l| l.contains("plan-review-panel"))
@@ -1522,13 +1514,8 @@ fn a_plan_naming_no_file_is_advised_and_still_allowed() {
     let w = World::new("no-paths");
     rust_cli(&w);
     let journal = || {
-        std::fs::read_to_string(
-            w.root
-                .join("claude")
-                .join("amont-agent")
-                .join("journal.log"),
-        )
-        .unwrap()
+        std::fs::read_to_string(w.root.join("claude").join("greenpiste").join("journal.log"))
+            .unwrap()
     };
 
     // Unreviewed: the panel's refusal, with the advice after it.
@@ -1953,7 +1940,7 @@ impl CopyWorld {
             .map(|agent| (agent, "-".to_string()))
             .collect();
         register_entry(
-            &self.w.root.join("claude/amont-agent"),
+            &self.w.root.join("claude/greenpiste"),
             fingerprint.full(),
             &Generation {
                 rules_sha: greenpiste_process::review_brief::sha_of(COPY_RULES.as_bytes()),
@@ -2065,7 +2052,7 @@ fn plan_panel_proposes_a_copy_when_the_asset_is_listed_and_the_hook_enforces() {
     // plan-panel writes no record: the record belongs to a pushed tree.
     let pins =
         c.w.root
-            .join("claude/amont-agent/implementation-review/by-block");
+            .join("claude/greenpiste/implementation-review/by-block");
     let wrote_pin = walk(&pins)
         .iter()
         .any(|p| p.to_string_lossy().contains("/pins/"));

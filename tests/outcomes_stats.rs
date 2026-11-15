@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 fn root(name: &str) -> PathBuf {
-    let r = std::env::temp_dir().join(format!("amont-agent-stats-{name}-{}", std::process::id()));
+    let r = std::env::temp_dir().join(format!("greenpiste-stats-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&r);
-    std::fs::create_dir_all(r.join("claude/amont-agent/plan-review")).unwrap();
-    std::fs::create_dir_all(r.join("claude/amont-agent/implementation-review-outcomes")).unwrap();
+    std::fs::create_dir_all(r.join("claude/greenpiste/plan-review")).unwrap();
+    std::fs::create_dir_all(r.join("claude/greenpiste/implementation-review-outcomes")).unwrap();
     r
 }
 
@@ -22,7 +22,7 @@ fn bin(root: &Path) -> Command {
 
 fn review(role: &str, model: &str, findings: &str) -> String {
     format!(
-        "{{\"schema\":\"amont-agent-review-outcome-v1\",\"role\":\"{role}\",\"model\":\"{model}\",\"findings\":{findings}}}\n"
+        "{{\"schema\":\"greenpiste-review-outcome-v1\",\"role\":\"{role}\",\"model\":\"{model}\",\"findings\":{findings}}}\n"
     )
 }
 
@@ -32,7 +32,7 @@ fn stats_shows_a_seats_cost_from_the_rows_that_carry_it() {
     // Written the way `record` writes them: integer tokens, float seconds.
     let row = |tokens: &str, seconds: &str, findings: &str| {
         format!(
-            "{{\"schema\":\"amont-agent-review-outcome-v1\",\"role\":\"unix\",\"model\":\"m1\",\"tokens\":{tokens},\"seconds\":{seconds},\"findings\":{findings}}}\n"
+            "{{\"schema\":\"greenpiste-review-outcome-v1\",\"role\":\"unix\",\"model\":\"m1\",\"tokens\":{tokens},\"seconds\":{seconds},\"findings\":{findings}}}\n"
         )
     };
     let plan = row(
@@ -45,7 +45,7 @@ fn stats_shows_a_seats_cost_from_the_rows_that_carry_it() {
         r#"[{"severity":"low","disposition":"accepted"}]"#,
     );
     std::fs::write(
-        state_root.join("claude/amont-agent/plan-review/outcomes.jsonl"),
+        state_root.join("claude/greenpiste/plan-review/outcomes.jsonl"),
         plan,
     )
     .unwrap();
@@ -95,15 +95,11 @@ fn stats_gives_a_row_per_role_and_model_and_marks_one_retire_candidate() {
     plan += &review("security", "m1", "[]");
     plan += &review("security", "m2", "[]");
     // A merge row is not a review.
-    plan += "{\"schema\":\"amont-agent-review-merge-v1\",\"role\":\"tui\",\"model\":\"m1\"}\n";
+    plan += "{\"schema\":\"greenpiste-review-merge-v1\",\"role\":\"tui\",\"model\":\"m1\"}\n";
+    std::fs::write(r.join("claude/greenpiste/plan-review/outcomes.jsonl"), plan).unwrap();
     std::fs::write(
-        r.join("claude/amont-agent/plan-review/outcomes.jsonl"),
-        plan,
-    )
-    .unwrap();
-    std::fs::write(
-        r.join("claude/amont-agent/implementation-review-outcomes/outcomes.jsonl"),
-        "{\"schema\":\"amont-agent-impl-review-outcome-v1\",\"model\":\"m1\",\"findings\":[{\"severity\":\"blocking\",\"disposition\":\"fixed\"}]}\n",
+        r.join("claude/greenpiste/implementation-review-outcomes/outcomes.jsonl"),
+        "{\"schema\":\"greenpiste-impl-review-outcome-v1\",\"model\":\"m1\",\"findings\":[{\"severity\":\"blocking\",\"disposition\":\"fixed\"}]}\n",
     )
     .unwrap();
 
@@ -186,7 +182,7 @@ fn record_appends_one_v1_row_and_refuses_a_bad_disposition() {
     let plan = std::fs::canonicalize(&repo).unwrap().join("p.md");
     std::fs::write(&plan, "# p\n").unwrap();
     let plan = plan.to_str().unwrap();
-    let ledger = r.join("claude/amont-agent/implementation-review-outcomes/outcomes.jsonl");
+    let ledger = r.join("claude/greenpiste/implementation-review-outcomes/outcomes.jsonl");
 
     let bad = record(
         &r,
@@ -211,7 +207,7 @@ fn record_appends_one_v1_row_and_refuses_a_bad_disposition() {
     let text = std::fs::read_to_string(&ledger).unwrap();
     assert_eq!(text.lines().count(), 1);
     let row: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
-    assert_eq!(row["schema"], "amont-agent-impl-review-outcome-v1");
+    assert_eq!(row["schema"], "greenpiste-impl-review-outcome-v1");
     assert_eq!(row["round"], 1);
     assert_eq!(row["verdict"], "approve-with-changes");
     assert_eq!(row["model"], "");
@@ -242,7 +238,7 @@ fn fixture(r: &Path) -> (PathBuf, String, String) {
 
 fn ledger_rows(r: &Path) -> Vec<serde_json::Value> {
     std::fs::read_to_string(
-        r.join("claude/amont-agent/implementation-review-outcomes/outcomes.jsonl"),
+        r.join("claude/greenpiste/implementation-review-outcomes/outcomes.jsonl"),
     )
     .unwrap()
     .lines()
@@ -258,7 +254,7 @@ fn the_ledger_lives_outside_the_hook_only_tree() {
     assert!(ok.status.success());
     assert_eq!(ledger_rows(&r).len(), 1);
     assert!(!r
-        .join("claude/amont-agent/implementation-review/outcomes.jsonl")
+        .join("claude/greenpiste/implementation-review/outcomes.jsonl")
         .exists());
 }
 
@@ -328,7 +324,7 @@ fn remember_pass(r: &Path, repo: &Path, tree: &str, verdict: &str) {
     let name = std::fs::canonicalize(repo).unwrap();
     let name = name.file_name().unwrap().to_str().unwrap();
     let dir = r
-        .join("claude/amont-agent/implementation-review/by-tree")
+        .join("claude/greenpiste/implementation-review/by-tree")
         .join(name);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
@@ -385,20 +381,20 @@ fn a_failed_stdin_read_exits_1() {
 
 fn plan_row(role: &str, agent: &str, sha: &str, extra: &str, findings: &str) -> String {
     format!(
-        "{{\"schema\":\"amont-agent-review-outcome-v1\",\"role\":\"{role}\",\"model\":\"m1\",\"agent_id\":\"{agent}\",\"body_sha\":\"{sha}\"{extra},\"findings\":{findings}}}\n"
+        "{{\"schema\":\"greenpiste-review-outcome-v1\",\"role\":\"{role}\",\"model\":\"m1\",\"agent_id\":\"{agent}\",\"body_sha\":\"{sha}\"{extra},\"findings\":{findings}}}\n"
     )
 }
 
 fn merge_row(sha: &str, labels: &str) -> String {
     format!(
-        "{{\"schema\":\"amont-agent-review-merge-v1\",\"body_sha_before\":\"{sha}\",\"applied_labels\":{labels}}}\n"
+        "{{\"schema\":\"greenpiste-review-merge-v1\",\"body_sha_before\":\"{sha}\",\"applied_labels\":{labels}}}\n"
     )
 }
 
 fn stats_text(ledger: &str, name: &str) -> String {
     let r = root(name);
     std::fs::write(
-        r.join("claude/amont-agent/plan-review/outcomes.jsonl"),
+        r.join("claude/greenpiste/plan-review/outcomes.jsonl"),
         ledger,
     )
     .unwrap();
@@ -433,7 +429,7 @@ fn a_merge_of_another_body_does_not_accept_the_finding() {
 fn a_disposition_row_after_the_hook_wins_over_the_derived_value() {
     let disposition = |n: u32, d: &str| {
         format!(
-            "{{\"schema\":\"amont-agent-review-disposition-v1\",\"agent_id\":\"a1\",\"body_sha\":\"s1\",\"role\":\"rust\",\"n\":{n},\"disposition\":\"{d}\"}}\n"
+            "{{\"schema\":\"greenpiste-review-disposition-v1\",\"agent_id\":\"a1\",\"body_sha\":\"s1\",\"role\":\"rust\",\"n\":{n},\"disposition\":\"{d}\"}}\n"
         )
     };
     // rust#1 was merged but then recorded rejected; rust#2 recorded accepted

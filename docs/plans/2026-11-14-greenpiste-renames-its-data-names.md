@@ -215,12 +215,12 @@ dotfile or grh allowance tells an agent to use the old ones.
 
 ## Phases
 
-- [ ] Phase 1 — readers read both: `relais/crates/relais/src/review_outcome.rs`,
+- [x] Phase 1 — readers read both: `relais/crates/relais/src/review_outcome.rs`,
   `relais/crates/relais/src/quiet.rs`,
   `amont/crates/greengate-runtime/src/attest.rs`,
   `amont/crates/greenharness-quiet/src/lib.rs`; relais and greengate
   released and installed here.
-- [ ] Phase 2 — greenpiste writes the new names:
+- [x] Phase 2 — greenpiste writes the new names:
   `amont-agent/crates/greenpiste-guard/src/names.rs`,
   `amont-agent/crates/greenpiste-guard/src/gitconfig.rs`,
   `amont-agent/crates/greenpiste-guard/src/stance.rs`,

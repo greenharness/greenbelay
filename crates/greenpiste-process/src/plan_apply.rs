@@ -5,7 +5,7 @@
 //! The patches come from the session transcript, as `plan-review record`
 //! reads its reviewers; stdin names only the accepted findings. What matches
 //! is written, what does not is listed and left for a person or a subagent,
-//! and one `amont-agent-review-merge-v1` row per call goes to the plan-review
+//! and one `greenpiste-review-merge-v1` row per call goes to the plan-review
 //! ledger. `--check` verifies the remainder afterwards.
 
 use greenpiste_guard::names::BIN;
@@ -31,8 +31,8 @@ usage: ",
     " plan-apply --record-fallback [--transcript <path>] <plan.md>
 
 Apply the Patches that plan-review reviewers returned to the plan, with no
-model, and append one `amont-agent-review-merge-v1` row to
-~/.claude/amont-agent/plan-review/outcomes.jsonl.
+model, and append one `greenpiste-review-merge-v1` row to
+~/.claude/greenpiste/plan-review/outcomes.jsonl.
 
 stdin: a JSON array of the accepted findings, each
   {\"role\": str, \"finding\": int}
@@ -73,7 +73,7 @@ the plan (nothing written), or no transcript holds the reviewer's result;
 "
 );
 
-const MERGE_SCHEMA: &str = "amont-agent-review-merge-v1";
+const MERGE_SCHEMA: &str = greenpiste_guard::names::REVIEW_MERGE_SCHEMA;
 const FALLBACK_AGENT: &str = "general-purpose";
 const APPLY_OPEN: &str = "<<<APPLY ";
 const LINE: usize = 80;
@@ -634,7 +634,9 @@ fn rows(ledger: &Path) -> std::io::Result<Vec<serde_json::Value>> {
 }
 
 fn is_merge(row: &serde_json::Value, plan: &str) -> bool {
-    row.get("schema").and_then(|s| s.as_str()) == Some(MERGE_SCHEMA)
+    row.get("schema")
+        .and_then(|s| s.as_str())
+        .is_some_and(crate::review_outcomes::is_merge_schema)
         && row.get("plan_path").and_then(|p| p.as_str()) == Some(plan)
 }
 
@@ -904,7 +906,9 @@ fn fallback(opts: &Opts, real: &Path, findings: &[Finding]) -> Done {
     // The dedupe key is (schema, agent_id): an agent id names one launch,
     // whichever plan it applied.
     if seen.iter().any(|r| {
-        r.get("schema").and_then(|s| s.as_str()) == Some(MERGE_SCHEMA)
+        r.get("schema")
+            .and_then(|s| s.as_str())
+            .is_some_and(crate::review_outcomes::is_merge_schema)
             && r.get("agent_id").and_then(|a| a.as_str()) == Some(&agent_id)
     }) {
         eprintln!("already recorded the fallback of {agent_id}; nothing written");

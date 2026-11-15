@@ -63,7 +63,7 @@ struct World {
 impl World {
     fn new(name: &str) -> World {
         let root = std::env::temp_dir().join(format!(
-            "amont-agent-clear-{name}-{}-{:?}",
+            "greenpiste-clear-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -186,7 +186,7 @@ impl World {
     }
 
     fn journal(&self) -> Vec<String> {
-        std::fs::read_to_string(self.claude.join("amont-agent/journal.log"))
+        std::fs::read_to_string(self.claude.join("greenpiste/journal.log"))
             .unwrap_or_default()
             .lines()
             .filter(|line| line.contains(" clear-at-boundary "))
@@ -904,7 +904,7 @@ fn a_pending_boundary_missing_from_the_tail_is_lost() {
 fn a_state_file_in_the_text_format_still_reads() {
     let world = World::new("oldstate");
     let transcript = world.transcript("t.jsonl", &turn(TEARDOWN, 250_000));
-    let dir = world.claude.join("amont-agent/clear-at-boundary");
+    let dir = world.claude.join("greenpiste/clear-at-boundary");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("capped"), "turn-1 3\nsome key").unwrap();
     let capped = world.stop("capped", &transcript, json!({}));

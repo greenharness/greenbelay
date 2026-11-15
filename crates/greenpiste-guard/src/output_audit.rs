@@ -692,7 +692,7 @@ mod tests {
     /// A transcript root holding one file per entry of `files`.
     fn roots_with(name: &str, files: &[&[String]]) -> (Roots, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!(
-            "amont-agent-output-audit-{name}-{}",
+            "greenpiste-output-audit-{name}-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&dir); // absent on a first run, which is fine

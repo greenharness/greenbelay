@@ -35,7 +35,7 @@
 
 use std::path::{Path, PathBuf};
 
-pub const HEADER: &str = "# amont-agent-cases-v1";
+pub const HEADER: &str = crate::names::CORPUS_HEADER;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
@@ -595,6 +595,15 @@ mod tests {
         let cases = parse(&text);
         assert_eq!(cases.len(), 1);
         assert_eq!(cases[0].verdict, Verdict::Match);
+    }
+
+    #[test]
+    fn a_corpus_under_either_header_loads() {
+        for header in [HEADER, crate::names::old::CORPUS_HEADER] {
+            let cases = parse(&format!("{header}\nmatch\tgit push | tail -1\n"));
+            assert_eq!(cases.len(), 1, "{header}");
+        }
+        assert_eq!(HEADER, "# greenpiste-cases-v1");
     }
 
     /// An unlabelled case is not evidence. Counting `?` as agreement would let

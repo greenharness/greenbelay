@@ -63,7 +63,7 @@ impl World {
     /// A UI repository whose `main` is on the remote, on a fresh branch.
     fn new(name: &str) -> World {
         let root = std::env::temp_dir().join(format!(
-            "amont-agent-preview-{name}-{}-{:?}",
+            "greenpiste-preview-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -316,8 +316,7 @@ printf '{"branch":"%s","remote":"origin","push_url":"u","pushed":"%s","dst":"ref
     }
 
     fn journal(&self) -> String {
-        std::fs::read_to_string(self.root.join("claude/amont-agent/journal.log"))
-            .unwrap_or_default()
+        std::fs::read_to_string(self.root.join("claude/greenpiste/journal.log")).unwrap_or_default()
     }
 }
 
@@ -1474,7 +1473,7 @@ fn plan_sha(w: &World, plan: &Path) -> String {
 }
 
 fn approved_plans(w: &World) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(w.root.join("claude/amont-agent/plan-approved"))
+    let mut names: Vec<String> = std::fs::read_dir(w.root.join("claude/greenpiste/plan-approved"))
         .map(|d| {
             d.flatten()
                 .map(|e| e.file_name().to_string_lossy().into_owned())
@@ -1715,7 +1714,7 @@ fn an_approval_is_keyed_by_content_not_by_commit() {
 fn an_old_four_field_approval_matches_only_its_own_commit() {
     let w = World::new("bytree-old");
     let first = w.commit("app/routes/home.tsx", "1\n");
-    let dir = w.root.join("claude/amont-agent/previews");
+    let dir = w.root.join("claude/greenpiste/previews");
     std::fs::create_dir_all(&dir).unwrap();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2043,7 +2042,7 @@ fn an_identical_pair_in_a_guide_that_is_not_the_pages_is_not_approved() {
 /// Make the approvals file unwritable: a non-empty directory stands where
 /// the atomic rename would put it.
 fn block_approvals(w: &World) {
-    let blocked = w.root.join("claude/amont-agent/previews/approvals");
+    let blocked = w.root.join("claude/greenpiste/previews/approvals");
     std::fs::create_dir_all(&blocked).unwrap();
     std::fs::write(blocked.join("keep"), "x").unwrap();
 }

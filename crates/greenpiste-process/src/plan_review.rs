@@ -2312,7 +2312,7 @@ mod tests {
     fn fallback_is_cwd_outside_a_repository_and_the_main_checkouts_parent_inside() {
         use super::fallback_root;
         use std::process::Command;
-        let top = std::env::temp_dir().join(format!("amont-agent-fallback-{}", std::process::id()));
+        let top = std::env::temp_dir().join(format!("greenpiste-fallback-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&top); // a leftover of an earlier run, or none
         let plain = top.join("plain");
         let main = top.join("ws").join("main");
@@ -2485,8 +2485,7 @@ mod tests {
 
     #[test]
     fn a_parser_panic_in_the_hook_goes_to_the_person() {
-        let dir =
-            std::env::temp_dir().join(format!("amont-agent-sha-panic-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-sha-panic-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let plan = dir.join("p.md");
         std::fs::write(&plan, PLAN).unwrap();

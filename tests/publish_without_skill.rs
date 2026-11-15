@@ -37,7 +37,7 @@ struct World {
 impl World {
     fn new(name: &str) -> World {
         let root = std::env::temp_dir().join(format!(
-            "amont-agent-pws-{name}-{}-{:?}",
+            "greenpiste-pws-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -131,8 +131,7 @@ impl World {
     }
 
     fn journal(&self) -> String {
-        std::fs::read_to_string(self.root.join("claude/amont-agent/journal.log"))
-            .unwrap_or_default()
+        std::fs::read_to_string(self.root.join("claude/greenpiste/journal.log")).unwrap_or_default()
     }
 }
 

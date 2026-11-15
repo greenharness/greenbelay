@@ -29,7 +29,7 @@ struct World {
 impl World {
     fn new(name: &str) -> World {
         let root = std::env::temp_dir().join(format!(
-            "amont-agent-tree-sha-{name}-{}-{:?}",
+            "greenpiste-tree-sha-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));

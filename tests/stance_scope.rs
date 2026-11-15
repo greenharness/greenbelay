@@ -19,7 +19,7 @@ struct Fixture {
 impl Fixture {
     fn new(name: &str) -> Fixture {
         let dir =
-            std::env::temp_dir().join(format!("amont-agent-scope-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-scope-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("repo")).expect("scratch dir");
         std::fs::write(dir.join("global"), "").expect("global config");
@@ -231,7 +231,7 @@ fn a_file_the_global_config_includes_for_this_repository_is_read() {
     // the `\\?\` prefix a canonicalised Windows path carries, which git's
     // matcher does not read.
     let condition = format!(
-        "includeIf.gitdir:amont-agent-scope-{}-include-if/repo/.path",
+        "includeIf.gitdir:greenpiste-scope-{}-include-if/repo/.path",
         std::process::id()
     );
     f.set("--global", &condition, &extra);

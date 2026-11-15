@@ -13,7 +13,7 @@ struct Scratch(PathBuf);
 impl Scratch {
     fn new(name: &str) -> Scratch {
         let dir =
-            std::env::temp_dir().join(format!("amont-agent-open-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-open-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir); // a stale scratch directory may not exist
         std::fs::create_dir_all(dir.join("docs")).unwrap();
         // The binary reports its working directory as the OS spells it

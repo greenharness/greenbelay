@@ -6,14 +6,14 @@ use std::process::Command;
 
 use serde_json::{json, Value};
 
-const ID: &str = "clear-relay@amont-agent";
+const ID: &str = "clear-relay@greenpiste";
 
 struct Home(PathBuf);
 
 impl Home {
     fn new(name: &str) -> Home {
         let dir =
-            std::env::temp_dir().join(format!("amont-agent-plugin-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-plugin-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir); // a home left by a killed run, if any
         std::fs::create_dir_all(&dir).expect("scratch dir");
         Home(dir)
@@ -25,7 +25,7 @@ impl Home {
         self.0.join("xdg")
     }
     fn marketplace(&self) -> PathBuf {
-        self.state().join("amont-agent").join("claude-marketplace")
+        self.state().join("greenpiste").join("claude-marketplace")
     }
     fn run(&self, args: &[&str]) -> (i32, String, String) {
         let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
@@ -122,7 +122,7 @@ fn write_places_the_plugin_and_twice_gives_one_entry_each() {
         .expect("markets");
     assert_eq!(markets.len(), 1);
     assert_eq!(
-        markets["amont-agent"]["source"],
+        markets["greenpiste"]["source"],
         json!({ "source": "directory", "path": home.marketplace().display().to_string() })
     );
     let enabled = settings["enabledPlugins"].as_object().expect("enabled");
@@ -130,7 +130,7 @@ fn write_places_the_plugin_and_twice_gives_one_entry_each() {
     assert_eq!(enabled[ID], json!(true));
     assert_eq!(
         settings["pluginConfigs"][ID]["options"]["stateDir"],
-        json!(home.state().join("amont-agent").display().to_string())
+        json!(home.state().join("greenpiste").display().to_string())
     );
     assert!(home
         .marketplace()

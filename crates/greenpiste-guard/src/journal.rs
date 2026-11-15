@@ -39,7 +39,7 @@ use crate::ui;
 
 /// First line of the journal. A future format bumps this, and an older reader
 /// sees an empty journal rather than misreading one.
-pub const FORMAT: &str = "amont-agent-v1";
+pub const FORMAT: &str = crate::names::JOURNAL_HEADER;
 
 /// A record must fit in one small write. The excerpt is what gives, because
 /// commands do not fit anyway: measured p50 240 bytes, p95 1,777, max 13 KB.
@@ -739,7 +739,7 @@ mod tests {
     /// and never invents a reason for a record that stated none.
     #[test]
     fn the_tally_reads_what_was_written_and_nothing_else() {
-        let dir = std::env::temp_dir().join(format!("amont-agent-tally-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-tally-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("scratch dir");
         let path = dir.join("journal.log");
@@ -787,11 +787,35 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// A journal written before the rename keeps its old header and is read
+    /// as well as one with the new header.
+    #[test]
+    fn a_journal_under_either_header_is_read() {
+        let dir = std::env::temp_dir().join(format!("greenpiste-headers-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("scratch dir");
+        let now = 2_000_000u64;
+        for header in [
+            crate::names::JOURNAL_HEADER,
+            crate::names::old::JOURNAL_HEADER,
+        ] {
+            let path = dir.join(format!("{header}.log"));
+            let row = format!(
+                "F {} pipe-to-tail deny denied sess repo default x\n",
+                now - 1
+            );
+            fs::write(&path, format!("{header}\n{row}{row}")).expect("write journal");
+            let seen = tally_at(&path, 100_000, now);
+            assert_eq!(seen["pipe-to-tail"].denied, 2, "{header}");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     /// The implementation review's lines count under the buckets the soak
     /// reads: declined pushes by reason, spoken ones by stance.
     #[test]
     fn the_tally_keeps_the_implementation_reviews_reasons_apart() {
-        let dir = std::env::temp_dir().join(format!("amont-agent-tally-ir-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-tally-ir-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("scratch dir");
         let path = dir.join("journal.log");
@@ -825,7 +849,7 @@ mod tests {
     #[test]
     fn a_rules_checked_note_counts_in_no_bucket() {
         let dir =
-            std::env::temp_dir().join(format!("amont-agent-tally-rules-{}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-tally-rules-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir); // a scratch dir that is absent is the normal case
         fs::create_dir_all(&dir).expect("scratch dir");
         let path = dir.join("journal.log");
@@ -852,7 +876,7 @@ mod tests {
     #[test]
     fn a_candidates_checked_note_counts_in_no_bucket() {
         let dir = std::env::temp_dir().join(format!(
-            "amont-agent-tally-candidates-{}",
+            "greenpiste-tally-candidates-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&dir); // a scratch dir that is absent is the normal case
@@ -894,7 +918,7 @@ mod tests {
             arm_of_line("F 1 r observe watched sess repo default arm=shadow x"),
             Arm::Shadow
         );
-        let dir = std::env::temp_dir().join(format!("amont-agent-arm-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-arm-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("scratch dir");
         let path = dir.join("journal.log");
@@ -1090,7 +1114,7 @@ mod tests {
     #[test]
     fn the_journal_is_not_world_readable() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("amont-agent-mode-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-mode-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
@@ -1122,7 +1146,7 @@ mod tests {
     }
 
     fn scratch(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("amont-agent-{tag}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-{tag}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("scratch dir");
         dir

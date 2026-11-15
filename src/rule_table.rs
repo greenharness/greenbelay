@@ -134,7 +134,8 @@ mod tests {
             let text = corpus::embedded(rule.id)
                 .unwrap_or_else(|| panic!("rule `{}` has no entry in EMBEDDED", rule.id));
             assert!(
-                text.starts_with(corpus::HEADER),
+                text.starts_with(corpus::HEADER)
+                    || text.starts_with(greenpiste_guard::names::old::CORPUS_HEADER),
                 "embedded corpus for `{}` lacks the header",
                 rule.id
             );

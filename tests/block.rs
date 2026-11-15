@@ -193,7 +193,7 @@ impl Scratch {
     /// one in a subdirectory and one at the root.
     fn new(name: &str) -> Scratch {
         let root =
-            std::env::temp_dir().join(format!("amont-agent-block-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-block-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root); // a leftover scratch dir from an earlier run; absence is the goal
         let repo = root.join("repo");
         std::fs::create_dir_all(repo.join("sub")).unwrap();
@@ -382,17 +382,15 @@ const REVOKED_FP: &str = "bbbbbbbbbbbb111111111111111111111111111111111111111111
 
 impl Registry {
     fn new(name: &str) -> Registry {
-        let config = std::env::temp_dir().join(format!(
-            "amont-agent-registry-{name}-{}",
-            std::process::id()
-        ));
+        let config =
+            std::env::temp_dir().join(format!("greenpiste-registry-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&config); // a leftover dir from an earlier run; absence is the goal
         std::fs::create_dir_all(&config).unwrap();
         Registry { config }
     }
 
     fn base(&self) -> PathBuf {
-        self.config.join("amont-agent")
+        self.config.join("greenpiste")
     }
 
     fn register(&self, fingerprint: &str, roles: &[&str], repo: &str, commit: &str) {

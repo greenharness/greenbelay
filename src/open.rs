@@ -210,7 +210,7 @@ fn capture_file() -> Result<(std::fs::File, PathBuf), OpenError> {
     let mut last = None;
     for attempt in 0..CAPTURE_ATTEMPTS {
         let path = std::env::temp_dir().join(format!(
-            "amont-agent-open-{}-{stamp}-{attempt}.err",
+            "greenpiste-open-{}-{stamp}-{attempt}.err",
             std::process::id()
         ));
         let mut options = std::fs::OpenOptions::new();

@@ -31,7 +31,7 @@ fn patches(list: &[(u32, &str, &str)]) -> String {
 impl World {
     fn new(name: &str) -> World {
         let root = std::env::temp_dir().join(format!(
-            "amont-agent-plan-apply-{name}-{}",
+            "greenpiste-plan-apply-{name}-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);
@@ -182,7 +182,7 @@ impl World {
     fn rows(&self) -> Vec<serde_json::Value> {
         std::fs::read_to_string(
             self.root
-                .join("claude/amont-agent/plan-review/outcomes.jsonl"),
+                .join("claude/greenpiste/plan-review/outcomes.jsonl"),
         )
         .unwrap_or_default()
         .lines()
@@ -219,7 +219,7 @@ fn a_unique_match_applies_and_writes_one_command_row() {
     assert!(!w.text().contains("alpha beta"));
     let rows = w.rows();
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0]["schema"], "amont-agent-review-merge-v1");
+    assert_eq!(rows[0]["schema"], "greenpiste-review-merge-v1");
     assert_eq!(rows[0]["mode"], "command");
     assert_eq!(rows[0]["applied"], 1);
     assert_eq!(rows[0]["accepted"], 1);
@@ -581,11 +581,11 @@ fn record_fallback_without_a_launch_exits_one() {
 fn merge_rows_do_not_enter_the_review_dedupe_set() {
     let mut w = World::new("dedupe");
     w.review("backend", "a1", &patches(&[(1, "alpha beta", "ALPHA")]));
-    let store = w.root.join("claude/amont-agent/plan-review");
+    let store = w.root.join("claude/greenpiste/plan-review");
     std::fs::create_dir_all(&store).unwrap();
     std::fs::write(
         store.join("outcomes.jsonl"),
-        "{\"schema\":\"amont-agent-review-merge-v1\",\"agent_id\":\"a1\",\"mode\":\"subagent\"}\n",
+        "{\"schema\":\"greenpiste-review-merge-v1\",\"agent_id\":\"a1\",\"mode\":\"subagent\"}\n",
     )
     .unwrap();
     let t = w.transcript();

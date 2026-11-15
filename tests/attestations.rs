@@ -16,15 +16,15 @@ struct World(PathBuf);
 impl World {
     fn new(name: &str) -> World {
         let dir =
-            std::env::temp_dir().join(format!("amont-agent-att-e2e-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-att-e2e-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
-        for d in ["claude/amont-agent/attestations", "home", "root", "work"] {
+        for d in ["claude/greenpiste/attestations", "home", "root", "work"] {
             fs::create_dir_all(dir.join(d)).unwrap();
         }
         World(dir)
     }
     fn state(&self) -> PathBuf {
-        self.0.join("claude/amont-agent")
+        self.0.join("claude/greenpiste")
     }
     fn store(&self) -> PathBuf {
         self.state().join("attestations")

@@ -30,7 +30,7 @@ use std::process::Command;
 /// regression test that only sometimes meets the condition it guards is a
 /// coin, not a test.
 fn big_transcript() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("amont-agent-sigpipe-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("greenpiste-sigpipe-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("scratch dir");
     let mut out = String::new();

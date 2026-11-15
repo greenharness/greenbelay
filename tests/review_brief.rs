@@ -6,7 +6,7 @@ use std::process::{Command, Output};
 
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "amont-agent-review-brief-{name}-{}-{:?}",
+        "greenpiste-review-brief-{name}-{}-{:?}",
         std::process::id(),
         std::thread::current().id()
     ));
@@ -1006,7 +1006,7 @@ fn an_interdiff_from_another_head_than_the_last_pass_is_refused() {
     let key = greenpiste_guard::sha256::hex(&greenpiste_guard::sha256::sha256(b"refs/heads/feat"));
     let dir = bin
         .join("config")
-        .join("amont-agent")
+        .join("greenpiste")
         .join("implementation-review")
         .join("by-branch")
         .join(&name)
@@ -1414,7 +1414,7 @@ impl PinWorld {
         .full()
         .to_string();
         greenpiste_process::block_registry::register_entry(
-            &bin.join("config/amont-agent"),
+            &bin.join("config/greenpiste"),
             &fingerprint,
             &greenpiste_process::block_registry::Generation {
                 rules_sha: "c".repeat(64),
@@ -1484,7 +1484,7 @@ impl PinWorld {
     fn recorded(&self) -> Option<greenpiste_process::block_registry::PinRecord> {
         let tree = greenpiste_process::content_id::content_id(&self.repo, "HEAD").unwrap();
         greenpiste_process::block_registry::read_pin(
-            &self.bin.join("config/amont-agent"),
+            &self.bin.join("config/greenpiste"),
             &self.fingerprint,
             &tree,
         )

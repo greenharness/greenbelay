@@ -4,6 +4,11 @@
 
 ### Changed
 
+- **The state directory, the `tool` record field, the journal and corpus
+  headers, the review schemas, the temp-file prefix and the plugin
+  marketplace id are now `greenpiste`.** Old journal rows, review rows and
+  the committed `.cases` files are still read; 5.0.0 moves this machine's
+  state.
 - **Environment variables are `GREENPISTE_*` and git config keys
   `greenpiste.*`** (ADR-0068). `AMONT_AGENT_OFF`, `AMONT_AGENT_PLAN_ROOT`
   and the other `AMONT_AGENT_*` variables, and every `amont.agent.*` key, are

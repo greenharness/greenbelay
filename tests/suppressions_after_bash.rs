@@ -28,7 +28,7 @@ fn git(dir: &Path, args: &[&str]) {
 impl World {
     fn new(name: &str) -> World {
         let root =
-            std::env::temp_dir().join(format!("amont-agent-sab-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-sab-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root); // a leftover from an earlier run may or may not exist
         let repo = root.join("repo");
         std::fs::create_dir_all(repo.join("src")).expect("scratch repo");

@@ -357,7 +357,7 @@ mod tests {
     fn the_dry_run_asks_the_binary_the_clause_names() {
         // A program that exists nowhere: were the dry-run to spawn whichever
         // gate is on PATH instead, this would answer from that binary.
-        let program = "amont-agent-test-no-such-gate";
+        let program = "greenpiste-test-no-such-gate";
         let dir = std::env::temp_dir();
         assert_eq!(
             dry_run(program, &dir, None),
@@ -486,7 +486,7 @@ mod tests {
 
     #[test]
     fn a_receipt_is_read_and_filtered_by_branch_and_time() {
-        let dir = std::env::temp_dir().join(format!("amont-agent-receipts-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-receipts-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let write = |name: &str, started: i64, branch: &str| {

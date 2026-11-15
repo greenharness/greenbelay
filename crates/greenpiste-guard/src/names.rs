@@ -5,10 +5,7 @@
 //! Messages, usage text, error prefixes, `--version` lines, command hints and
 //! the hook decision prefix are built from these, never from a literal: a
 //! later name is one change here. The names test (`tests/names.rs`) fails on a
-//! literal `amont-agent` in any other Rust string, except the data names the
-//! tool still reads and writes (plan 3b-2): the `~/.claude/amont-agent/`
-//! config directory, the `amont-agent-*` schema strings and temp-file
-//! prefixes, and the `"tool":"amont-agent"` record field.
+//! literal `amont-agent` in any other Rust string.
 //!
 //! In a format string, name the constant inline: `eprintln!("{BIN}: …")`.
 //! For a `&'static str` built at compile time, use the [`bin!`] macro with
@@ -32,13 +29,36 @@ pub const BIN: &str = bin!();
 /// The binary's old name, still installed as an alias (a copy).
 pub const ALIAS: &str = "amont-agent";
 
-/// The state and config directory segment (`~/.claude/amont-agent/`) and the
-/// plugin marketplace id; plan 3b-2 renames it.
-pub const DATA_DIR: &str = "amont-agent";
+/// The state and config directory segment (`~/.claude/greenpiste/`) and the
+/// plugin marketplace id.
+pub const DATA_DIR: &str = "greenpiste";
 
-/// The `tool` field value of the records other programs read; plan 3b-2
-/// renames it.
-pub const RECORD_TOOL: &str = "amont-agent";
+/// The `tool` field value of the records other programs read.
+pub const RECORD_TOOL: &str = "greenpiste";
+
+/// The header line of a journal file.
+pub const JOURNAL_HEADER: &str = "greenpiste-v1";
+
+/// The header line of a corpus (`.cases`) file.
+pub const CORPUS_HEADER: &str = "# greenpiste-cases-v1";
+
+/// The schema of a review-outcome row.
+pub const REVIEW_OUTCOME_SCHEMA: &str = "greenpiste-review-outcome-v1";
+
+/// The schema of a review-merge row.
+pub const REVIEW_MERGE_SCHEMA: &str = "greenpiste-review-merge-v1";
+
+/// The schema of a review-disposition row.
+pub const REVIEW_DISPOSITION_SCHEMA: &str = "greenpiste-review-disposition-v1";
+
+/// The schema of an implementation-review outcome row.
+pub const IMPL_REVIEW_OUTCOME_SCHEMA: &str = "greenpiste-impl-review-outcome-v1";
+
+/// The word naming this tool on the `producer` line of a provenance record.
+pub const PROVENANCE_PRODUCER: &str = "greenpiste";
+
+/// The prefix of an atomic write's temporary file.
+pub const TEMP_PREFIX: &str = ".greenpiste-tmp-";
 
 /// The git config section every key this tool reads or writes lives under.
 pub const CONFIG_PREFIX: &str = "greenpiste.";
@@ -72,14 +92,45 @@ pub fn config_pattern(rest: &str) -> String {
     format!("^{}{rest}", CONFIG_PREFIX.replace('.', "\\."))
 }
 
-/// The names the tool had before it was renamed. Read only by the migration
-/// and the pre-migration fallback; removed at the census.
+/// The names the tool had before it was renamed. Read by the readers (old
+/// rows and committed corpus files stay readable) and by the later migration;
+/// removed at the programme census.
 pub mod old {
     /// The old git config prefix.
     pub const CONFIG_PREFIX: &str = "amont.agent.";
 
     /// The old environment-variable prefix.
     pub const ENV_PREFIX: &str = "AMONT_AGENT_";
+
+    /// The old state and config directory segment and marketplace id.
+    pub const DATA_DIR: &str = "amont-agent";
+
+    /// The old `tool` field value of records.
+    pub const RECORD_TOOL: &str = "amont-agent";
+
+    /// The old journal header.
+    pub const JOURNAL_HEADER: &str = "amont-agent-v1";
+
+    /// The old corpus header.
+    pub const CORPUS_HEADER: &str = "# amont-agent-cases-v1";
+
+    /// The old review-outcome schema.
+    pub const REVIEW_OUTCOME_SCHEMA: &str = "amont-agent-review-outcome-v1";
+
+    /// The old review-merge schema.
+    pub const REVIEW_MERGE_SCHEMA: &str = "amont-agent-review-merge-v1";
+
+    /// The old review-disposition schema.
+    pub const REVIEW_DISPOSITION_SCHEMA: &str = "amont-agent-review-disposition-v1";
+
+    /// The old implementation-review outcome schema.
+    pub const IMPL_REVIEW_OUTCOME_SCHEMA: &str = "amont-agent-impl-review-outcome-v1";
+
+    /// The old provenance producer word.
+    pub const PROVENANCE_PRODUCER: &str = "amont-agent";
+
+    /// The old atomic temp-file prefix.
+    pub const TEMP_PREFIX: &str = ".amont-agent-tmp-";
 }
 
 fn strip_exe(name: &str) -> &str {
@@ -144,5 +195,25 @@ mod tests {
         ] {
             assert!(!is_ours_program(program), "{program}");
         }
+    }
+
+    #[test]
+    fn old_names_are_the_previous_literals() {
+        assert_eq!(old::DATA_DIR, "amont-agent");
+        assert_eq!(old::RECORD_TOOL, "amont-agent");
+        assert_eq!(old::JOURNAL_HEADER, "amont-agent-v1");
+        assert_eq!(old::CORPUS_HEADER, "# amont-agent-cases-v1");
+        assert_eq!(old::REVIEW_OUTCOME_SCHEMA, "amont-agent-review-outcome-v1");
+        assert_eq!(old::REVIEW_MERGE_SCHEMA, "amont-agent-review-merge-v1");
+        assert_eq!(
+            old::REVIEW_DISPOSITION_SCHEMA,
+            "amont-agent-review-disposition-v1"
+        );
+        assert_eq!(
+            old::IMPL_REVIEW_OUTCOME_SCHEMA,
+            "amont-agent-impl-review-outcome-v1"
+        );
+        assert_eq!(old::PROVENANCE_PRODUCER, "amont-agent");
+        assert_eq!(old::TEMP_PREFIX, ".amont-agent-tmp-");
     }
 }

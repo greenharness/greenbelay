@@ -107,8 +107,9 @@ pub fn payload(r: &Record) -> String {
         ));
     }
     out.push_str(&format!(
-        concat!("preview {}\nproducer amont-agent {}\n"),
+        "preview {}\nproducer {} {}\n",
         r.preview.word(),
+        greenpiste_guard::names::PROVENANCE_PRODUCER,
         r.version
     ));
     out
@@ -296,7 +297,7 @@ mod tests {
     fn payload_lines_are_in_order() {
         assert_eq!(
             payload(&rec(Some("p0"))),
-            "greengate-provenance-v1\ncommit c0\ntree t0\npatch p0\nplan docs/plans/p.md s0\nreview by-patch k1\npreview not-required\nproducer amont-agent 1.2.3\n"
+            "greengate-provenance-v1\ncommit c0\ntree t0\npatch p0\nplan docs/plans/p.md s0\nreview by-patch k1\npreview not-required\nproducer greenpiste 1.2.3\n"
         );
     }
 
@@ -334,7 +335,7 @@ mod tests {
         };
         assert_eq!(
             payload(&record),
-            "greengate-provenance-v1\ncommit c0\ntree t0\npatch p0\nplan docs/plans/p.md s0\nreview by-patch k1\ncode-review backend reviewed t0\ncode-review lang:rust carried t9\npreview not-required\nproducer amont-agent 1.2.3\n"
+            "greengate-provenance-v1\ncommit c0\ntree t0\npatch p0\nplan docs/plans/p.md s0\nreview by-patch k1\ncode-review backend reviewed t0\ncode-review lang:rust carried t9\npreview not-required\nproducer greenpiste 1.2.3\n"
         );
     }
 

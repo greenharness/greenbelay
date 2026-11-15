@@ -99,7 +99,7 @@ async function logFile($: Engine, relayer: Relayer, sessionId: string): Promise<
   const base =
     relayer.stateDir !== ''
       ? relayer.stateDir
-      : `${(await $.env.get('HOME')) ?? ''}/.local/state/amont-agent`
+      : `${(await $.env.get('HOME')) ?? ''}/.local/state/greenpiste`
 
   return `${base}/clear-relay/${sessionId}.jsonl`
 }

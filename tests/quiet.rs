@@ -19,7 +19,7 @@ const MANIFEST_PIN: &str = "a00c12dd56c47d7368f00b6cc4853832cf600cfa04fd90882fcb
 fn scratch(name: &str) -> PathBuf {
     static N: AtomicU32 = AtomicU32::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "amont-agent-quiet-{}-{}-{name}",
+        "greenpiste-quiet-{}-{}-{name}",
         std::process::id(),
         N.fetch_add(1, Ordering::SeqCst)
     ));
@@ -29,7 +29,7 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 fn logs(home: &Path) -> PathBuf {
-    home.join("amont-agent").join("logs")
+    home.join("greenpiste").join("logs")
 }
 
 fn active(home: &Path) -> PathBuf {
@@ -61,7 +61,7 @@ fn now_ms() -> u64 {
 
 fn plant(dir: &Path, name: &str, pid: u64, ended: Option<u64>) -> PathBuf {
     std::fs::create_dir_all(dir).unwrap();
-    let mut v = serde_json::json!({"v":1,"tool":"amont-agent","session":null,"check":"x",
+    let mut v = serde_json::json!({"v":1,"tool":"greenpiste","session":null,"check":"x",
         "repo":"/","log":"/x.log.tmp","pid":pid,"started":1});
     if let Some(e) = ended {
         v["exit"] = serde_json::json!(0);
@@ -447,7 +447,7 @@ mod injected {
     fn a_log_dir_that_cannot_be_created_still_runs_the_command() {
         let home = scratch("nodir");
         // `amont-agent` is a file, so `amont-agent/logs` cannot exist.
-        std::fs::write(home.join("amont-agent"), "not a dir").unwrap();
+        std::fs::write(home.join("greenpiste"), "not a dir").unwrap();
         let out = quiet(&home, &["--", "sh", "-c", "echo boom; exit 3"]);
         assert_eq!(out.status.code(), Some(3));
         let stdout = text(&out.stdout);
@@ -520,7 +520,7 @@ fn an_active_entry_lives_through_the_run_and_stays_after_it() {
     let path = wait_for_entry(&dir);
     let v = read_entry(&path);
     assert_eq!(v["v"], 1);
-    assert_eq!(v["tool"], "amont-agent");
+    assert_eq!(v["tool"], "greenpiste");
     assert_eq!(v["session"], "sess-1");
     assert_eq!(v["check"], "sleep");
     assert!(v["repo"]
@@ -554,7 +554,10 @@ fn a_killed_writers_temp_file_is_swept_once_old() {
     let home = scratch("tmp-sweep");
     let dir = active(&home);
     std::fs::create_dir_all(&dir).unwrap();
-    let stale = dir.join(".amont-agent-tmp-1-1-0.json");
+    // Deliberately the old prefix: the sweep lives in the amont-quiet crate, which
+    // knows only that one.
+    let old_prefix = greenpiste_guard::names::old::TEMP_PREFIX;
+    let stale = dir.join(format!("{old_prefix}1-1-0.json"));
     std::fs::write(&stale, "{").unwrap();
     let old = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
     std::fs::File::options()
@@ -563,7 +566,7 @@ fn a_killed_writers_temp_file_is_swept_once_old() {
         .unwrap()
         .set_modified(old)
         .unwrap();
-    let fresh = dir.join(".amont-agent-tmp-2-2-0.json");
+    let fresh = dir.join(format!("{old_prefix}2-2-0.json"));
     std::fs::write(&fresh, "{").unwrap();
     let out = quiet_cmd(&home, &["--", "true"]).output().unwrap();
     assert!(out.status.success());

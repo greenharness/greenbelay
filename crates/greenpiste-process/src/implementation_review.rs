@@ -2609,7 +2609,7 @@ pub fn names_store(word: &str) -> bool {
 const HOOK_ONLY_DIRS: &[&str] = &[RULE_ID, "provenance"];
 
 pub const GUARD_REASON: &str =
-    "files under ~/.claude/amont-agent/implementation-review/ and ~/.claude/amont-agent/provenance/ are written by the hook alone: the pass files from a completed review in this session's transcript or the person's Overrule, the provenance records from a push the hook passed.";
+    "files under ~/.claude/greenpiste/implementation-review/ and ~/.claude/greenpiste/provenance/ are written by the hook alone: the pass files from a completed review in this session's transcript or the person's Overrule, the provenance records from a push the hook passed.";
 pub const GUARD_REMEDY: &str =
     "Run the review (worktree-task F4b) or ask the person; never write the record by hand.";
 
@@ -3058,11 +3058,11 @@ mod tests {
     #[test]
     fn a_read_of_the_store_passes_and_a_write_does_not() {
         use greenpiste_guard::shell::lex;
-        let store = "~/.claude/amont-agent/implementation-review/by-tree/r/x.json";
+        let store = "~/.claude/greenpiste/implementation-review/by-tree/r/x.json";
         for read in [
             format!("ls {store}"),
             format!("cat {store} | head"),
-            "find ~/.claude/amont-agent/implementation-review -type f".to_string(),
+            "find ~/.claude/greenpiste/implementation-review -type f".to_string(),
             format!("grep verdict {store}"),
         ] {
             assert!(store_clause(&lex(&read)).is_none(), "{read}");
@@ -3083,17 +3083,17 @@ mod tests {
     #[test]
     fn a_word_names_the_store_by_its_directory() {
         assert!(names_store(
-            "/Users/me/.claude/amont-agent/implementation-review/by-tree/r/x.json"
+            "/Users/me/.claude/greenpiste/implementation-review/by-tree/r/x.json"
         ));
-        assert!(names_store("~/.claude/amont-agent/implementation-review"));
+        assert!(names_store("~/.claude/greenpiste/implementation-review"));
         assert!(names_store(
-            "C:\\Users\\me\\.claude\\amont-agent\\implementation-review\\by-tree\\r\\x.json"
+            "C:\\Users\\me\\.claude\\greenpiste\\implementation-review\\by-tree\\r\\x.json"
         ));
-        assert!(!names_store("~/.claude/amont-agent/journal.log"));
+        assert!(!names_store("~/.claude/greenpiste/journal.log"));
         assert!(!names_store("implementation-review"));
         // The outcome ledger lives beside the store, not in it.
         assert!(!names_store(
-            "~/.claude/amont-agent/implementation-review-outcomes/outcomes.jsonl"
+            "~/.claude/greenpiste/implementation-review-outcomes/outcomes.jsonl"
         ));
     }
 
@@ -3106,7 +3106,7 @@ mod tests {
             static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
             let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             std::env::temp_dir().join(format!(
-                "amont-agent-notes-{tag}-{}-{call}",
+                "greenpiste-notes-{tag}-{}-{call}",
                 std::process::id()
             ))
         };
@@ -3278,7 +3278,7 @@ mod tests {
     #[test]
     fn declaration_at_needs_the_pointers_own_line_for_this_repository() {
         let dir =
-            std::env::temp_dir().join(format!("amont-agent-declaration-at-{}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-declaration-at-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir); // absent on a first run, which is fine
         std::fs::create_dir_all(dir.join(PLANS_PATH)).unwrap();
         let git = |args: &[&str]| {

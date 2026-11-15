@@ -9,7 +9,7 @@ const DENY_TEXT: &str = "greenpiste/suppressions-override: this override is the 
 gate printed.";
 
 fn pre_bash(command: &str) -> (String, String) {
-    let home = std::env::temp_dir().join(format!("amont-agent-override-{}", std::process::id()));
+    let home = std::env::temp_dir().join(format!("greenpiste-override-{}", std::process::id()));
     std::fs::create_dir_all(&home).expect("scratch dir");
     let payload = serde_json::json!({
         "hook_event_name": "PreToolUse",

@@ -11,10 +11,8 @@ struct Home(PathBuf);
 
 impl Home {
     fn new(name: &str) -> Home {
-        let dir = std::env::temp_dir().join(format!(
-            "amont-agent-settings-{}-{name}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("greenpiste-settings-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch dir");
         Home(dir)

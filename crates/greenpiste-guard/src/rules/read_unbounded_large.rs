@@ -222,7 +222,7 @@ mod tests {
     /// A unique scratch directory per test, removed by the caller.
     fn scratch(name: &str) -> PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("amont-agent-rub-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-rub-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch dir");
         dir

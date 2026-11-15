@@ -13,7 +13,7 @@ struct Home(PathBuf);
 impl Home {
     fn new(name: &str) -> Home {
         let dir = std::env::temp_dir().join(format!(
-            "amont-agent-rules-json-{name}-{}",
+            "greenpiste-rules-json-{name}-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);

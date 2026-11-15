@@ -1,27 +1,14 @@
 //! The tool's name is said from `names` alone (ADR-0064, plan "amont-agent
 //! ships as greenpiste"). This test fails on `amont-agent` inside any Rust
 //! string literal under `crates/*/src`, `src` and `tests`, except in a
-//! `names.rs` and for the data names the tool still reads and writes until
-//! plan 3b-2 renames them.
+//! `names.rs`, except the alias binary's file name.
 
 use std::path::{Path, PathBuf};
 
 const NAME: &str = "amont-agent";
 
-/// Exact lines, by file, that carry the `tool` field value of a record other
-/// programs read (plan 3b-2 renames it).
-const KEPT_LINES: &[(&str, &str)] = &[
-    // The clear-relay plugin's marketplace id, written into settings.json as
-    // `clear-relay@amont-agent` (plan 3b-2 renames it with the state dir).
-    (
-        "tests/plugin_install.rs",
-        "const ID: &str = \"clear-relay@amont-agent\";",
-    ),
-    (
-        "tests/plugin_install.rs",
-        "markets[\"amont-agent\"][\"source\"],",
-    ),
-];
+/// Exact lines, by file, that deliberately plant an old form.
+const KEPT_LINES: &[(&str, &str)] = &[];
 
 /// The old environment-variable and git-config prefixes, which only
 /// `names::old` and this test may spell.
@@ -129,74 +116,26 @@ fn raw_string_open(source: &str, at: usize) -> Option<usize> {
     (bytes.get(cursor) == Some(&b'"')).then_some(cursor + 1)
 }
 
-/// Whether one occurrence of the name, at `at` in `literal`, is a data name
-/// the tool still reads or writes (plan 3b-2), as opposed to the tool saying
-/// its own name.
+/// Whether one occurrence of the name, at `at` in `literal`, is not the tool
+/// saying its own name: part of a longer word, or the alias binary's file name.
 fn is_kept_data_name(source: &str, literal: &Literal, at: usize) -> bool {
     let text = literal.text.as_str();
     let before = &text[..at];
-    let after = &text[at + NAME.len()..];
     let line_start = source[..literal.text_start]
         .rfind('\n')
         .map_or(0, |i| i + 1);
-    let line_end = source[literal.text_start..]
-        .find('\n')
-        .map_or(source.len(), |i| literal.text_start + i);
     let before_on_line = &source[line_start..literal.text_start];
-    let line = &source[line_start..line_end];
 
     // The word is longer than the name: `CARGO_BIN_EXE_greenpiste`.
     if before.bytes().last().is_some_and(is_word_byte) {
         return true;
     }
-    // `amont-agent-<x>`: the `amont-agent-*-v1` schema strings, the temp-file
-    // name prefixes, the crate directories (renamed in Phase 2).
-    if let Some(rest) = after.strip_prefix('-') {
-        if rest
-            .bytes()
-            .next()
-            .is_some_and(|b| b.is_ascii_alphanumeric() || b == b'{')
-        {
-            return true;
-        }
-    }
-    // `~/.claude/amont-agent/`: the config directory segment.
-    let config_segment = before.ends_with("claude/")
-        || before.ends_with("config/")
-        || before.is_empty()
-            && before_on_line
-                .trim_end_matches(['"', 'r', '#'])
-                .ends_with(".join(");
-    if (after.is_empty() || after.starts_with('/')) && config_segment {
-        return true;
-    }
-    // The same segment in a Windows path, written escaped in the source:
-    // `\\.claude\\amont-agent\\`.
-    if before.ends_with("claude\\\\") && after.starts_with("\\\\") {
-        return true;
-    }
-    // A hook-only store matched under any config directory.
-    if after.starts_with("/{d}") {
-        return true;
-    }
-    // The `"tool":"amont-agent"` field of the quiet records.
-    if before.ends_with("tool\\\":\\\"") || before.ends_with("tool\":\"") {
-        return true;
-    }
-    // The producer line of a provenance record, read by greengate.
-    if before.ends_with("producer ") {
-        return true;
-    }
-    // A literal that is exactly the name, as the config directory segment or
-    // the `tool` field.
-    if text == NAME {
-        return before_on_line
+    // A literal that is exactly the name, joined onto a directory: the alias
+    // binary's file name (`ALIAS`), which tests copy and look for.
+    text == NAME
+        && before_on_line
             .trim_end_matches(['"', 'r', '#', ' '])
             .ends_with(".join(")
-            || line.contains("[\"tool\"]")
-            || line.contains("\"tool\":\"amont-agent\"");
-    }
-    false
 }
 
 /// The line of every occurrence of the name in a string literal of `source`
@@ -276,13 +215,13 @@ fn no_source_string_names_the_tool_except_the_names_module_and_kept_data_names()
     assert!(
         strays.is_empty(),
         "`amont-agent` in a string literal; say it through `names` (or, for a data name \
-         plan 3b-2 renames, add it to the kept list in tests/names.rs):\n{}",
+         a test that plants an old form goes in the kept list in tests/names.rs):\n{}",
         strays.join("\n")
     );
 }
 
 #[test]
-fn a_planted_message_is_found_and_the_kept_data_names_are_not() {
+fn a_planted_message_is_found_and_the_alias_file_name_is_not() {
     assert_eq!(
         stray_names("fn f() { eprintln!(\"amont-agent: x\"); }"),
         vec![1]
@@ -297,11 +236,7 @@ fn a_planted_message_is_found_and_the_kept_data_names_are_not() {
         Vec::<usize>::new()
     );
     for kept in [
-        "let p = \"~/.claude/amont-agent/journal.log\";",
-        "let p = dir.join(\"amont-agent\");",
-        "let s = \"amont-agent-review-outcome-v1\";",
-        "let t = \"amont-agent-shim-{}\";",
-        "let r = \"{\\\"tool\\\":\\\"amont-agent\\\"}\";",
+        "let a = dir.join(\"amont-agent\");",
         "let e = env!(\"CARGO_BIN_EXE_greenpiste\");",
     ] {
         assert_eq!(stray_names(kept), Vec::<usize>::new(), "{kept}");

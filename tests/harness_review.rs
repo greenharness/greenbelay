@@ -10,7 +10,7 @@ struct Home(PathBuf);
 impl Home {
     fn new(name: &str) -> Home {
         let dir =
-            std::env::temp_dir().join(format!("amont-agent-hr-it-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-hr-it-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let proj = dir.join("projects").join("p");
         std::fs::create_dir_all(&proj).expect("projects dir");

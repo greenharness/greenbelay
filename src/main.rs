@@ -144,7 +144,7 @@ usage: ",
                         apply the reviewers' Patches to a plan with no model
                         (accepted findings on stdin; exit 3 = some unmatched)
   attestations [--apply]
-                        what ~/.claude/amont-agent/attestations keeps and
+                        what ~/.claude/greenpiste/attestations keeps and
                         why; --apply moves the rest to a 7-day trash
   tree-sha [--block] [-C <dir>] [--] [<rev>]
                         the content id an implementation review and a
@@ -2569,7 +2569,7 @@ example:
   ",
     greenpiste_guard::bin!(),
     " preview register --url http://localhost:5173/settings \\
-    --guide ~/.claude/amont-agent/attestations/abc1234/guide.md
+    --guide ~/.claude/greenpiste/attestations/abc1234/guide.md
 "
 );
 

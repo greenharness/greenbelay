@@ -90,7 +90,7 @@ impl World {
     }
 
     fn activity(&self, session: &str, repo: &Path, worktree: &Path, branch: &str, seen_ago: u64) {
-        let sessions = self.config.join("amont-agent/sessions");
+        let sessions = self.config.join("greenpiste/sessions");
         std::fs::create_dir_all(&sessions).unwrap();
         let file = sessions.join(format!("{session}.activity"));
         let identity = repo.join(".git");

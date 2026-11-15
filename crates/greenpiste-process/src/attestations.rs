@@ -1,4 +1,4 @@
-//! `~/.claude/amont-agent/attestations/` is swept, except what a plan cites.
+//! `~/.claude/greenpiste/attestations/` is swept, except what a plan cites.
 //!
 //! That directory is where the worktree-task skill puts evidence (F3 records,
 //! F7 screenshots and `guide.md`) and nothing ever removed anything from it.
@@ -110,7 +110,7 @@ pub fn now() -> u64 {
 
 /// Every `attestations/<name>` in `text`: the maximal `[A-Za-z0-9._-]` run
 /// after the slash, trailing dots (a sentence end) stripped. Plain
-/// `str::find`; the full path `~/.claude/amont-agent/attestations/x` holds the
+/// `str::find`; the full path `~/.claude/greenpiste/attestations/x` holds the
 /// same text and counts.
 fn citations(text: &str, mut found: impl FnMut(&str)) {
     const KEY: &str = "attestations/";
@@ -724,7 +724,7 @@ usage: ",
     greenpiste_guard::bin!(),
     " attestations [--apply]
 
-  lists each directory under ~/.claude/amont-agent/attestations, why it is
+  lists each directory under ~/.claude/greenpiste/attestations, why it is
   kept or would be removed; --apply moves the removable ones to
   .trash-<secs>-<name>, deleted after 7 days
 
@@ -994,7 +994,7 @@ mod tests {
         fn new() -> Scratch {
             static N: AtomicU32 = AtomicU32::new(0);
             let d = std::env::temp_dir().join(format!(
-                "amont-agent-att-{}-{}",
+                "greenpiste-att-{}-{}",
                 std::process::id(),
                 N.fetch_add(1, Ordering::SeqCst)
             ));
@@ -1212,7 +1212,7 @@ mod tests {
         s.plan(
             "r",
             "docs/b.md",
-            "v attestations/v1.2 then ~/.claude/amont-agent/attestations/z\nlast attestations/m0-duro-web",
+            "v attestations/v1.2 then ~/.claude/greenpiste/attestations/z\nlast attestations/m0-duro-web",
         );
         let r = run(&s.env(), NOW, false);
         let gone: Vec<_> = r

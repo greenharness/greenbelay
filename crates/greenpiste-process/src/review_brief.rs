@@ -1286,7 +1286,7 @@ fn diff_of(before: &[u8], after: &[u8]) -> std::io::Result<Vec<u8>> {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.subsec_nanos());
     let dir = std::env::temp_dir().join(format!(
-        "amont-agent-interdiff-{}-{call}-{nanos}",
+        "greenpiste-interdiff-{}-{call}-{nanos}",
         std::process::id()
     ));
     let mut builder = std::fs::DirBuilder::new();
@@ -1380,7 +1380,7 @@ mod tests {
     fn a_patch_in_batches_is_the_one_diff() {
         use std::process::Command;
         let repo = std::env::temp_dir().join(format!(
-            "amont-agent-batches-{}-{:?}",
+            "greenpiste-batches-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));

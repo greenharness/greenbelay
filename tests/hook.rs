@@ -50,7 +50,7 @@ impl Reply {
 /// A scratch config dir per test, so nothing here writes to the real journal.
 fn home() -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "amont-agent-hook-{}-{:?}",
+        "greenpiste-hook-{}-{:?}",
         std::process::id(),
         std::thread::current().id()
     ));
@@ -208,7 +208,7 @@ fn an_unqueued_test_run_is_advised_toward_the_slot_queue() {
         "{advice}"
     );
     assert!(advice.contains("exit 75"), "{advice}");
-    let journal = std::fs::read_to_string(home().join("amont-agent").join("journal.log"))
+    let journal = std::fs::read_to_string(home().join("greenpiste").join("journal.log"))
         .expect("the hook wrote a journal");
     assert!(
         journal.lines().any(|l| l.contains("heavy-build-unqueued")),
@@ -800,7 +800,7 @@ fn a_declined_confirm_records_why_and_status_reads_it_back() {
     let reply = send(&payload);
     assert_eq!(reply.code, 0);
 
-    let journal = std::fs::read_to_string(home().join("amont-agent").join("journal.log"))
+    let journal = std::fs::read_to_string(home().join("greenpiste").join("journal.log"))
         .expect("the hook wrote a journal");
     let line = journal
         .lines()
@@ -1042,7 +1042,7 @@ fn at_deny_a_large_whole_read_is_refused_once_then_allowed() {
         "{}",
         again.stdout
     );
-    let journal = std::fs::read_to_string(home().join("amont-agent").join("journal.log"))
+    let journal = std::fs::read_to_string(home().join("greenpiste").join("journal.log"))
         .expect("the hook wrote a journal");
     assert!(
         journal
@@ -1106,7 +1106,7 @@ fn at_deny_another_file_is_its_own_and_an_unrecorded_session_is_advised() {
             .as_deref(),
         Some("deny")
     );
-    let journal = std::fs::read_to_string(home().join("amont-agent").join("journal.log"))
+    let journal = std::fs::read_to_string(home().join("greenpiste").join("journal.log"))
         .expect("the hook wrote a journal");
     assert!(
         journal
@@ -1213,7 +1213,7 @@ fn an_observed_reread_still_suppresses() {
     let second = f.file_event_with_global("PreToolUse", "Read", session, "", cfg);
     assert_eq!(second.stdout, "", "neither rule speaks: {}", second.stdout);
 
-    let journal = std::fs::read_to_string(home().join("amont-agent").join("journal.log"))
+    let journal = std::fs::read_to_string(home().join("greenpiste").join("journal.log"))
         .expect("the hook wrote a journal");
     let rows: Vec<&str> = journal.lines().filter(|l| l.contains(session)).collect();
     let rereads = rows
@@ -1593,7 +1593,7 @@ fn send_with_global_err(payload: &str, global: &str) -> (Reply, String) {
 }
 
 fn journal_rows(session: &str) -> Vec<String> {
-    std::fs::read_to_string(home().join("amont-agent").join("journal.log"))
+    std::fs::read_to_string(home().join("greenpiste").join("journal.log"))
         .expect("the hook wrote a journal")
         .lines()
         .filter(|l| l.contains(session))
@@ -1693,7 +1693,7 @@ fn lint_suppression_observed_is_silent_and_journalled_as_watched() {
 fn lint_suppression_leaves_the_pass_file_guard_denying() {
     let f = ReadFixture::with_content("lsa-guard", "x.py", "");
     let target = home()
-        .join("amont-agent")
+        .join("greenpiste")
         .join("implementation-review")
         .join("by-tree")
         .join("app")
@@ -1870,7 +1870,7 @@ impl LspWorld {
     }
 
     fn journal_rows(&self, session: &str) -> Vec<String> {
-        std::fs::read_to_string(self.config.join("amont-agent").join("journal.log"))
+        std::fs::read_to_string(self.config.join("greenpiste").join("journal.log"))
             .unwrap_or_default()
             .lines()
             .filter(|l| l.contains(session))
@@ -2239,8 +2239,8 @@ fn a_denied_worker_shell_grep_is_refused_once() {
 fn a_denied_worker_whose_telling_cannot_be_recorded_is_advised() {
     let w = LspWorld::new("deny-agents-unrecorded", true);
     w.install_relais_workers();
-    std::fs::create_dir_all(w.config.join("amont-agent")).expect("journal dir");
-    std::fs::write(w.config.join("amont-agent").join("sessions"), "x").expect("block sessions");
+    std::fs::create_dir_all(w.config.join("greenpiste")).expect("journal dir");
+    std::fs::write(w.config.join("greenpiste").join("sessions"), "x").expect("block sessions");
     let reply = w.grep_as("du-1", HAIKU, SYMBOL_GREP, DENY_HAIKU);
     assert!(!reply.stdout.contains("\"deny\""), "{}", reply.stdout);
     assert!(
@@ -2533,7 +2533,7 @@ impl Rr {
     }
 
     fn sessions(&self) -> PathBuf {
-        home().join("amont-agent").join("sessions")
+        home().join("greenpiste").join("sessions")
     }
 }
 
@@ -2589,7 +2589,7 @@ fn an_agent_id_that_is_not_a_key_neither_records_nor_denies() {
         f.post_bash(bad, "cat f.txt", r#""ok""#);
     }
     // Nothing escaped `sessions/`.
-    let root = home().join("amont-agent");
+    let root = home().join("greenpiste");
     assert!(!root.join("x.log").exists());
     assert!(!root.join("x").exists());
     assert!(!home().join("x.log").exists());
@@ -3359,7 +3359,7 @@ impl Overlap {
 
     fn activity_file(&self, session: &str) -> PathBuf {
         home()
-            .join("amont-agent")
+            .join("greenpiste")
             .join("sessions")
             .join(format!("{session}.activity"))
     }
@@ -4138,7 +4138,7 @@ fn at_deny_a_whole_dump_is_refused_once_then_allowed() {
     assert!(said.contains("20 KB"), "names the size: {said}");
     let again = dump_as(&fixture, session, None, "cat big.rs");
     assert_eq!(again.stdout, "", "the repeat passes silently");
-    let journal = std::fs::read_to_string(home().join("amont-agent").join("journal.log"))
+    let journal = std::fs::read_to_string(home().join("greenpiste").join("journal.log"))
         .expect("the hook wrote a journal");
     assert!(
         journal.lines().any(|l| l.contains(session)
@@ -4181,7 +4181,7 @@ fn at_deny_each_file_is_refused_once_and_a_shared_refusal_promises_less() {
     let twice = ReadFixture::with_size("dump-twice", 20_000);
     let both = dump_as(&twice, "dtwice-01", None, "cat big.rs; cat ./big.rs");
     assert_eq!(both.decision().as_deref(), Some("deny"), "{}", both.stdout);
-    let journal = std::fs::read_to_string(home().join("amont-agent").join("journal.log"))
+    let journal = std::fs::read_to_string(home().join("greenpiste").join("journal.log"))
         .expect("the hook wrote a journal");
     assert!(
         !journal
@@ -4231,7 +4231,7 @@ fn at_deny_an_unrecordable_dump_refusal_advises() {
         "{}",
         reply.stdout
     );
-    let journal = std::fs::read_to_string(home().join("amont-agent").join("journal.log"))
+    let journal = std::fs::read_to_string(home().join("greenpiste").join("journal.log"))
         .expect("the hook wrote a journal");
     assert!(
         journal
@@ -4528,7 +4528,7 @@ fn forks_change() -> serde_json::Value {
 /// Whether the journal holds a row for `session` with `needle`; a journal
 /// never written holds none.
 fn forks_row(session: &str, needle: &str) -> bool {
-    std::fs::read_to_string(home().join("amont-agent").join("journal.log"))
+    std::fs::read_to_string(home().join("greenpiste").join("journal.log"))
         .unwrap_or_default()
         .lines()
         .any(|row| row.contains(session) && row.contains(needle))

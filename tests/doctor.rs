@@ -14,7 +14,7 @@ struct Home(PathBuf);
 impl Home {
     fn new(name: &str) -> Home {
         let dir =
-            std::env::temp_dir().join(format!("amont-agent-doctor-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-doctor-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir); // a stale scratch directory may not exist
         std::fs::create_dir_all(&dir).expect("scratch dir");
         Home(dir)
@@ -70,7 +70,7 @@ fn a_missing_binary_is_reported_as_broken() {
     // because that literal is NOT absolute on Windows — `doctor` then correctly
     // reported "not an absolute path" and this test, which had assumed POSIX
     // path semantics, failed on the Windows runner while the code was right.
-    let missing = h.0.join("nowhere").join("amont-agent");
+    let missing = h.0.join("nowhere").join("greenpiste");
     assert!(missing.is_absolute(), "the fixture must be absolute");
     std::fs::write(
         h.settings(),
@@ -383,7 +383,7 @@ fn a_recent_firing_outweighs_an_old_heartbeat() {
     h.with_a_session();
     install_both(&h);
 
-    let dir = h.0.join("amont-agent");
+    let dir = h.0.join("greenpiste");
     std::fs::create_dir_all(&dir).expect("state dir");
     std::fs::write(dir.join("heartbeat"), "x\n").expect("heartbeat");
     // Well past the six-hour grace, and before the session was written.
@@ -411,7 +411,7 @@ fn doctor_reads_the_window_across_generations() {
     let h = Home::new("generations");
     h.with_a_session();
     install_both(&h);
-    let dir = h.0.join("amont-agent");
+    let dir = h.0.join("greenpiste");
     std::fs::create_dir_all(&dir).expect("state dir");
     std::fs::write(dir.join("heartbeat"), "x\n").expect("heartbeat");
     backdate(&dir.join("heartbeat"), "202001010000");
@@ -419,7 +419,7 @@ fn doctor_reads_the_window_across_generations() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let rec = |ago: u64| format!("amont-agent-v1\nF {} r deny denied - - - x\n", now - ago);
+    let rec = |ago: u64| format!("greenpiste-v1\nF {} r deny denied - - - x\n", now - ago);
     std::fs::write(dir.join("journal.log.3"), rec(6 * 86_400)).expect(".3");
     std::fs::write(dir.join("journal.log.1"), rec(86_400)).expect(".1");
     std::fs::write(dir.join("journal.log"), rec(10)).expect("live");
@@ -446,7 +446,7 @@ fn an_old_heartbeat_with_no_firings_still_accuses() {
     h.with_a_session();
     install_both(&h);
 
-    let dir = h.0.join("amont-agent");
+    let dir = h.0.join("greenpiste");
     std::fs::create_dir_all(&dir).expect("state dir");
     std::fs::write(dir.join("heartbeat"), "x\n").expect("heartbeat");
     backdate(&dir.join("heartbeat"), "202001010000");
@@ -475,7 +475,7 @@ fn doctor_does_not_journal_its_own_probe() {
     h.with_a_session();
     install_both(&h);
 
-    let journal = h.0.join("amont-agent").join("journal.log");
+    let journal = h.0.join("greenpiste").join("journal.log");
     let before = std::fs::read_to_string(&journal).unwrap_or_default();
 
     let (_code, out) = h.run(&["doctor"]);
@@ -564,7 +564,7 @@ fn json_reports_an_absent_integration_apart_from_health() {
 #[test]
 fn json_reports_present_but_unhealthy_with_file_and_binary() {
     let h = Home::new("json-present");
-    let missing = h.0.join("nowhere").join("amont-agent");
+    let missing = h.0.join("nowhere").join("greenpiste");
     let mut hooks = serde_json::Map::new();
     for (event, matcher) in greenpiste_guard::settings::TARGETS {
         let mut block = serde_json::json!({"hooks": [

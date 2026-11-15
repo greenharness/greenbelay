@@ -152,7 +152,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let dir =
-            std::env::temp_dir().join(format!("amont-agent-nudge-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-nudge-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::env::set_var("CLAUDE_CONFIG_DIR", &dir);

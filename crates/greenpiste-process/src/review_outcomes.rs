@@ -26,7 +26,7 @@ usage: ",
     " plan-review stats [--json] [--model <id>]
 
 Append one row per completed plan-review reviewer of the plan to
-~/.claude/amont-agent/plan-review/outcomes.jsonl, skipping agents already
+~/.claude/greenpiste/plan-review/outcomes.jsonl, skipping agents already
 recorded (by agent id), and save each reviewed plan body once under
 plan-review/bodies/.
 
@@ -60,9 +60,32 @@ transcript names the plan or the ledger cannot be written, 2 on a usage error
 "
 );
 
-const SCHEMA: &str = "amont-agent-review-outcome-v1";
-const MERGE_SCHEMA: &str = "amont-agent-review-merge-v1";
-const DISPOSITION_SCHEMA: &str = "amont-agent-review-disposition-v1";
+use greenpiste_guard::names::{self, old};
+
+const SCHEMA: &str = names::REVIEW_OUTCOME_SCHEMA;
+const MERGE_SCHEMA: &str = names::REVIEW_MERGE_SCHEMA;
+const DISPOSITION_SCHEMA: &str = names::REVIEW_DISPOSITION_SCHEMA;
+
+/// Whether `schema` is a review-outcome row's, under either name.
+pub(crate) fn is_outcome_schema(schema: &str) -> bool {
+    schema == SCHEMA || schema == old::REVIEW_OUTCOME_SCHEMA
+}
+
+/// Whether `schema` is a review-merge row's, under either name.
+pub(crate) fn is_merge_schema(schema: &str) -> bool {
+    schema == MERGE_SCHEMA || schema == old::REVIEW_MERGE_SCHEMA
+}
+
+/// Whether `schema` is a review-disposition row's, under either name.
+pub(crate) fn is_disposition_schema(schema: &str) -> bool {
+    schema == DISPOSITION_SCHEMA || schema == old::REVIEW_DISPOSITION_SCHEMA
+}
+
+/// Whether `schema` is an implementation-review outcome row's, under either
+/// name.
+pub(crate) fn is_impl_schema(schema: &str) -> bool {
+    schema == IMPL_SCHEMA || schema == old::IMPL_REVIEW_OUTCOME_SCHEMA
+}
 pub(crate) const SEVERITIES: [&str; 4] = ["blocking", "high", "medium", "low"];
 const DISPOSITIONS: [&str; 3] = ["accepted", "rejected", "decision"];
 const LOCK_FILE: &str = "outcomes.jsonl.lock";
@@ -554,7 +577,11 @@ fn recorded(path: &Path, plan: &str) -> std::io::Result<Recorded> {
     // must not make a reviewer look recorded.
     let ids = rows
         .iter()
-        .filter(|v| v.get("schema").and_then(|s| s.as_str()) == Some(SCHEMA))
+        .filter(|v| {
+            v.get("schema")
+                .and_then(|s| s.as_str())
+                .is_some_and(is_outcome_schema)
+        })
         .filter_map(|v| {
             Some((
                 v.get("agent_id")?.as_str()?.to_string(),
@@ -885,7 +912,7 @@ fn prune(dir: &Path) {
     }
 }
 
-pub(crate) const IMPL_SCHEMA: &str = "amont-agent-impl-review-outcome-v1";
+pub(crate) const IMPL_SCHEMA: &str = names::IMPL_REVIEW_OUTCOME_SCHEMA;
 const IMPL_ROLE: &str = "implementation-review";
 const RETIRE_MIN_REVIEWS: u64 = 20;
 const RETIRE_BELOW: f64 = 0.05;
@@ -995,7 +1022,7 @@ impl<'a> Settled<'a> {
         for r in rows {
             let text = |k: &str| r.get(k).and_then(|v| v.as_str());
             match text("schema") {
-                Some(DISPOSITION_SCHEMA) => {
+                Some(schema) if is_disposition_schema(schema) => {
                     if let (Some(id), Some(sha), Some(n), Some(d)) = (
                         text("agent_id"),
                         text("body_sha"),
@@ -1005,7 +1032,7 @@ impl<'a> Settled<'a> {
                         out.dispositions.insert((id, sha, n), d);
                     }
                 }
-                Some(MERGE_SCHEMA) => {
+                Some(schema) if is_merge_schema(schema) => {
                     if let Some(sha) = text("body_sha_before") {
                         let labels = r
                             .get("applied_labels")
@@ -1107,8 +1134,8 @@ pub fn tally_with(
     for r in rows {
         let text = |k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or("");
         let (role, accepted_word, plan_review) = match text("schema") {
-            SCHEMA => (text("role").to_string(), "accepted", true),
-            IMPL_SCHEMA => (IMPL_ROLE.to_string(), "fixed", false),
+            schema if is_outcome_schema(schema) => (text("role").to_string(), "accepted", true),
+            schema if is_impl_schema(schema) => (IMPL_ROLE.to_string(), "fixed", false),
             _ => continue,
         };
         let is_copy = !plan_review
@@ -1206,7 +1233,7 @@ pub fn unrecorded_skips(rows: &[serde_json::Value], skips: &[Skip]) -> Vec<Skip>
     for s in skips {
         let caught_up = rows.iter().any(|r| {
             let text = |k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or("");
-            text("schema") == SCHEMA
+            is_outcome_schema(text("schema"))
                 && text("plan_path") == s.plan
                 && (text("body_sha").starts_with(&s.sha)
                     || r.get("recorded_at").and_then(|t| t.as_u64()).unwrap_or(0) >= s.ts)
@@ -1423,6 +1450,23 @@ pub fn seat_source(row: &serde_json::Value) -> Option<RecordedSeats> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_row_of_either_schema_name_is_read() {
+        use super::old;
+        use greenpiste_guard::names;
+        assert!(super::is_outcome_schema(names::REVIEW_OUTCOME_SCHEMA));
+        assert!(super::is_outcome_schema(old::REVIEW_OUTCOME_SCHEMA));
+        assert!(super::is_merge_schema(names::REVIEW_MERGE_SCHEMA));
+        assert!(super::is_merge_schema(old::REVIEW_MERGE_SCHEMA));
+        assert!(super::is_disposition_schema(
+            names::REVIEW_DISPOSITION_SCHEMA
+        ));
+        assert!(super::is_disposition_schema(old::REVIEW_DISPOSITION_SCHEMA));
+        assert!(super::is_impl_schema(names::IMPL_REVIEW_OUTCOME_SCHEMA));
+        assert!(super::is_impl_schema(old::IMPL_REVIEW_OUTCOME_SCHEMA));
+        assert!(!super::is_outcome_schema(names::REVIEW_MERGE_SCHEMA));
+    }
+
     #[test]
     fn a_row_before_seat_sources_reads_as_areas() {
         use super::{seat_source, RecordedSeats};

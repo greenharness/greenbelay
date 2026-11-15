@@ -42,7 +42,7 @@ impl Drop for Repo {
 fn scratch() -> PathBuf {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "amont-agent-suppressions-{}-{}",
+        "greenpiste-suppressions-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::SeqCst)
     ));

@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn expansion_walks_the_tree_and_respects_dotfiles() {
-        let dir = std::env::temp_dir().join(format!("amont-agent-glob-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-glob-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("src/inner")).unwrap();
         std::fs::write(dir.join("src/main.rs"), "").unwrap();
         std::fs::write(dir.join("src/inner/lib.rs"), "").unwrap();

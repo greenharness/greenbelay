@@ -23,7 +23,7 @@ struct World {
 impl World {
     fn new(name: &str) -> World {
         let root =
-            std::env::temp_dir().join(format!("amont-agent-adrlint-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-adrlint-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("repo/src")).unwrap();
         std::fs::create_dir_all(root.join("bin")).unwrap();
@@ -130,7 +130,7 @@ impl World {
     }
 
     fn journal(&self, session: &str) -> Vec<String> {
-        std::fs::read_to_string(self.root.join("config/amont-agent/journal.log"))
+        std::fs::read_to_string(self.root.join("config/greenpiste/journal.log"))
             .unwrap_or_default()
             .lines()
             .filter(|l| l.contains(session))

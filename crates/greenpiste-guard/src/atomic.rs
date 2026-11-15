@@ -42,7 +42,11 @@ pub fn write_atomic(dest: &Path, body: &str) -> io::Result<()> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "settings.json".to_string());
-    let tmp = dir.join(format!(".amont-agent-tmp-{}-{name}", std::process::id()));
+    let tmp = dir.join(format!(
+        "{}{}-{name}",
+        crate::names::TEMP_PREFIX,
+        std::process::id()
+    ));
 
     // A leftover from a killed run could be a symlink; `fs::write` follows.
     let _ = std::fs::remove_file(&tmp);
@@ -93,7 +97,7 @@ mod tests {
 
     fn scratch(tag: &str) -> PathBuf {
         let d =
-            std::env::temp_dir().join(format!("amont-agent-atomic-{}-{tag}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-atomic-{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d

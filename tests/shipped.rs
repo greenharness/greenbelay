@@ -128,7 +128,7 @@ impl World {
             s.push_str(&format!("patch {p}\n"));
         }
         s.push_str(&format!(
-            "plan docs/plans/p.md {plan_sha}\nreview reviewed c0ffee\npreview not-required\nproducer amont-agent 0\n"
+            "plan docs/plans/p.md {plan_sha}\nreview reviewed c0ffee\npreview not-required\nproducer greenpiste 0\n"
         ));
         s
     }

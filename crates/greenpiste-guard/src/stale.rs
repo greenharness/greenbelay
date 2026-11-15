@@ -334,7 +334,7 @@ mod tests {
     /// Outside a repository there is nothing to measure, and nothing said.
     #[test]
     fn not_a_repository_is_silence() {
-        let dir = std::env::temp_dir().join(format!("amont-agent-stale-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-stale-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         assert!(measure(&dir, "HEAD").is_none());
     }

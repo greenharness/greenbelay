@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn the_seed_is_created_once_at_0600_and_read_back() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("amont-agent-seed-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-seed-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let first = seed_in(&dir).expect("created");
         let second = seed_in(&dir).expect("read back");

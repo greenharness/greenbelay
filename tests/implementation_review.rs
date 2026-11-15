@@ -67,7 +67,7 @@ fn install_agents(config: &Path) {
 impl World {
     fn new(name: &str) -> World {
         let root = std::env::temp_dir().join(format!(
-            "amont-agent-impl-review-{name}-{}-{:?}",
+            "greenpiste-impl-review-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -426,7 +426,7 @@ printf '{"branch":"%s","remote":"origin","push_url":"u","pushed":"%s","dst":"ref
     fn store(&self) -> PathBuf {
         self.root
             .join("claude")
-            .join("amont-agent")
+            .join("greenpiste")
             .join("implementation-review")
     }
 
@@ -438,7 +438,7 @@ printf '{"branch":"%s","remote":"origin","push_url":"u","pushed":"%s","dst":"ref
     }
 
     fn journal(&self) -> Vec<String> {
-        std::fs::read_to_string(self.root.join("claude/amont-agent/journal.log"))
+        std::fs::read_to_string(self.root.join("claude/greenpiste/journal.log"))
             .unwrap_or_default()
             .lines()
             .filter(|l| {
@@ -452,7 +452,7 @@ printf '{"branch":"%s","remote":"origin","push_url":"u","pushed":"%s","dst":"ref
 
     /// The provenance lines the hook journalled.
     fn provenance_journal(&self) -> Vec<String> {
-        std::fs::read_to_string(self.root.join("claude/amont-agent/journal.log"))
+        std::fs::read_to_string(self.root.join("claude/greenpiste/journal.log"))
             .unwrap_or_default()
             .lines()
             .filter(|l| l.contains(" implementation-review ") && l.contains(" provenance-"))
@@ -461,7 +461,7 @@ printf '{"branch":"%s","remote":"origin","push_url":"u","pushed":"%s","dst":"ref
     }
 
     fn provenance_dir(&self) -> PathBuf {
-        self.root.join("claude/amont-agent/provenance")
+        self.root.join("claude/greenpiste/provenance")
     }
 
     fn edit_tool(&self, dir: &Path, path: &Path) -> Said {
@@ -1306,7 +1306,7 @@ fn receipt(repo: &Path, branch: &str, pushed: &str, status: &str) {
 
 #[cfg(unix)]
 fn land_journal(w: &World) -> Vec<String> {
-    std::fs::read_to_string(w.root.join("claude/amont-agent/journal.log"))
+    std::fs::read_to_string(w.root.join("claude/greenpiste/journal.log"))
         .unwrap_or_default()
         .lines()
         .filter(|l| l.starts_with("F ") && l.contains(" land-retry "))
@@ -1971,7 +1971,7 @@ fn a_passing_push_with_a_plan_writes_the_provenance_record() {
     assert_eq!(l[6], "preview not-required");
     assert_eq!(
         l[7],
-        format!("producer amont-agent {}", env!("CARGO_PKG_VERSION"))
+        format!("producer greenpiste {}", env!("CARGO_PKG_VERSION"))
     );
     assert!(std::fs::read_to_string(&f).unwrap().ends_with('\n'));
     assert!(
@@ -2035,7 +2035,7 @@ fn a_plan_approved_with_evidence_is_recorded_as_preview_evidence() {
         .output()
         .unwrap();
     let sha = String::from_utf8_lossy(&shown.stdout).trim().to_string();
-    let approved = w.root.join("claude/amont-agent/plan-approved");
+    let approved = w.root.join("claude/greenpiste/plan-approved");
     std::fs::create_dir_all(&approved).unwrap();
     std::fs::write(approved.join(&sha), "s\tp\t1\n").unwrap();
     reviewed(&w, &repo);
@@ -2067,10 +2067,10 @@ fn a_mockup_change_with_an_approval_is_recorded_as_preview_approved() {
         .output()
         .unwrap();
     let sha = String::from_utf8_lossy(&shown.stdout).trim().to_string();
-    let approved = w.root.join("claude/amont-agent/plan-approved");
+    let approved = w.root.join("claude/greenpiste/plan-approved");
     std::fs::create_dir_all(&approved).unwrap();
     std::fs::write(approved.join(&sha), "s\tp\t1\n").unwrap();
-    let previews = w.root.join("claude/amont-agent/previews");
+    let previews = w.root.join("claude/greenpiste/previews");
     std::fs::create_dir_all(&previews).unwrap();
     let at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2132,7 +2132,7 @@ fn a_preview_not_yet_approved_defers_the_record_until_it_is() {
         "{:?}",
         w.provenance_journal()
     );
-    let previews = w.root.join("claude/amont-agent/previews");
+    let previews = w.root.join("claude/greenpiste/previews");
     std::fs::create_dir_all(&previews).unwrap();
     let at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2176,7 +2176,7 @@ fn a_held_push_or_a_push_without_a_plan_writes_no_provenance() {
 fn an_unwritable_provenance_directory_is_journalled_and_the_push_passes() {
     let w = World::new("provfail");
     let repo = w.repo("app");
-    std::fs::create_dir_all(w.root.join("claude/amont-agent")).unwrap();
+    std::fs::create_dir_all(w.root.join("claude/greenpiste")).unwrap();
     std::fs::write(w.provenance_dir(), "a file where the directory goes").unwrap();
     let transcript = {
         let mut t = Transcript::default();
@@ -2467,7 +2467,7 @@ const RULING_FIELDS: [&str; 12] = [
 ];
 
 fn rulings_file(w: &World) -> PathBuf {
-    w.root.join("claude/amont-agent/rulings/app.jsonl")
+    w.root.join("claude/greenpiste/rulings/app.jsonl")
 }
 
 #[test]
@@ -2501,7 +2501,7 @@ fn rulings_are_appended_once_per_review_and_candidate() {
         wanted.sort_unstable();
         assert_eq!(keys, wanted, "{record}");
         assert_eq!(record["format"], "adr-lint.ruling/1");
-        assert_eq!(record["tool"], "amont-agent");
+        assert_eq!(record["tool"], "greenpiste");
         assert_eq!(record["repo"], "app");
         assert_eq!(record["tree"], tree.as_str());
         assert_eq!(record["rule"], "names.reveal-intent");
@@ -2614,6 +2614,15 @@ fn check_with_adr_lint(file: &Path) {
         .arg(file)
         .output()
         .unwrap();
+    // An installed adr-lint older than the rename names only the old tool
+    // value; the check then says nothing about this record.
+    if String::from_utf8_lossy(&checked.stderr).contains(&format!(
+        "want {} or relais",
+        greenpiste_guard::names::old::RECORD_TOOL
+    )) {
+        eprintln!("skipped: the installed adr-lint predates the greenpiste tool value");
+        return;
+    }
     assert!(
         checked.status.success(),
         "adr-lint ruling-record --check: {}",
@@ -2717,7 +2726,7 @@ fn a_review_in_the_transcript_is_honoured_with_no_agent_installed() {
         .output()
         .unwrap();
     let sha = String::from_utf8_lossy(&shown.stdout).trim().to_string();
-    let approved = w.root.join("claude/amont-agent/plan-approved");
+    let approved = w.root.join("claude/greenpiste/plan-approved");
     std::fs::create_dir_all(&approved).unwrap();
     std::fs::write(approved.join(&sha), "s\tp\t1\n").unwrap();
     std::fs::remove_dir_all(w.root.join("claude").join("agents")).unwrap();
@@ -4179,7 +4188,7 @@ fn deny(w: &World) {
 }
 
 fn state_dir(w: &World) -> PathBuf {
-    w.root.join("claude").join("amont-agent")
+    w.root.join("claude").join("greenpiste")
 }
 
 /// The fingerprint of the repository's branch against `origin/main`.

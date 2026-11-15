@@ -64,7 +64,7 @@ impl World {
     /// `main` on a bare `origin`, and a checkout on `feat/x`.
     fn new(name: &str) -> World {
         let root = std::env::temp_dir().join(format!(
-            "amont-agent-phases-{name}-{}-{:?}",
+            "greenpiste-phases-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -171,7 +171,7 @@ impl World {
     }
 
     fn state_dir(&self) -> PathBuf {
-        self.claude.join("amont-agent/plan-phases-open")
+        self.claude.join("greenpiste/plan-phases-open")
     }
 }
 
@@ -344,7 +344,7 @@ fn two_active_plans_choose_by_branch() {
 #[test]
 fn an_unusable_session_id_touches_nothing() {
     let w = with_open_plan("badid");
-    let agent_dir = w.claude.join("amont-agent");
+    let agent_dir = w.claude.join("greenpiste");
     std::fs::create_dir_all(&agent_dir).unwrap();
     // `../x` from the counter directory lands here.
     let sentinel = agent_dir.join("x");
@@ -408,7 +408,7 @@ fn three_blocks_then_a_release_then_silence() {
     assert!(w.stop().silent());
     assert!(w.stop().silent());
     let journal =
-        std::fs::read_to_string(w.claude.join("amont-agent/journal.log")).unwrap_or_default();
+        std::fs::read_to_string(w.claude.join("greenpiste/journal.log")).unwrap_or_default();
     for outcome in ["denied", "released", "watched"] {
         assert!(journal.contains(outcome), "{outcome} in:\n{journal}");
     }
