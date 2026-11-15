@@ -48,7 +48,7 @@ Shared brief: /tmp/gg-sweep/panel-3b2-brief.md.
 3. Markers and lock in `<config>`, outside the roots that move.
 4. Record the first migrating hook's wall time.
 5. The plugin fallback follows all of `state_root()`, with env-by-name tests.
-6. Rows are rewritten on reverse, and a test proves it.
+6. Rows are rewritten on reverse, and a test proves it. Also from the relais and greengate Phase 1 reviews: `--reverse` leaves no file, directory or symlink at `<config>/greenpiste/plan-review/outcomes.jsonl` or `<config>/greenpiste/provenance`, since relais and greengate read the new path first whenever anything exists there; a test asserts both are absent after reverse.
 7. The plugin registration keeps `enabled=false` and options; an absent plugin stays absent; a conflict is diagnosed.
 8. An explicit `migrate` clears the failed-marker and retries.
 9. The fallback prefers the new key and builds old names from `names::old`.
