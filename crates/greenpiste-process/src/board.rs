@@ -52,7 +52,7 @@ listed then.
 Just landed: the first-parent commits of the default branch within --since.
 
   --repo <name>   a repository, resolved like plan-review repos (git config
-                  amont.agent.plan-review.<name>.path, else <plan root>/<name>);
+                  greenpiste.plan-review.<name>.path, else <plan root>/<name>);
                   repeatable. Without it: the working directory's repository,
                   else every repository directly under the plan root.
   --since <dur>   the window: 45s, 90m, 3h, 2d (default 48h)

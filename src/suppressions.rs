@@ -3,7 +3,7 @@
 //! It judges what the staged change adds, never the working tree, and never
 //! what a file already held. Every failure to look is exit 2 (fail closed);
 //! the only way past a blocking hit is a command-scoped
-//! `git -c amont.agent.suppressions=allow commit`, which the person types and
+//! `git -c greenpiste.suppressions=allow commit`, which the person types and
 //! the `suppressions-override` rule keeps from an agent.
 
 use std::ffi::{OsStr, OsString};
@@ -20,7 +20,7 @@ use greenpiste_guard::rules::lint_suppression_added::{
 use greenpiste_guard::rules::Stance;
 use greenpiste_guard::stance;
 
-const OVERRIDE_KEY: &str = "amont.agent.suppressions";
+const OVERRIDE_KEY: &str = greenpiste_guard::config_key!("suppressions");
 /// A blob over this is never read.
 const MAX_BLOB: u64 = 4 * 1024 * 1024;
 /// The sum of every requested blob; over it the scan is incomplete.
@@ -31,7 +31,7 @@ const SKIPPED_NOTE: &str = "over 4 MiB";
 /// How long any one git call gets.
 const GIT_DEADLINE: Duration = Duration::from_secs(30);
 
-/// Whether the person's command line carried `amont.agent.suppressions=allow`.
+/// Whether the person's command line carried `greenpiste.suppressions=allow`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Override {
     CommandScoped,
@@ -114,7 +114,7 @@ usage: ", greenpiste_guard::bin!(), " suppressions --staged
 Judge the staged change: a lint suppression it adds (net of those it removes
 anywhere) blocks unless it carries a reason in its tool's own reason form.
 Exit 0: nothing blocking. 1: a blocking hit. 2: usage error or git failure.
-A command-scoped `git -c amont.agent.suppressions=allow commit` passes; the
+A command-scoped `git -c greenpiste.suppressions=allow commit` passes; the
 same key in repository or global config is ignored.
 `GREENGATE_INDEX_FILE` is a bound pair with `GREENGATE_INDEX_GIT_DIR`, the
 absolute per-worktree `git rev-parse --absolute-git-dir` of the owner
@@ -390,7 +390,7 @@ fn fix(hit: &Hit) -> &'static str {
     }
 }
 
-/// Whether the command line itself said `amont.agent.suppressions=allow`:
+/// Whether the command line itself said `greenpiste.suppressions=allow`:
 /// `git -c` arrives in `GIT_CONFIG_PARAMETERS`, the environment form in
 /// `GIT_CONFIG_COUNT` with `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>`.
 /// The last value set wins.
@@ -980,15 +980,15 @@ mod tests {
     #[test]
     fn both_parameter_formats_are_read() {
         assert_eq!(
-            command_scoped_allow(Some("'amont.agent.suppressions=allow'"), &no_env),
+            command_scoped_allow(Some("'greenpiste.suppressions=allow'"), &no_env),
             Override::CommandScoped
         );
         assert_eq!(
-            command_scoped_allow(Some("'amont.agent.suppressions'='allow'"), &no_env),
+            command_scoped_allow(Some("'greenpiste.suppressions'='allow'"), &no_env),
             Override::CommandScoped
         );
         assert_eq!(
-            command_scoped_allow(Some("'amont.agent.suppressions=deny'"), &no_env),
+            command_scoped_allow(Some("'greenpiste.suppressions=deny'"), &no_env),
             Override::Absent
         );
         assert_eq!(command_scoped_allow(None, &no_env), Override::Absent);
@@ -998,7 +998,7 @@ mod tests {
     fn the_numbered_environment_form_is_read() {
         let env = |name: &str| match name {
             "GIT_CONFIG_COUNT" => Some("2".to_string()),
-            "GIT_CONFIG_KEY_1" => Some("amont.agent.suppressions".to_string()),
+            "GIT_CONFIG_KEY_1" => Some("greenpiste.suppressions".to_string()),
             "GIT_CONFIG_VALUE_1" => Some("allow".to_string()),
             "GIT_CONFIG_KEY_0" => Some("user.name".to_string()),
             "GIT_CONFIG_VALUE_0" => Some("x".to_string()),

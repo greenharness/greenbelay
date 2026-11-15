@@ -134,7 +134,7 @@ fn verify(ctx: &Context, claim: &Claim) -> Verdict {
                  commands: a check run failed and the skill was not loaded."
             .to_string(),
         remedy: "If the skill does not apply, ask the person; they can run `git config \
-                 --global amont.agent.bug-nudge.stance observe`."
+                 --global greenpiste.bug-nudge.stance observe`."
             .to_string(),
     }
 }
@@ -152,7 +152,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let dir =
-            std::env::temp_dir().join(format!("amont-agent-nudge-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-nudge-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::env::set_var("CLAUDE_CONFIG_DIR", &dir);
@@ -220,7 +220,7 @@ mod tests {
                         .collect();
                     assert!(head.contains("Call the diagnosing-bugs skill"), "{head}");
                     assert!(reason.contains("build a red loop before running more commands"));
-                    assert!(remedy.contains("amont.agent.bug-nudge.stance observe"));
+                    assert!(remedy.contains("greenpiste.bug-nudge.stance observe"));
                 }
                 _ => panic!("a red run is said"),
             }

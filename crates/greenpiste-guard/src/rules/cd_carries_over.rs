@@ -305,7 +305,7 @@ mod tests {
             static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
             let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let dir =
-                std::env::temp_dir().join(format!("amont-agent-cdco-{}-{n}", std::process::id()));
+                std::env::temp_dir().join(format!("greenpiste-cdco-{}-{n}", std::process::id()));
             std::fs::create_dir_all(&dir).expect("dir");
             let s = Session {
                 transcript: dir.join("t.jsonl"),

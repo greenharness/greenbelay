@@ -29,7 +29,7 @@ fn owned_directory() -> std::path::PathBuf {
 
 fn check_with(flags: &[&str], command: &str) -> String {
     let dir = owned_directory();
-    let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let out = greenpiste_command()
         .arg("check")
         .arg("--cwd")
         .arg(&dir)
@@ -368,7 +368,7 @@ fn every_finding_carries_a_remedy() {
 #[test]
 fn every_listing_keeps_its_columns_apart() {
     for verb in [vec!["status"], vec!["rules"], vec!["corpus", "check"]] {
-        let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let out = greenpiste_command()
             .args(&verb)
             .output()
             .expect("the binary runs");
@@ -398,7 +398,7 @@ fn every_listing_keeps_its_columns_apart() {
 fn known_id(word: &str) -> bool {
     static IDS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     IDS.get_or_init(|| {
-        let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let out = greenpiste_command()
             .arg("rules")
             .output()
             .expect("the binary runs");
@@ -409,4 +409,43 @@ fn known_id(word: &str) -> bool {
     })
     .iter()
     .any(|id| id == word)
+}
+
+/// The greenpiste binary pointed at scratch directories, so the migration every
+/// subcommand runs first never touches the real home of whoever runs the tests.
+/// A caller that sets one of these variables itself overrides it afterwards.
+fn greenpiste_command() -> Command {
+    let scratch = fresh_scratch("precision");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    command
+        .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
+        .env("XDG_STATE_HOME", scratch.join("state"))
+        .env("GIT_CONFIG_GLOBAL", scratch.join("gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    command
+}
+
+/// A new, empty scratch directory for one spawn, named by process id, the
+/// clock and a retry counter; `create_dir` fails on a name already taken.
+fn fresh_scratch(label: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let mut suffix = 0u32;
+    loop {
+        let dir = std::env::temp_dir().join(format!(
+            "gp-{label}-{}-{nanos}-{suffix}",
+            std::process::id()
+        ));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => {
+                std::fs::create_dir(dir.join("claude")).expect("scratch config dir");
+                std::fs::create_dir(dir.join("state")).expect("scratch state home");
+                return dir;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => suffix += 1,
+            Err(error) => panic!("scratch directory {}: {error}", dir.display()),
+        }
+    }
 }

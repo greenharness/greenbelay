@@ -6,7 +6,7 @@ use std::process::{Command, Output};
 
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "amont-agent-review-brief-{name}-{}-{:?}",
+        "greenpiste-review-brief-{name}-{}-{:?}",
         std::process::id(),
         std::thread::current().id()
     ));
@@ -22,14 +22,14 @@ fn scratch(name: &str) -> PathBuf {
 /// Runs the binary with the fake `aval` in `bin` first on PATH, so no test
 /// reaches the machine's own `aval`.
 fn run(args: &[&str], bin: &std::path::Path) -> Output {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    let mut cmd = greenpiste_command();
     cmd.args(args);
     let inherited = std::env::var_os("PATH").unwrap_or_default();
     let mut dirs = vec![bin.to_path_buf()];
     dirs.extend(std::env::split_paths(&inherited));
     cmd.env("PATH", std::env::join_paths(dirs).unwrap());
     // No test reaches the machine's own `adr-lint`: a fake in `bin`, or none.
-    cmd.env("AMONT_AGENT_ADR_LINT", bin.join("adr-lint"));
+    cmd.env("GREENPISTE_ADR_LINT", bin.join("adr-lint"));
     cmd.output().expect("greenpiste runs")
 }
 
@@ -511,13 +511,13 @@ fn run_without_aval(args: &[&str], dir: &std::path::Path, aval: Option<&str>) ->
     if !link.exists() {
         std::os::unix::fs::symlink(git_path.trim(), &link).unwrap();
     }
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    let mut cmd = greenpiste_command();
     cmd.args(args);
     cmd.env("PATH", std::env::join_paths([dir, &only]).unwrap());
-    cmd.env("AMONT_AGENT_ADR_LINT", dir.join("adr-lint"));
-    cmd.env_remove("AMONT_AGENT_AVAL");
+    cmd.env("GREENPISTE_ADR_LINT", dir.join("adr-lint"));
+    cmd.env_remove("GREENPISTE_AVAL");
     if let Some(program) = aval {
-        cmd.env("AMONT_AGENT_AVAL", program);
+        cmd.env("GREENPISTE_AVAL", program);
     }
     cmd.output().expect("greenpiste runs")
 }
@@ -930,7 +930,7 @@ fn interdiff_with(
     head: &str,
     more: &[&str],
 ) -> Output {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    let mut cmd = greenpiste_command();
     cmd.args([
         "review-brief",
         "-C",
@@ -945,7 +945,7 @@ fn interdiff_with(
     let mut dirs = vec![bin.to_path_buf()];
     dirs.extend(std::env::split_paths(&inherited));
     cmd.env("PATH", std::env::join_paths(dirs).unwrap());
-    cmd.env("AMONT_AGENT_ADR_LINT", bin.join("adr-lint"));
+    cmd.env("GREENPISTE_ADR_LINT", bin.join("adr-lint"));
     cmd.env("CLAUDE_CONFIG_DIR", bin.join("config"));
     cmd.output().expect("greenpiste runs")
 }
@@ -1006,7 +1006,7 @@ fn an_interdiff_from_another_head_than_the_last_pass_is_refused() {
     let key = greenpiste_guard::sha256::hex(&greenpiste_guard::sha256::sha256(b"refs/heads/feat"));
     let dir = bin
         .join("config")
-        .join("amont-agent")
+        .join("greenpiste")
         .join("implementation-review")
         .join("by-branch")
         .join(&name)
@@ -1414,7 +1414,7 @@ impl PinWorld {
         .full()
         .to_string();
         greenpiste_process::block_registry::register_entry(
-            &bin.join("config/amont-agent"),
+            &bin.join("config/greenpiste"),
             &fingerprint,
             &greenpiste_process::block_registry::Generation {
                 rules_sha: "c".repeat(64),
@@ -1449,21 +1449,21 @@ impl PinWorld {
     /// `review-brief`, with `gh` as the override or, for `None`, a PATH that
     /// holds git and the fake aval and nothing else.
     fn brief(&self, gh: Option<&std::path::Path>, deadline_ms: &str) -> Output {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+        let mut cmd = greenpiste_command();
         cmd.args(["review-brief", "-C"])
             .arg(&self.repo)
             .args(["--base", "HEAD~1"]);
-        cmd.env("AMONT_AGENT_ADR_LINT", self.bin.join("adr-lint"));
+        cmd.env("GREENPISTE_ADR_LINT", self.bin.join("adr-lint"));
         cmd.env("CLAUDE_CONFIG_DIR", self.bin.join("config"));
-        cmd.env("AMONT_AGENT_GH_DEADLINE_MS", deadline_ms);
-        cmd.env_remove("AMONT_AGENT_GH");
+        cmd.env("GREENPISTE_GH_DEADLINE_MS", deadline_ms);
+        cmd.env_remove("GREENPISTE_GH");
         match gh {
             Some(gh) => {
                 let inherited = std::env::var_os("PATH").unwrap_or_default();
                 let mut dirs = vec![self.bin.clone()];
                 dirs.extend(std::env::split_paths(&inherited));
                 cmd.env("PATH", std::env::join_paths(dirs).unwrap());
-                cmd.env("AMONT_AGENT_GH", gh);
+                cmd.env("GREENPISTE_GH", gh);
             }
             None => {
                 let only = self.bin.join("only-git");
@@ -1484,7 +1484,7 @@ impl PinWorld {
     fn recorded(&self) -> Option<greenpiste_process::block_registry::PinRecord> {
         let tree = greenpiste_process::content_id::content_id(&self.repo, "HEAD").unwrap();
         greenpiste_process::block_registry::read_pin(
-            &self.bin.join("config/amont-agent"),
+            &self.bin.join("config/greenpiste"),
             &self.fingerprint,
             &tree,
         )
@@ -1522,13 +1522,13 @@ fn a_missing_journal_directory_is_said_in_the_pin_section() {
     let inherited = std::env::var_os("PATH").unwrap_or_default();
     let mut dirs = vec![world.bin.clone()];
     dirs.extend(std::env::split_paths(&inherited));
-    let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let out = greenpiste_command()
         .args(["review-brief", "-C"])
         .arg(&world.repo)
         .args(["--base", "HEAD~1"])
-        .env("AMONT_AGENT_ADR_LINT", world.bin.join("adr-lint"))
+        .env("GREENPISTE_ADR_LINT", world.bin.join("adr-lint"))
         .env("PATH", std::env::join_paths(dirs).unwrap())
-        .env("AMONT_AGENT_GH", &gh)
+        .env("GREENPISTE_GH", &gh)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .env_remove("CLAUDE_CONFIG_DIR")
@@ -1608,4 +1608,43 @@ fn a_branch_that_is_not_a_registered_block_has_no_pin_section() {
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert!(!String::from_utf8_lossy(&out.stdout).contains("## Pin check"));
     assert!(world.recorded().is_none());
+}
+
+/// The greenpiste binary pointed at scratch directories, so the migration every
+/// subcommand runs first never touches the real home of whoever runs the tests.
+/// A caller that sets one of these variables itself overrides it afterwards.
+fn greenpiste_command() -> Command {
+    let scratch = fresh_scratch("review_brief");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    command
+        .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
+        .env("XDG_STATE_HOME", scratch.join("state"))
+        .env("GIT_CONFIG_GLOBAL", scratch.join("gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    command
+}
+
+/// A new, empty scratch directory for one spawn, named by process id, the
+/// clock and a retry counter; `create_dir` fails on a name already taken.
+fn fresh_scratch(label: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let mut suffix = 0u32;
+    loop {
+        let dir = std::env::temp_dir().join(format!(
+            "gp-{label}-{}-{nanos}-{suffix}",
+            std::process::id()
+        ));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => {
+                std::fs::create_dir(dir.join("claude")).expect("scratch config dir");
+                std::fs::create_dir(dir.join("state")).expect("scratch state home");
+                return dir;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => suffix += 1,
+            Err(error) => panic!("scratch directory {}: {error}", dir.display()),
+        }
+    }
 }

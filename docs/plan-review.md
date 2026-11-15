@@ -82,10 +82,10 @@ past its `upstream`, and a shallow clone is judged on files alone.
   ```
 
 `repos=` names each repository. A name resolves to
-`git config amont.agent.plan-review.<name>.path` when that is set, for a
+`git config greenpiste.plan-review.<name>.path` when that is set, for a
 repository kept elsewhere; otherwise to `<plan root>/<name>`. The plan root is
-`$AMONT_AGENT_PLAN_ROOT`, else `git config --global amont.agent.plan-review.root`
-(`git config --global amont.agent.plan-review.root ~/Developer/Perso` keeps the
+`$GREENPISTE_PLAN_ROOT`, else `git config --global greenpiste.plan-review.root`
+(`git config --global greenpiste.plan-review.root ~/Developer/Perso` keeps the
 old default); with neither, the session's directory when it is not in a git
 repository, else the parent of the repository's main worktree. The attestations
 sweep uses only the explicit setting. `adds=` declares classes no named
@@ -271,18 +271,18 @@ have reviewed.
 | refused twice already | the person is asked, with `UNREVIEWED: refused N×` |
 | `⚠ unreviewed: …` in the review section | the person is asked |
 
-A pass is remembered under `~/.claude/amont-agent/plan-review/`, which is
+A pass is remembered under `~/.claude/greenpiste/plan-review/`, which is
 0700 with 0600 files, by plan path and by body. The same plan presented from
 a new session, under a new file name, is therefore recognised.
 
-The default stance is `deny`. Set `amont.agent.plan-review-panel.stance` to
+The default stance is `deny`. Set `greenpiste.plan-review-panel.stance` to
 `advise` to be told without being refused, or to `observe` to only journal.
 
 ## Recording what the panel did
 
 `greenpiste plan-review record <plan.md> [--transcript <path>]` appends one
 JSON row per completed plan-review reviewer of the plan to
-`~/.claude/amont-agent/plan-review/outcomes.jsonl`, so the panel can later be
+`~/.claude/greenpiste/plan-review/outcomes.jsonl`, so the panel can later be
 judged on its own record. Without `--transcript` it reads the transcript under
 `~/.claude/projects` (modified in the last 7 days) that reviewed this plan's
 path: the one that reviewed its current body first, then the newest. A long
@@ -293,7 +293,7 @@ stdin is a JSON array of findings (empty stdin is `[]`):
 accepted|rejected|decision, "section"?, "area"?}`. They are attached to the
 rows this call writes for the highest round it writes, matched by role.
 
-A row has: `schema` (`amont-agent-review-outcome-v1`), `recorded_at` (unix
+A row has: `schema` (`greenpiste-review-outcome-v1`), `recorded_at` (unix
 seconds), `role`, `agent_id`, `model`, `tokens`, `seconds`, `round` (1-based,
 in the order distinct bodies first appear), `body_sha`, `first_round_sha`,
 `plan_path`, `plan` (`areas`, the repositories' areas whatever seated the
@@ -319,7 +319,7 @@ is skipped, never guessed. `None.` gives no findings.
 round on a changed body gets its own row, on an unchanged body nothing. A
 manual call with stdin findings (each may carry `n`) for a reviewer already on
 record writes no outcome row; it appends one
-`amont-agent-review-disposition-v1` row `{agent_id, body_sha, role, n,
+`greenpiste-review-disposition-v1` row `{agent_id, body_sha, role, n,
 disposition}` per finding, exempt from that dedupe.
 
 Outcome rows are deduped as above under an exclusive lock, so a second run, or two
@@ -383,7 +383,7 @@ the fallback subagent's prompt must start with:
 Patch lines stay within 80 columns; the `next:` line and the block carry the
 plan's path unclipped, since one is copied and the other is machine-read.
 Diagnostics go to stderr. Every real run appends one
-`amont-agent-review-merge-v1` row to `outcomes.jsonl` (`recorded_at`,
+`greenpiste-review-merge-v1` row to `outcomes.jsonl` (`recorded_at`,
 `plan_path`, `body_sha_before`, `body_sha_after`, `round`, `accepted`,
 `applied`, `unmatched`, `mode: "command"`); merge rows are not review rows and
 never count as a recorded reviewer.
@@ -407,8 +407,8 @@ never count as a recorded reviewer.
 greenpiste plan-review stats [--json] [--model <id>]
 ```
 
-Reads `~/.claude/amont-agent/plan-review/outcomes.jsonl` and, for the
-implementation review, `~/.claude/amont-agent/implementation-review-outcomes/outcomes.jsonl`,
+Reads `~/.claude/greenpiste/plan-review/outcomes.jsonl` and, for the
+implementation review, `~/.claude/greenpiste/implementation-review-outcomes/outcomes.jsonl`,
 through the one ledger reader in `review_outcomes.rs`; rows of another schema
 (merge rows) are not reviews. It prints one row per (role, model): reviews,
 findings by severity (`blocking/high/medium/low`), accepted findings by
@@ -420,8 +420,8 @@ findings per review. A finding is accepted when its disposition is `accepted`
 A parsed plan-review finding (one `record` wrote as `{n, severity}`) has its
 disposition derived when stats are read, so a merge or a disposition row
 appended after the review rows still counts. In order: the latest
-`amont-agent-review-disposition-v1` row for its `agent_id`, `body_sha` and `n`
-wins; else it is `accepted` when any `amont-agent-review-merge-v1` row whose
+`greenpiste-review-disposition-v1` row for its `agent_id`, `body_sha` and `n`
+wins; else it is `accepted` when any `greenpiste-review-merge-v1` row whose
 `body_sha_before` equals the review row's `body_sha` lists `role#n` in
 `applied_labels` (the union over every such row); else `unresolved`. Findings
 given on stdin keep the disposition they were given.

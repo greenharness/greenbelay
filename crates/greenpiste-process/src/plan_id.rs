@@ -356,15 +356,14 @@ pub(crate) fn ensure_in(
             dir: store.to_path_buf(),
             plan: Some(plan.clone()),
         })?;
-        let _lock =
-            crate::review_outcomes::lock_within(&store.join("outcomes.jsonl.lock"), LOCK_BUDGET)
-                .map_err(|source| {
-                    if source.kind() == std::io::ErrorKind::TimedOut {
-                        PlanIdError::Busy { plan: plan.clone() }
-                    } else {
-                        PlanIdError::Lock { source }
-                    }
-                })?;
+        let _lock = match greenpiste_guard::lock::lock_within(
+            &store.join("outcomes.jsonl.lock"),
+            LOCK_BUDGET,
+        ) {
+            Ok(Some(lock)) => lock,
+            Ok(None) => return Err(PlanIdError::Busy { plan: plan.clone() }),
+            Err(source) => return Err(PlanIdError::Lock { source }),
+        };
         after_lock();
         let again = std::fs::read_to_string(&plan).map_err(|source| PlanIdError::Read {
             plan: plan.clone(),

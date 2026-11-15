@@ -555,7 +555,7 @@ mod tests {
     use crate::transcript::{Discovery, Roots};
 
     fn scratch(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("amont-agent-hr-{}-{name}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("greenpiste-hr-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d

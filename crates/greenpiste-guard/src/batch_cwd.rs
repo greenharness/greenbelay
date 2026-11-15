@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn later_calls_of_a_batch_see_its_start_and_a_new_key_starts_over() {
-        let dir = std::env::temp_dir().join(format!("amont-agent-batch-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-batch-{}", std::process::id()));
         let state = dir.join("s.t.batch");
         assert_eq!(record(&state, 7, "/w", "cd /w/relais && pwd"), None);
         let start = record(&state, 7, "/w/relais", "pwd").expect("same batch");

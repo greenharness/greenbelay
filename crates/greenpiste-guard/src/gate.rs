@@ -81,7 +81,7 @@ mod tests {
                 let _ = std::fs::remove_dir_all(&self.0); // a leftover temp dir is harmless
             }
         }
-        let dir = std::env::temp_dir().join(format!("amont-agent-gate-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-gate-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let _cleanup = Cleanup(dir.clone());
         let file = dir.join("greengate");

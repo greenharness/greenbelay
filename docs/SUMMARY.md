@@ -5,6 +5,7 @@
 # Using it
 
 - [Installing](install.md)
+- [Migrating to the new data names](migrate.md)
 - [Stances](stances.md)
 - [The rules](rules.md)
 - [The assertions](assertions.md)

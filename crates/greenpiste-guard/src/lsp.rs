@@ -639,7 +639,7 @@ mod tests {
 
     #[test]
     fn one_normal_form_for_every_spelling() {
-        let dir = std::env::temp_dir().join(format!("amont-agent-lsp-nf-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-lsp-nf-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("real/src")).expect("dirs");
         std::fs::write(dir.join("real/src/x.rs"), "x").expect("file");

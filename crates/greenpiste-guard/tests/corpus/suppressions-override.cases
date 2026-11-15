@@ -12,15 +12,15 @@
 
 
 # --- the rule should fire ---
-match	git -c amont.agent.suppressions=allow commit -m x
-match	git config amont.agent.suppressions allow
-match	GIT_CONFIG_KEY_0=amont.agent.suppressions git commit -m x
+match	git -c greenpiste.suppressions=allow commit -m x
+match	git config greenpiste.suppressions allow
+match	GIT_CONFIG_KEY_0=greenpiste.suppressions git commit -m x
 match	git -c hook.skip=pre-commit-suppressions commit -m x
 match	git config amont.severity.pre-commit-suppressions warn
-match	git config amont.agent.lint-suppression-added.stance observe
+match	git config greenpiste.lint-suppression-added.stance observe
 
 # --- the rule must stay silent ---
 nomatch	git commit -m x
 nomatch	git -c hook.skip=pre-commit commit -m x
-nomatch	git config --get amont.agent.suppressions
-nomatch	git log --grep=amont.agent.suppressions
+nomatch	git config --get greenpiste.suppressions
+nomatch	git log --grep=greenpiste.suppressions

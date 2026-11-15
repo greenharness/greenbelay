@@ -29,7 +29,7 @@ struct World {
 impl World {
     fn new(name: &str) -> World {
         let root = std::env::temp_dir().join(format!(
-            "amont-agent-tree-sha-{name}-{}-{:?}",
+            "greenpiste-tree-sha-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -72,6 +72,7 @@ impl World {
             .args(args)
             .current_dir(cwd)
             .env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
+            .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .output()

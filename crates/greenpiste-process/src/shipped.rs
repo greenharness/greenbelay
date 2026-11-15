@@ -166,10 +166,11 @@ fn github_slug(url: &str) -> Option<String> {
     (rest.split('/').count() == 2).then(|| rest.to_string())
 }
 
-/// The head of a GitHub squash: the one `gh` call per PR. `AMONT_AGENT_GH`
+/// The head of a GitHub squash: the one `gh` call per PR. `GREENPISTE_GH`
 /// names another program (tests); an absent or failing gh gives `None`.
 fn gh_head(slug: &str, pr: u64) -> Option<String> {
-    let prog = std::env::var_os("AMONT_AGENT_GH").unwrap_or_else(|| OsString::from("gh"));
+    let prog =
+        std::env::var_os(greenpiste_guard::env_var!("GH")).unwrap_or_else(|| OsString::from("gh"));
     let out = Command::new(prog)
         .args(["pr", "view", &pr.to_string(), "--repo", slug])
         .args(["--json", "headRefOid"])

@@ -27,12 +27,24 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Version = $env:AMONT_AGENT_VERSION,
-    [string]$BinDir  = $env:AMONT_AGENT_BIN_DIR
+    [string]$Version = $env:GREENPISTE_VERSION,
+    [string]$BinDir  = $env:GREENPISTE_BIN_DIR
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+# GREENPISTE_VERSION and GREENPISTE_BIN_DIR are the settings. Their old names,
+# AMONT_AGENT_VERSION and AMONT_AGENT_BIN_DIR, still work while the new one is
+# unset, with one warning naming the new one.
+if (-not $Version -and $env:AMONT_AGENT_VERSION) {
+    $Version = $env:AMONT_AGENT_VERSION
+    Write-Warning 'AMONT_AGENT_VERSION is the old name: set GREENPISTE_VERSION instead'
+}
+if (-not $BinDir -and $env:AMONT_AGENT_BIN_DIR) {
+    $BinDir = $env:AMONT_AGENT_BIN_DIR
+    Write-Warning 'AMONT_AGENT_BIN_DIR is the old name: set GREENPISTE_BIN_DIR instead'
+}
 
 $Repo = 'greenharness/greenpiste'
 if (-not $BinDir)  { $BinDir  = Join-Path $HOME '.local\bin' }

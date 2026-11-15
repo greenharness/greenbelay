@@ -1232,7 +1232,7 @@ Viewport: 1120px · light
 
     fn folder_with(files: &[&str]) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!(
-            "amont-agent-guide-{}-{:?}",
+            "greenpiste-guide-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -1436,7 +1436,7 @@ Viewport: 1120px · light
     }
     fn shots(name: &str, files: &[(&str, &[u8])]) -> Shots {
         let dir = std::env::temp_dir().join(format!(
-            "amont-agent-sole-pair-{name}-{}",
+            "greenpiste-sole-pair-{name}-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir); // absent on a first run, which is fine

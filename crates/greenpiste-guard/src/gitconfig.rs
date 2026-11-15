@@ -12,7 +12,7 @@
 //! commands a coding agent is about to run, and a repository that could set
 //!
 //! ```text
-//! amont.agent.pipe-to-tail.stance = observe
+//! greenpiste.pipe-to-tail.stance = observe
 //! ```
 //!
 //! could disarm the guard on the machine of anybody who cloned it, without
@@ -40,7 +40,7 @@
 //! [`boolean`] shells out with `--type=bool` rather than comparing strings:
 //! git's boolean dialect is `true`/`false`/`yes`/`no`/`on`/`off`/`1`/`0`,
 //! case-insensitively, plus a valueless key meaning true. A hand-rolled
-//! `== "true"` would silently turn `amont.agent.enabled = yes` into a
+//! `== "true"` would silently turn `greenpiste.enabled = yes` into a
 //! no-op — a setting that reads as working and does nothing. Letting git
 //! normalise means there is one config dialect, and it is git's.
 //!
@@ -75,7 +75,7 @@ pub enum Value<T> {
 /// coding agent is about to run:
 ///
 ///   * the agent that just had a command refused can write
-///     `git config amont.agent.pipe-to-tail.stance observe` into `.git/config`
+///     `git config greenpiste.pipe-to-tail.stance observe` into `.git/config`
 ///     — an ordinary command no rule here objects to — and the next call is
 ///     allowed. A guard a guarded process can switch off is decoration.
 ///   * `amont-agent graduate` and `demote` write `--global` (see `graduate`),
@@ -115,9 +115,9 @@ fn read_scope(index: usize, scope: &str, key: &str, ty: Option<&str>) -> Value<S
 
 /// Every key this crate reads lives under this prefix, so one
 /// `--get-regexp` per scope answers all of them.
-const PREFIX: &str = "amont.agent.";
+const PREFIX: &str = crate::names::CONFIG_PREFIX;
 
-/// One scope's `amont.agent.*` keys, read once per process.
+/// One scope's `greenpiste.*` keys, read once per process.
 ///
 /// Measured (#70): a `git config` spawn costs ~40 ms on a loaded macOS
 /// machine, and the firing path read three keys in two scopes — six spawns,
@@ -147,6 +147,51 @@ pub fn forget() {
     }
 }
 
+/// A `--get-regexp` pattern matching the keys under the new prefix and
+/// under the old one, so one spawn per scope answers both.
+fn both_prefixes_pattern() -> String {
+    let escaped = |prefix: &str| prefix.replace('.', "\\.");
+    format!(
+        "^({}|{})",
+        escaped(crate::names::CONFIG_PREFIX),
+        escaped(crate::names::old::CONFIG_PREFIX)
+    )
+}
+
+/// Whether the migration's done-marker exists on this machine, resolved
+/// against the process environment at each call (one stat, and it is asked
+/// only when a new key is absent).
+fn migration_done() -> bool {
+    crate::migrate::Env::from_process().is_some_and(|env| crate::migrate::done(&env))
+}
+
+/// The key to read in one snapshot: `key` itself when it is present, or
+/// when the migration is done; otherwise its old-name twin when that is
+/// present. `migrated` is asked only when `key` is absent.
+fn effective_key(
+    keys: &[(String, Option<String>)],
+    key: &str,
+    migrated: &dyn Fn() -> bool,
+) -> String {
+    let want = canonical(key);
+    if keys.iter().any(|(k, _)| canonical(k) == want) {
+        return key.to_string();
+    }
+    let Some(rest) = key.strip_prefix(PREFIX) else {
+        return key.to_string();
+    };
+    if migrated() {
+        return key.to_string();
+    }
+    let old_key = format!("{}{rest}", crate::names::old::CONFIG_PREFIX);
+    let old_want = canonical(&old_key);
+    if keys.iter().any(|(k, _)| canonical(k) == old_want) {
+        old_key
+    } else {
+        key.to_string()
+    }
+}
+
 fn snapshot_of(scope: &str) -> Snapshot {
     let Some(out) = git::output(&[
         "config",
@@ -154,7 +199,7 @@ fn snapshot_of(scope: &str) -> Snapshot {
         "--includes",
         "--null",
         "--get-regexp",
-        r"^amont\.agent\.",
+        &both_prefixes_pattern(),
     ]) else {
         // Git did not run: every key takes its default, as before.
         return Snapshot::Keys(Vec::new());
@@ -217,32 +262,40 @@ fn canonical(key: &str) -> String {
     }
 }
 
-/// What one scope says about `key`, untyped: the LAST value, as `--get`.
-fn lookup(scope_index: usize, scope: &str, key: &str) -> Value<Option<String>> {
+/// What one scope says about `key`, untyped: the LAST value, as `--get`,
+/// and the key it was found under (the old name, before the migration, when
+/// the new one is absent).
+fn lookup(scope_index: usize, scope: &str, key: &str) -> (String, Value<Option<String>>) {
     let Ok(mut all) = snapshots().lock() else {
-        return Value::Unset;
+        return (key.to_string(), Value::Unset);
     };
     fill(&mut all);
     let snap = all[scope_index].get_or_insert_with(|| snapshot_of(scope));
     match snap {
-        Snapshot::Refused(why) => Value::Bad { why: why.clone() },
+        Snapshot::Refused(why) => (key.to_string(), Value::Bad { why: why.clone() }),
         Snapshot::Keys(keys) => {
-            let want = canonical(key);
-            match keys.iter().rev().find(|(k, _)| canonical(k) == want) {
+            let used = effective_key(keys, key, &migration_done);
+            let want = canonical(&used);
+            let found = match keys.iter().rev().find(|(k, _)| canonical(k) == want) {
                 Some((_, v)) => Value::Set(v.clone()),
                 None => Value::Unset,
-            }
+            };
+            (used, found)
         }
     }
 }
 
 /// Every value `key` has in one snapshot, in file order. A valueless entry
 /// is the empty string. A refused scope is the mistake git reported.
-fn values_in(snap: &Snapshot, key: &str) -> Result<Vec<String>, String> {
+fn values_in(
+    snap: &Snapshot,
+    key: &str,
+    migrated: &dyn Fn() -> bool,
+) -> Result<Vec<String>, String> {
     match snap {
         Snapshot::Refused(why) => Err(why.clone()),
         Snapshot::Keys(keys) => {
-            let want = canonical(key);
+            let want = canonical(&effective_key(keys, key, migrated));
             Ok(keys
                 .iter()
                 .filter(|(k, _)| canonical(k) == want)
@@ -300,7 +353,7 @@ pub fn values(key: &str) -> Vec<String> {
             };
             fill(&mut all);
             let snap = all[index].get_or_insert_with(|| snapshot_of(scope));
-            values_in(snap, key)
+            values_in(snap, key, &migration_done)
         };
         match answer {
             Ok(found) => raw.extend(found),
@@ -320,10 +373,11 @@ pub fn values(key: &str) -> Vec<String> {
 /// that IS set still asks git, so git alone parses the dialect; the common
 /// case — the key is unset — costs no spawn at all.
 fn read_cached(scope_index: usize, scope: &str, key: &str, ty: Option<&str>) -> Value<String> {
-    match lookup(scope_index, scope, key) {
+    let (used, found) = lookup(scope_index, scope, key);
+    match found {
         Value::Unset => Value::Unset,
         Value::Bad { why } => Value::Bad { why },
-        Value::Set(_) if ty.is_some() => ask_git(scope, key, ty),
+        Value::Set(_) if ty.is_some() => ask_git(scope, &used, ty),
         // A valueless key reads as the empty string, as `--get` prints it.
         Value::Set(v) => Value::Set(v.unwrap_or_default()),
     }
@@ -550,18 +604,18 @@ mod tests {
 
     #[test]
     fn null_output_keeps_values_whole_and_valueless_keys_apart() {
-        let raw = "amont.agent.enabled\0amont.agent.stance\nadvise\0\
-                   amont.agent.x.stance\nline one\nline two\0amont.agent.y.stance\n\0";
+        let raw = "greenpiste.enabled\0greenpiste.stance\nadvise\0\
+                   greenpiste.x.stance\nline one\nline two\0greenpiste.y.stance\n\0";
         assert_eq!(
             parse_null(raw),
             vec![
-                ("amont.agent.enabled".to_string(), None),
-                ("amont.agent.stance".to_string(), Some("advise".to_string())),
+                ("greenpiste.enabled".to_string(), None),
+                ("greenpiste.stance".to_string(), Some("advise".to_string())),
                 (
-                    "amont.agent.x.stance".to_string(),
+                    "greenpiste.x.stance".to_string(),
                     Some("line one\nline two".to_string())
                 ),
-                ("amont.agent.y.stance".to_string(), Some(String::new())),
+                ("greenpiste.y.stance".to_string(), Some(String::new())),
             ]
         );
     }
@@ -571,34 +625,34 @@ mod tests {
     #[test]
     fn keys_compare_the_way_git_compares_them() {
         assert_eq!(
-            canonical("amont.agent.agentsMdNotice"),
-            canonical("amont.agent.agentsmdnotice")
+            canonical("greenpiste.agentsMdNotice"),
+            canonical("greenpiste.agentsmdnotice")
         );
         assert_eq!(
-            canonical("AMONT.agent.pipe-to-tail.Stance"),
-            "amont.agent.pipe-to-tail.stance"
+            canonical("GREENPISTE.pipe-to-tail.Stance"),
+            "greenpiste.pipe-to-tail.stance"
         );
         assert_ne!(
-            canonical("amont.Agent.stance"),
-            canonical("amont.agent.stance")
+            canonical("greenpiste.Pipe-to-tail.stance"),
+            canonical("greenpiste.pipe-to-tail.stance")
         );
     }
 
     #[test]
     fn values_merge_in_file_order_and_a_refused_scope_adds_none() {
         let keys = Snapshot::Keys(vec![
-            ("amont.agent.r.denyAgents".into(), Some("a".into())),
-            ("amont.agent.other".into(), Some("x".into())),
-            ("AMONT.agent.r.denyagents".into(), Some("b*".into())),
-            ("amont.agent.r.denyAgents".into(), None),
+            ("greenpiste.r.denyAgents".into(), Some("a".into())),
+            ("greenpiste.other".into(), Some("x".into())),
+            ("GREENPISTE.r.denyagents".into(), Some("b*".into())),
+            ("greenpiste.r.denyAgents".into(), None),
         ]);
         assert_eq!(
-            values_in(&keys, "amont.agent.r.denyAgents"),
+            values_in(&keys, "greenpiste.r.denyAgents", &|| false),
             Ok(vec!["a".to_string(), "b*".to_string(), String::new()])
         );
         let refused = Snapshot::Refused("bad config".into());
         assert_eq!(
-            values_in(&refused, "amont.agent.r.denyAgents"),
+            values_in(&refused, "greenpiste.r.denyAgents", &|| false),
             Err("bad config".to_string())
         );
     }
@@ -623,5 +677,34 @@ mod tests {
         );
         assert_eq!(first_line(""), "git could not read the value");
         assert_eq!(first_line("   \n  "), "git could not read the value");
+    }
+
+    fn old_name(rest: &str) -> String {
+        format!("{}{rest}", crate::names::old::CONFIG_PREFIX)
+    }
+
+    fn keys_of(entries: &[(String, &str)]) -> Snapshot {
+        Snapshot::Keys(
+            entries
+                .iter()
+                .map(|(k, v)| (k.clone(), Some(v.to_string())))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn an_old_key_answers_only_while_the_new_one_is_absent_and_unmigrated() {
+        let old_only = keys_of(&[(old_name("r.denyAgents"), "a")]);
+        let key = "greenpiste.r.denyAgents";
+        assert_eq!(
+            values_in(&old_only, key, &|| false),
+            Ok(vec!["a".to_string()])
+        );
+        assert_eq!(values_in(&old_only, key, &|| true), Ok(Vec::new()));
+        let both = keys_of(&[
+            (old_name("r.denyAgents"), "a"),
+            ("greenpiste.r.denyAgents".to_string(), "b"),
+        ]);
+        assert_eq!(values_in(&both, key, &|| false), Ok(vec!["b".to_string()]));
     }
 }

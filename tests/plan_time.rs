@@ -37,7 +37,7 @@ impl Fx {
         let _ = std::fs::remove_dir_all(&dir); // absent on a first run: nothing to clear
         for d in [
             "home",
-            "claude/amont-agent/plan-review/bodies",
+            "claude/greenpiste/plan-review/bodies",
             "claude/projects/p",
             "root/app/docs/plans",
         ] {
@@ -64,8 +64,8 @@ impl Fx {
             .env("XDG_CONFIG_HOME", self.dir.join("home/config"))
             .env("GIT_CONFIG_GLOBAL", self.dir.join("gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("AMONT_AGENT_PLAN_ROOT", self.root())
-            .env_remove("AMONT_AGENT_OFF")
+            .env("GREENPISTE_PLAN_ROOT", self.root())
+            .env_remove("GREENPISTE_OFF")
             .current_dir(&self.dir);
     }
     fn git(&self, args: &[&str], at: i64) {
@@ -162,9 +162,9 @@ fn fixture(name: &str) -> Fx {
     let grown = format!("- note: grown in review, with more words here\n{comment}");
     fx.commit_plan("2026-01-02-x.md", &plan("feat/x", "done", &grown), T + 5000);
     // The ledger: x's round 1 at T, its body saved.
-    let row = json!({"schema": "amont-agent-review-outcome-v1", "role": "backend", "round": 1,
+    let row = json!({"schema": "greenpiste-review-outcome-v1", "role": "backend", "round": 1,
                      "body_sha": R1, "first_round_sha": R1, "recorded_at": T, "agent_id": "a1"});
-    let store = fx.dir.join("claude/amont-agent/plan-review");
+    let store = fx.dir.join("claude/greenpiste/plan-review");
     std::fs::write(store.join("outcomes.jsonl"), format!("{row}\n")).unwrap();
     std::fs::write(
         store.join(format!("bodies/{R1}.md")),
@@ -381,8 +381,8 @@ fn a_reused_plan_file_does_not_share_its_start() {
         &plan("feat/w", "done", &comment),
         T + 7000,
     );
-    let store = fx.dir.join("claude/amont-agent/plan-review/outcomes.jsonl");
-    let row = json!({"schema": "amont-agent-review-outcome-v1", "role": "backend", "round": 3,
+    let store = fx.dir.join("claude/greenpiste/plan-review/outcomes.jsonl");
+    let row = json!({"schema": "greenpiste-review-outcome-v1", "role": "backend", "round": 3,
                      "body_sha": r2, "first_round_sha": R1, "recorded_at": T + 5900, "agent_id": "a2"});
     let mut rows = std::fs::read_to_string(&store).unwrap();
     rows.push_str(&format!("{row}\n"));
@@ -519,8 +519,8 @@ fn a_landed_plan_with_a_plan_id_resolves_from_its_own_rows() {
         &text.replace("status: active", "status: done"),
         T + 6000,
     );
-    let store = fx.dir.join("claude/amont-agent/plan-review");
-    let row = json!({"schema": "amont-agent-review-outcome-v1", "role": "backend", "round": 1,
+    let store = fx.dir.join("claude/greenpiste/plan-review");
+    let row = json!({"schema": "greenpiste-review-outcome-v1", "role": "backend", "round": 1,
                      "body_sha": r2, "first_round_sha": r2, "plan_id": id,
                      "recorded_at": T + 4000, "agent_id": "a9"});
     let mut rows = std::fs::read_to_string(store.join("outcomes.jsonl")).unwrap();

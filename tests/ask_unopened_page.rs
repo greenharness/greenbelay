@@ -51,7 +51,7 @@ impl Reply {
 }
 
 fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("amont-agent-page-{}-{name}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("greenpiste-page-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("scratch dir");
     dir
 }
@@ -131,7 +131,8 @@ fn send(payload: &str) -> Reply {
     let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
         .arg("hook")
         .env("CLAUDE_CONFIG_DIR", &config)
-        .env_remove("AMONT_AGENT_OFF")
+        .env_remove("XDG_STATE_HOME")
+        .env_remove("GREENPISTE_OFF")
         .env_remove("GREENHARNESS_HOST_SLOT")
         .env("GIT_CONFIG_GLOBAL", config.join("no-global-gitconfig"))
         .env("GIT_CONFIG_NOSYSTEM", "1")

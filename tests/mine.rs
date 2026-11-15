@@ -29,7 +29,7 @@ struct Transcript {
 impl Transcript {
     fn new(name: &str) -> Transcript {
         let dir =
-            std::env::temp_dir().join(format!("amont-agent-mine-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-mine-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("projects/p")).expect("scratch dir");
         std::fs::write(dir.join("global"), "").expect("global config");
@@ -78,13 +78,13 @@ impl Transcript {
 
     fn run(&self, args: &[&str]) -> String {
         let dir = self.write();
-        let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let out = greenpiste_command()
             .args(args)
             .arg("--transcripts")
             .arg(dir.join("projects"))
             .env("GIT_CONFIG_GLOBAL", dir.join("global"))
             .env("GIT_CONFIG_SYSTEM", dir.join("system"))
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .output()
             .expect("the binary runs");
         assert!(
@@ -183,7 +183,7 @@ fn format_cases_emits_unreviewed_lines_in_the_corpus_format() {
         t.other().other().other().other();
     }
     let out = t.run(&["mine", "--format", "cases"]);
-    assert!(out.starts_with("# amont-agent-cases-v1\n"), "{out}");
+    assert!(out.starts_with("# greenpiste-cases-v1\n"), "{out}");
     let cases: Vec<&str> = out.lines().skip(1).filter(|l| !l.is_empty()).collect();
     assert!(!cases.is_empty(), "no cases emitted:\n{out}");
     for line in &cases {
@@ -272,7 +272,7 @@ fn novelty_puts_the_unlike_match_first() {
 #[test]
 fn an_unknown_rank_is_refused() {
     let dir = Transcript::new("rank").write().clone();
-    let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let out = greenpiste_command()
         .args(["explain", "pipe-to-tail", "--rank", "wisdom"])
         .arg("--transcripts")
         .arg(dir.join("projects"))
@@ -280,4 +280,43 @@ fn an_unknown_rank_is_refused() {
         .expect("the binary runs");
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("--rank takes `novelty`"));
+}
+
+/// The greenpiste binary pointed at scratch directories, so the migration every
+/// subcommand runs first never touches the real home of whoever runs the tests.
+/// A caller that sets one of these variables itself overrides it afterwards.
+fn greenpiste_command() -> Command {
+    let scratch = fresh_scratch("mine");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    command
+        .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
+        .env("XDG_STATE_HOME", scratch.join("state"))
+        .env("GIT_CONFIG_GLOBAL", scratch.join("gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    command
+}
+
+/// A new, empty scratch directory for one spawn, named by process id, the
+/// clock and a retry counter; `create_dir` fails on a name already taken.
+fn fresh_scratch(label: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let mut suffix = 0u32;
+    loop {
+        let dir = std::env::temp_dir().join(format!(
+            "gp-{label}-{}-{nanos}-{suffix}",
+            std::process::id()
+        ));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => {
+                std::fs::create_dir(dir.join("claude")).expect("scratch config dir");
+                std::fs::create_dir(dir.join("state")).expect("scratch state home");
+                return dir;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => suffix += 1,
+            Err(error) => panic!("scratch directory {}: {error}", dir.display()),
+        }
+    }
 }

@@ -39,7 +39,7 @@ use crate::ui;
 
 /// First line of the journal. A future format bumps this, and an older reader
 /// sees an empty journal rather than misreading one.
-pub const FORMAT: &str = "amont-agent-v1";
+pub const FORMAT: &str = crate::names::JOURNAL_HEADER;
 
 /// A record must fit in one small write. The excerpt is what gives, because
 /// commands do not fit anyway: measured p50 240 bytes, p95 1,777, max 13 KB.
@@ -53,7 +53,7 @@ const MAX_BYTES: u64 = 256 * 1024;
 const GENERATIONS: u32 = 10;
 
 pub fn dir() -> Option<PathBuf> {
-    Some(crate::settings::config_dir()?.join(crate::names::DATA_DIR))
+    crate::settings::data_dir()
 }
 
 /// Open an existing journal file for appending; never creates one. Creating
@@ -81,6 +81,7 @@ pub fn private(path: &std::path::Path, mode: u32) {
     let now = meta.permissions().mode() & 0o777;
     if now & !mode != 0 {
         let _ = fs::set_permissions(path, fs::Permissions::from_mode(now & mode));
+        // best effort: a mode already stricter than wanted is kept
     }
 }
 
@@ -347,7 +348,7 @@ pub struct Entry<'a> {
 /// Append one record. Every failure is swallowed: the journal must never be
 /// able to fail the hook, and `the_journal_never_fails_the_hook` pins that.
 /// Set by `doctor`'s own probe on the child it spawns. See [`record`].
-pub const ENV_PROBE: &str = "AMONT_AGENT_PROBE";
+pub const ENV_PROBE: &str = crate::env_var!("PROBE");
 
 pub fn record(entry: &Entry) {
     // `doctor` proves the guard works by feeding the real binary a command it
@@ -364,7 +365,7 @@ pub fn record(entry: &Entry) {
     if std::env::var_os(ENV_PROBE).is_some() {
         return;
     }
-    let _ = try_record(entry);
+    let _ = try_record(entry); // a journal that cannot be written never fails the caller
 }
 
 fn try_record(entry: &Entry) -> Option<()> {
@@ -397,6 +398,7 @@ fn append(path: &std::path::Path, max: u64, line: &str) -> Option<()> {
         // The journal kept growing past its cap: said once per write, in the
         // journal itself, where `doctor` and a reader of the file see it.
         let _ = f.write_all(format!("F {} - - rotate-failed - - - {why}\n", now()).as_bytes());
+        // the note is itself best effort
     }
     f.write_all(line.as_bytes()).ok()?;
     Some(())
@@ -461,7 +463,7 @@ fn create_with_header(path: &std::path::Path) -> Option<()> {
         }
         Ok(()) => Ok(()),
     });
-    let _ = fs::remove_file(&staged);
+    let _ = fs::remove_file(&staged); // the staged name is scratch; the link result is what counts
     linked.ok()
 }
 
@@ -487,13 +489,13 @@ fn rotate(path: &std::path::Path, max: u64) -> Result<(), String> {
     let mut moved = Ok(());
     // Re-check under the lock: another writer may have rotated already.
     if fs::metadata(path).map(|m| m.len() > max).unwrap_or(false) {
-        let _ = fs::remove_file(generation(path, GENERATIONS));
+        let _ = fs::remove_file(generation(path, GENERATIONS)); // the oldest generation may not exist yet
         for n in (1..GENERATIONS).rev() {
-            let _ = fs::rename(generation(path, n), generation(path, n + 1));
+            let _ = fs::rename(generation(path, n), generation(path, n + 1)); // a missing generation leaves a gap, not a failure
         }
         moved = fs::rename(path, generation(path, 1)).map_err(|e| e.kind().to_string());
     }
-    let _ = fs::remove_file(&lock);
+    let _ = fs::remove_file(&lock); // a lock file that is already gone is the goal
     moved
         .map(|_| ())
         .map_err(|why| why.replace(char::is_whitespace, "-"))
@@ -739,7 +741,7 @@ mod tests {
     /// and never invents a reason for a record that stated none.
     #[test]
     fn the_tally_reads_what_was_written_and_nothing_else() {
-        let dir = std::env::temp_dir().join(format!("amont-agent-tally-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-tally-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("scratch dir");
         let path = dir.join("journal.log");
@@ -787,11 +789,35 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// A journal written before the rename keeps its old header and is read
+    /// as well as one with the new header.
+    #[test]
+    fn a_journal_under_either_header_is_read() {
+        let dir = std::env::temp_dir().join(format!("greenpiste-headers-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir); // a missing scratch dir is the normal case
+        fs::create_dir_all(&dir).expect("scratch dir");
+        let now = 2_000_000u64;
+        for header in [
+            crate::names::JOURNAL_HEADER,
+            crate::names::old::JOURNAL_HEADER,
+        ] {
+            let path = dir.join(format!("{header}.log"));
+            let row = format!(
+                "F {} pipe-to-tail deny denied sess repo default x\n",
+                now - 1
+            );
+            fs::write(&path, format!("{header}\n{row}{row}")).expect("write journal");
+            let seen = tally_at(&path, 100_000, now);
+            assert_eq!(seen["pipe-to-tail"].denied, 2, "{header}");
+        }
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup; a leftover temp dir is harmless
+    }
+
     /// The implementation review's lines count under the buckets the soak
     /// reads: declined pushes by reason, spoken ones by stance.
     #[test]
     fn the_tally_keeps_the_implementation_reviews_reasons_apart() {
-        let dir = std::env::temp_dir().join(format!("amont-agent-tally-ir-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-tally-ir-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("scratch dir");
         let path = dir.join("journal.log");
@@ -825,7 +851,7 @@ mod tests {
     #[test]
     fn a_rules_checked_note_counts_in_no_bucket() {
         let dir =
-            std::env::temp_dir().join(format!("amont-agent-tally-rules-{}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-tally-rules-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir); // a scratch dir that is absent is the normal case
         fs::create_dir_all(&dir).expect("scratch dir");
         let path = dir.join("journal.log");
@@ -852,7 +878,7 @@ mod tests {
     #[test]
     fn a_candidates_checked_note_counts_in_no_bucket() {
         let dir = std::env::temp_dir().join(format!(
-            "amont-agent-tally-candidates-{}",
+            "greenpiste-tally-candidates-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&dir); // a scratch dir that is absent is the normal case
@@ -894,7 +920,7 @@ mod tests {
             arm_of_line("F 1 r observe watched sess repo default arm=shadow x"),
             Arm::Shadow
         );
-        let dir = std::env::temp_dir().join(format!("amont-agent-arm-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-arm-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("scratch dir");
         let path = dir.join("journal.log");
@@ -1090,7 +1116,7 @@ mod tests {
     #[test]
     fn the_journal_is_not_world_readable() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("amont-agent-mode-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-mode-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
@@ -1122,7 +1148,7 @@ mod tests {
     }
 
     fn scratch(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("amont-agent-{tag}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-{tag}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("scratch dir");
         dir

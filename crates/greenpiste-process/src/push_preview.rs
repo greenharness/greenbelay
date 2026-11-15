@@ -18,7 +18,7 @@
 //! `examine` fires on the shape of a push. `confirm` resolves what the push
 //! would publish (`greenpiste_guard::push_target`, a documented subset), and fires only
 //! when all hold: the repository has a user interface (a `dev` script, or
-//! `git config amont.agent.push-preview.ui true`), a pushed branch carries a
+//! `git config greenpiste.push-preview.ui true`), a pushed branch carries a
 //! file under `app/`, `src/`, `web/` or a `.tsx/.jsx/.css/.html` whose
 //! nearest `package.json` looks like an interface and whose diff is not
 //! comments only (`crate::preview`; tests and test-tool configs never

@@ -90,7 +90,7 @@ impl World {
     }
 
     fn activity(&self, session: &str, repo: &Path, worktree: &Path, branch: &str, seen_ago: u64) {
-        let sessions = self.config.join("amont-agent/sessions");
+        let sessions = self.config.join("greenpiste/sessions");
         std::fs::create_dir_all(&sessions).unwrap();
         let file = sessions.join(format!("{session}.activity"));
         let identity = repo.join(".git");
@@ -118,7 +118,8 @@ impl World {
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .env("CLAUDE_CONFIG_DIR", &self.config)
-            .env("AMONT_AGENT_PLAN_ROOT", &self.root)
+            .env_remove("XDG_STATE_HOME")
+            .env("GREENPISTE_PLAN_ROOT", &self.root)
             .output()
             .expect("runs")
     }
@@ -154,7 +155,8 @@ impl World {
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .env("CLAUDE_CONFIG_DIR", &self.config)
-            .env("AMONT_AGENT_PLAN_ROOT", &self.root)
+            .env_remove("XDG_STATE_HOME")
+            .env("GREENPISTE_PLAN_ROOT", &self.root)
             .output()
             .expect("runs");
         let calls = std::fs::read_to_string(&log).unwrap_or_default();

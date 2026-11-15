@@ -34,7 +34,7 @@
 //! ## Demotion
 //!
 //! The rule ships at `deny`. One command turns it into a record:
-//! `git config --global amont.agent.workspace-root-write.stance observe`.
+//! `git config --global greenpiste.workspace-root-write.stance observe`.
 
 use crate::analysis::frontend;
 use crate::analysis::ir::{Cmd, Part, Redirect, SimpleCmd, Span, Word};

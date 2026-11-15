@@ -91,7 +91,7 @@ on stderr); 2 on a usage error.
 3. Computes the content id of the pushed commit.
 4. Looks for a binding: a completed `implementation-review` agent in this
    session's transcript whose block names this repository and tree, or a
-   pass remembered under `~/.claude/amont-agent/implementation-review/by-tree/`.
+   pass remembered under `~/.claude/greenpiste/implementation-review/by-tree/`.
    Completion is read from structured fields only, as the review panel
    reads it; a notification echoed inside a tool result never counts. A
    reviewer **resumed** with `SendMessage` on a new block counts as a
@@ -195,7 +195,7 @@ bound nothing says so in the model's context.
 ## Only the hook writes a pass file
 
 Under `deny` a pass file is a trust boundary. A Write, Edit or MultiEdit
-under `~/.claude/amont-agent/implementation-review/` is refused, with `.`
+under `~/.claude/greenpiste/implementation-review/` is refused, with `.`
 and `..` folded before the comparison; a Bash command that would write
 there — a redirect into it, or `rm`, `cp`, `tee`, `python`, `chezmoi` and
 the like with a word naming it — is refused too, whatever the rule's
@@ -203,13 +203,13 @@ stance. Reading the record (`ls`, `cat`, `find`, `grep`) is allowed. The
 Bash half is best-effort by nature: a parser cannot see inside `python -c`
 beyond its words.
 
-`~/.claude/amont-agent/provenance/` is guarded the same way (below).
+`~/.claude/greenpiste/provenance/` is guarded the same way (below).
 
 ## The provenance record
 
 When the hook passes a push that carries a plan, it writes the unsigned
 `amont-provenance-v1` payload to
-`~/.claude/amont-agent/provenance/<repo>/<pushed sha>`. The format is attest
+`~/.claude/greenpiste/provenance/<repo>/<pushed sha>`. The format is attest
 SPEC `amont-provenance-v1`; the decision is ADR-0036. One datum per line:
 `amont-provenance-v1`, `commit`, `tree` (the full tree), `patch` (only when
 the branch patch could be computed), `plan <path> <body sha>` (the plan
@@ -281,7 +281,7 @@ the judgment, and `status` counts it in no bucket.
 
 `greenpiste review-brief` runs `adr-lint candidates --base <merge-base>
 --json --max 40` in the repository (`adr-lint` from PATH, or the program
-named by `AMONT_AGENT_ADR_LINT`; a bounded wait; stdin from /dev/null). A
+named by `GREENPISTE_ADR_LINT`; a bounded wait; stdin from /dev/null). A
 candidate is a line adr-lint marked on a line the branch adds, for the
 reviewer to rule on; adr-lint owns the document (`adr-lint.candidates/1`)
 and the ruling record (`adr-lint.ruling/1`). The reader refuses any other
@@ -310,7 +310,7 @@ On a passing review (the transcript, the tree memory and the patch memory
 alike; the pass file keeps what the prompt listed and the result ruled) the
 push check journals the `candidates-checked` line above and appends, for each
 ruling, one `adr-lint.ruling/1` line to
-`~/.claude/amont-agent/rulings/<repo>.jsonl` (created 0600 in a 0700
+`~/.claude/greenpiste/rulings/<repo>.jsonl` (created 0600 in a 0700
 directory, appended to and never rewritten): `format`, `review` (the
 reviewer's agent id), `tool` (`amont-agent`), `repo`, `tree` (the content
 id), `candidate`, `rule`, `pattern_id`, `pattern` (the message from the
@@ -322,13 +322,13 @@ validates the file.
 A repository with no `.adr.yaml` gets a brief with no RULES line and a
 `# Code rules` section saying that no decided code rules apply (stderr says
 so in one line); `rules-sha` there still exits 3.
-A repository with `.adr.yaml` where aval is not installed (`AMONT_AGENT_AVAL`
+A repository with `.adr.yaml` where aval is not installed (`GREENPISTE_AVAL`
 unset and no `aval` on PATH, not even a non-executable file or a dangling
 symlink) also gets the brief, with no RULES line and a `# Code rules` section
 saying the decided code rules were not read; stderr says so in one line. The
 `review-brief` exit codes: 0 the brief was printed (aval not installed
 included), 1 a repository error, 3 an installed aval failed or
-`AMONT_AGENT_AVAL` points nowhere. A row of `aval relevant`
+`GREENPISTE_AVAL` points nowhere. A row of `aval relevant`
 without a string `key` is an aval error (exit 3) naming the row.
 
 Away from a push: `overruled`, `answered`, `unbound`, `unknown`,
@@ -336,12 +336,12 @@ Away from a push: `overruled`, `answered`, `unbound`, `unknown`,
 refused write. The soak reads them with:
 
 ```sh
-grep -E ' implementation-review ' ~/.claude/amont-agent/journal.log
+grep -E ' implementation-review ' ~/.claude/greenpiste/journal.log
 ```
 
 ## Stance
 
-Ships `advise`. `git config --global amont.agent.implementation-review.stance
+Ships `advise`. `git config --global greenpiste.implementation-review.stance
 deny` holds a push whose review is missing, stale, `rework` or unknown;
 `observe` journals and says nothing. The 2026-10-06 soak review, alongside
 `push-preview`, decides between `deny`, `advise` and retiring the gate from
@@ -354,8 +354,8 @@ echo '[{"severity":"high","disposition":"fixed","section":"Verification"}]' |
   greenpiste implementation-review record <plan.md> --verdict approve-with-changes
 ```
 
-Appends one `amont-agent-impl-review-outcome-v1` row per invocation to
-`~/.claude/amont-agent/implementation-review-outcomes/outcomes.jsonl` (outside
+Appends one `greenpiste-impl-review-outcome-v1` row per invocation to
+`~/.claude/greenpiste/implementation-review-outcomes/outcomes.jsonl` (outside
 the hook-only store): `recorded_at`,
 `tree` (the content id of HEAD, as `tree-sha`), `round` (one more than the rows
 already kept for the plan: a per-plan count, unlike the plan-review ledger's
@@ -430,7 +430,7 @@ fp:<id>`, `revoked: <because>`, `role <r> not covered`, `rules changed since
 registration`, `agent <a> changed since registration`, `no passed pin check;
 run greenpiste review-brief -C <dir>` (no record), `pin check failed:
 <detail>` (the record's own detail), `the pin record was made with
-AMONT_AGENT_GH set; run review-brief without it`, `binary diff`, `git failed`.
+GREENPISTE_GH set; run review-brief without it`, `binary diff`, `git failed`.
 
 `greenpiste block` manages the registry:
 

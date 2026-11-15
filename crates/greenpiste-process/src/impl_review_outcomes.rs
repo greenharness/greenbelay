@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crate::review_outcomes::{
-    lock, now, open_ledger, read_rows, IMPL_SCHEMA as SCHEMA, SEVERITIES,
+    is_impl_schema, lock, now, open_ledger, read_rows, IMPL_SCHEMA as SCHEMA, SEVERITIES,
 };
 
 pub const USAGE: &str = concat!(
@@ -21,8 +21,8 @@ usage: ",
     greenpiste_guard::bin!(),
     " implementation-review record <plan.md> --verdict <v>
 
-Append one row to ~/.claude/amont-agent/implementation-review-outcomes/outcomes.jsonl
-(schema amont-agent-impl-review-outcome-v1): recorded_at, tree (the content id
+Append one row to ~/.claude/greenpiste/implementation-review-outcomes/outcomes.jsonl
+(schema greenpiste-impl-review-outcome-v1): recorded_at, tree (the content id
 of HEAD, as `",
     greenpiste_guard::bin!(),
     " tree-sha`), round (one more than the rows already
@@ -186,7 +186,11 @@ fn record(plan: &Path, verdict: &str, findings: Vec<serde_json::Value>) -> Resul
     let earlier = read_rows(&ledger)
         .map_err(|e| format!("cannot read {}: {e}", ledger.display()))?
         .iter()
-        .filter(|r| r.get("schema").and_then(|s| s.as_str()) == Some(SCHEMA))
+        .filter(|r| {
+            r.get("schema")
+                .and_then(|s| s.as_str())
+                .is_some_and(is_impl_schema)
+        })
         .filter(|r| r.get("plan_path").and_then(|p| p.as_str()) == Some(real.as_str()))
         .count();
     let round = earlier + 1;

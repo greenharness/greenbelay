@@ -1,4 +1,4 @@
-//! `~/.claude/amont-agent/attestations/` is swept, except what a plan cites.
+//! `~/.claude/greenpiste/attestations/` is swept, except what a plan cites.
 //!
 //! That directory is where the worktree-task skill puts evidence (F3 records,
 //! F7 screenshots and `guide.md`) and nothing ever removed anything from it.
@@ -43,7 +43,6 @@ pub const DAY: u64 = 86_400;
 const KEEP_FOR: u64 = 30 * DAY;
 const TRASH_FOR: u64 = 7 * DAY;
 const LOCK_STALE: u64 = 3600;
-const GIT_ROOTS_KEY: &str = r"^amont\.agent\.plan-review\..*\.path$";
 
 /// Where the scan or the sweep could not read, and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,7 +110,7 @@ pub fn now() -> u64 {
 
 /// Every `attestations/<name>` in `text`: the maximal `[A-Za-z0-9._-]` run
 /// after the slash, trailing dots (a sentence end) stripped. Plain
-/// `str::find`; the full path `~/.claude/amont-agent/attestations/x` holds the
+/// `str::find`; the full path `~/.claude/greenpiste/attestations/x` holds the
 /// same text and counts.
 fn citations(text: &str, mut found: impl FnMut(&str)) {
     const KEY: &str = "attestations/";
@@ -202,16 +201,17 @@ fn scan_root(root: &Path, base: &Path, out: &mut Cited) -> Result<(), Failure> {
     }
 }
 
-/// The `amont.agent.plan-review.<name>.path` roots from global git config.
+/// The `greenpiste.plan-review.<name>.path` roots from global git config.
 /// Exit 1 with no output is git saying no key matched; git not running, or
 /// any other exit, is a failure.
 fn git_roots() -> Result<Vec<PathBuf>, Failure> {
+    let roots_pattern = greenpiste_guard::names::config_pattern(r"plan-review\..*\.path$");
     let args = [
         "config",
         "--global",
         "--type=path",
         "--get-regexp",
-        GIT_ROOTS_KEY,
+        roots_pattern.as_str(),
     ];
     let bad = |err: String| Failure {
         path: "git config --global".to_string(),
@@ -724,7 +724,7 @@ usage: ",
     greenpiste_guard::bin!(),
     " attestations [--apply]
 
-  lists each directory under ~/.claude/amont-agent/attestations, why it is
+  lists each directory under ~/.claude/greenpiste/attestations, why it is
   kept or would be removed; --apply moves the removable ones to
   .trash-<secs>-<name>, deleted after 7 days
 
@@ -994,7 +994,7 @@ mod tests {
         fn new() -> Scratch {
             static N: AtomicU32 = AtomicU32::new(0);
             let d = std::env::temp_dir().join(format!(
-                "amont-agent-att-{}-{}",
+                "greenpiste-att-{}-{}",
                 std::process::id(),
                 N.fetch_add(1, Ordering::SeqCst)
             ));
@@ -1131,7 +1131,7 @@ mod tests {
         let s = Scratch::new();
         s.dir("old", 40);
         let mut env = s.env();
-        env.plan_root = Err("the plan root is unset; set AMONT_AGENT_PLAN_ROOT".into());
+        env.plan_root = Err("the plan root is unset; set GREENPISTE_PLAN_ROOT".into());
         let r = run(&env, NOW, true);
         let f = r.failure.expect("scan failed");
         assert_eq!(f.path, "plan root");
@@ -1212,7 +1212,7 @@ mod tests {
         s.plan(
             "r",
             "docs/b.md",
-            "v attestations/v1.2 then ~/.claude/amont-agent/attestations/z\nlast attestations/m0-duro-web",
+            "v attestations/v1.2 then ~/.claude/greenpiste/attestations/z\nlast attestations/m0-duro-web",
         );
         let r = run(&s.env(), NOW, false);
         let gone: Vec<_> = r
@@ -1277,7 +1277,7 @@ mod tests {
     #[test]
     fn git_exit_codes_map_to_roots_or_a_failure() {
         assert_eq!(
-            roots_from(0, "amont.agent.plan-review.dots.path /h/dots\n", ""),
+            roots_from(0, "greenpiste.plan-review.dots.path /h/dots\n", ""),
             Ok(vec![PathBuf::from("/h/dots")])
         );
         assert_eq!(roots_from(1, "", ""), Ok(vec![]), "no key matched");

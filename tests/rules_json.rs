@@ -13,7 +13,7 @@ struct Home(PathBuf);
 impl Home {
     fn new(name: &str) -> Home {
         let dir = std::env::temp_dir().join(format!(
-            "amont-agent-rules-json-{name}-{}",
+            "greenpiste-rules-json-{name}-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
@@ -28,9 +28,10 @@ impl Home {
             .args(args)
             .current_dir(&self.0)
             .env("CLAUDE_CONFIG_DIR", self.0.join("claude"))
+            .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", self.0.join("global"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .output()
             .expect("the binary runs")
     }
@@ -146,7 +147,7 @@ fn the_stance_in_force_is_this_machines_and_the_default_is_what_ships() {
         "an empty config changes nothing"
     );
 
-    h.set(&format!("amont.agent.{id}.stance"), "deny");
+    h.set(&format!("greenpiste.{id}.stance"), "deny");
     let raised = h.json();
     let rule = raised.iter().find(|e| e["id"] == id.as_str()).unwrap();
     assert_eq!(rule["stance"], "deny");

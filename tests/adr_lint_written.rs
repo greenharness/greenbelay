@@ -23,7 +23,7 @@ struct World {
 impl World {
     fn new(name: &str) -> World {
         let root =
-            std::env::temp_dir().join(format!("amont-agent-adrlint-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-adrlint-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("repo/src")).unwrap();
         std::fs::create_dir_all(root.join("bin")).unwrap();
@@ -100,11 +100,12 @@ impl World {
         let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
             .arg("hook")
             .env("CLAUDE_CONFIG_DIR", self.root.join("config"))
+            .env_remove("XDG_STATE_HOME")
             .env("PATH", path)
-            .env("AMONT_AGENT_ADR_LINT", self.bin("adr-lint"))
+            .env("GREENPISTE_ADR_LINT", self.bin("adr-lint"))
             .env("GIT_CONFIG_GLOBAL", self.root.join("no-global-gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -130,7 +131,7 @@ impl World {
     }
 
     fn journal(&self, session: &str) -> Vec<String> {
-        std::fs::read_to_string(self.root.join("config/amont-agent/journal.log"))
+        std::fs::read_to_string(self.root.join("config/greenpiste/journal.log"))
             .unwrap_or_default()
             .lines()
             .filter(|l| l.contains(session))
@@ -304,7 +305,7 @@ fn observing_journals_the_findings_and_says_nothing() {
     // stance by writing one.
     std::fs::write(
         w.root.join("no-global-gitconfig"),
-        "[amont \"agent\"]\n\tstance = observe\n",
+        "[greenpiste]\n\tstance = observe\n",
     )
     .unwrap();
     let (stdout, _) = w.edit("adr-i", "src/a.rs");

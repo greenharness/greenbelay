@@ -36,7 +36,7 @@ const RULES_ARGS: [&str; 7] = [
 /// it failed.
 #[derive(Debug, PartialEq, Eq)]
 pub enum AvalFailed {
-    /// `AMONT_AGENT_AVAL` is unset and no PATH entry is named `aval` at all.
+    /// `GREENPISTE_AVAL` is unset and no PATH entry is named `aval` at all.
     NotInstalled,
     Failed(String),
 }
@@ -130,18 +130,18 @@ pub(crate) struct AvalAnswer {
     pub(crate) stderr: String,
 }
 
-/// The `aval` program to run: `AMONT_AGENT_AVAL` names another one (tests,
+/// The `aval` program to run: `GREENPISTE_AVAL` names another one (tests,
 /// or an `aval` outside PATH), else `aval` from PATH.
 fn aval_program() -> std::ffi::OsString {
-    std::env::var_os("AMONT_AGENT_AVAL")
+    std::env::var_os(greenpiste_guard::env_var!("AVAL"))
         .filter(|program| !program.is_empty())
         .unwrap_or_else(|| std::ffi::OsString::from("aval"))
 }
 
-/// The `adr-lint` program to run: `AMONT_AGENT_ADR_LINT` names another one,
+/// The `adr-lint` program to run: `GREENPISTE_ADR_LINT` names another one,
 /// else `adr-lint` from PATH.
 fn adr_lint_program() -> std::ffi::OsString {
-    std::env::var_os("AMONT_AGENT_ADR_LINT")
+    std::env::var_os(greenpiste_guard::env_var!("ADR_LINT"))
         .filter(|program| !program.is_empty())
         .unwrap_or_else(|| std::ffi::OsString::from("adr-lint"))
 }
@@ -175,7 +175,7 @@ fn no_aval_on_path() -> bool {
 /// Runs `aval` with a deadline: a hung `aval` is killed and reported, so the
 /// push check that calls it never waits on it for long.
 fn run_aval(dir: &Path, args: &[&str]) -> Result<AvalAnswer, AvalFailed> {
-    if std::env::var_os("AMONT_AGENT_AVAL").is_none_or(|program| program.is_empty())
+    if std::env::var_os(greenpiste_guard::env_var!("AVAL")).is_none_or(|program| program.is_empty())
         && no_aval_on_path()
     {
         return Err(AvalFailed::NotInstalled);
@@ -679,7 +679,7 @@ pub fn build(request: &BriefRequest) -> Result<Brief, BriefError> {
                 "# Code rules\n\nThis repository has an aval corpus (.adr.yaml), but aval is not installed, so its decided code rules were not read. Review against the plan; do not treat the code as unconstrained.\n",
             );
             notices.push(format!(
-                "{} has {CORPUS_FILE} but aval is not installed: the brief carries no decided code rules; install it (brew install fredericrous/tap/aval) or set AMONT_AGENT_AVAL",
+                "{} has {CORPUS_FILE} but aval is not installed: the brief carries no decided code rules; install it (brew install fredericrous/tap/aval) or set GREENPISTE_AVAL",
                 repo.display()
             ));
         }
@@ -1286,7 +1286,7 @@ fn diff_of(before: &[u8], after: &[u8]) -> std::io::Result<Vec<u8>> {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.subsec_nanos());
     let dir = std::env::temp_dir().join(format!(
-        "amont-agent-interdiff-{}-{call}-{nanos}",
+        "greenpiste-interdiff-{}-{call}-{nanos}",
         std::process::id()
     ));
     let mut builder = std::fs::DirBuilder::new();
@@ -1380,7 +1380,7 @@ mod tests {
     fn a_patch_in_batches_is_the_one_diff() {
         use std::process::Command;
         let repo = std::env::temp_dir().join(format!(
-            "amont-agent-batches-{}-{:?}",
+            "greenpiste-batches-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));

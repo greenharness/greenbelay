@@ -2,6 +2,113 @@
 
 ## Unreleased
 
+### Fixed
+
+- **`greenpiste doctor` exits non-zero on a failed migration or a leftover,
+  and says when it could not look.** A failed-marker, an old state directory,
+  an old `amont.agent.*` git key and an old plugin registration are no longer
+  advisory; when git or `settings.json` cannot be read it prints `could not
+  read <what>: <why>` instead of calling the machine clean. Old
+  `AMONT_AGENT_*` variables stay advisory.
+- **A hook that cannot migrate keeps using the data directory that exists,
+  and the migration merges colliding journals and ledgers rather than setting
+  the old one aside.** A busy, failed or reversed machine no longer gets a
+  second `~/.claude/greenpiste` beside the old root, and `journal.log` and
+  `*.jsonl` files found in both roots are appended (old rows first) instead of
+  the old history landing in an unread `.from-old-*` file.
+- **The migration is all-or-nothing and conflict-safe for git config keys.**
+  No file is written unless every file holding an old key is writable and
+  none already holds the new key with a different value; the dry-run says
+  `refuse:` for such a file. Row rewrites go through a synced temp file with
+  the original mode, a leftover `*.migrate-tmp` is ignored, and `Busy` and
+  earlier-failure outcomes of `migrate` exit 1 instead of claiming the work
+  is done.
+
+### Changed
+
+- **`migrate --dry-run` exits 1 when the real run would refuse**, printing
+  `would refuse: <step>: <reason>` for each; it exits 0 when nothing would stop it.
+- **The migration's log merge appends and is safe to run again.** A journal or
+  ledger that exists under both names gets the old rows appended to the new
+  file in one write, so a row a hook writes at the same moment is never lost, and
+  a second run (after a kill) adds nothing.
+- **`greenpiste install` waits for the migration and refuses on a failed
+  one.** It waits up to 30 seconds for the migration lock, and when the
+  migration cannot finish it exits 1 saying what to fix and writes nothing.
+- **`--dry-run` and `--check` never migrate.** A command asked only to
+  preview or check leaves an old-style machine as it found it, as `doctor`,
+  `migrate` and `--help` always did.
+- **The migration's progress goes to standard error.** `greenpiste migrate`
+  prints its step lines, its closing line (`migrated N steps in X.Xs`, or
+  `nothing to move`) and the lock-wait line on stderr; the dry-run's `would:`
+  and `nothing to do` lines stay on stdout. A git-config failure prints one
+  error per line, and a migration that failed under a hook is announced as
+  `migration failed (see greenpiste doctor); run greenpiste migrate`.
+
+### Added
+
+- **`greenpiste migrate --dry-run` says `nothing to do: already migrated`
+  (`already reversed` with `--reverse`) when there is nothing to do**, instead
+  of printing nothing.
+- **The documentation and the CI install tests use the new names, and
+  `docs/migrate.md` describes the migration.** The guides name the
+  `GREENPISTE_*` variables, `greenpiste.*` keys and `~/.claude/greenpiste`;
+  the release workflow's install tests set `GREENPISTE_BIN_DIR` and
+  `GREENPISTE_VERSION`.
+- **The installers read `GREENPISTE_BIN_DIR` and `GREENPISTE_VERSION`.** The
+  old `AMONT_AGENT_BIN_DIR` and `AMONT_AGENT_VERSION` still work while the new
+  name is unset, with one warning naming the new one.
+- **The clear-relay plugin's default log directory follows greenpiste's state
+  root** (`$XDG_STATE_HOME/greenpiste`, else a `state` directory beside a
+  relocated Claude config, else `~/.local/state/greenpiste`), with tests that set
+  the environment by name.
+- **greenpiste 5.0.0 migrates this machine's state directories once, under a
+  lock, and never blocks a hook.** The move is reversible with `greenpiste
+  migrate --reverse` (the command arrives in a later change).
+- **The migration also renames this machine's `amont.agent.*` git config keys
+  to `greenpiste.*`**, in the files that hold them (global and system scope,
+  following `include` and `includeIf` whether or not the condition holds).
+  Each key is copied, read back, and only then removed, so an interrupted run
+  loses nothing and a re-run adds nothing; `--reverse` puts the old keys back.
+- **`doctor` reports what the migration left**, read-only: the markers (done
+  with its wall time, reversed, failed with its text), old state directories,
+  old `amont.agent.*` keys with their file, old environment variables (by
+  name, never value) and an old plugin registration. Each line ends with the
+  command that fixes it.
+- **Until a machine is migrated, a hook still reads the old `amont.agent.*`
+  keys** when the new `greenpiste.*` ones are absent, so a failed migration
+  step does not lose stances or `denyAgents`. The new key wins when both
+  exist, and once the done-marker exists the old keys are never read.
+- **`greenpiste migrate [--reverse] [--dry-run]`** runs the migration by hand:
+  it waits up to 30 seconds for the lock, prints a line per step and a last
+  line (`migrated N steps in X.Xs`, `already migrated`, `reversed` or `already
+  reversed`), and exits 1 with the repair when a step refuses. `--dry-run`
+  prints `would: ...` for each change and writes nothing. Run inside a git
+  repository, it also renames that repository's own config keys.
+- **The migration has a plugin-registration step**: the `clear-relay` plugin's
+  enabled-plugin key, known-marketplace entry and path, `stateDir` option and
+  the placed `marketplace.json` name move to the new marketplace id (and back
+  with `--reverse`). A disabled entry stays disabled, other settings are left
+  as they are, and a `settings.json` holding both registrations is refused
+  with nothing written.
+- **Every command, hooks included, migrates this machine on its first run
+  without ever blocking or refusing.** A hook never waits for the lock, tries a
+  failed migration only once, and prints nothing extra; any other command
+  says `migration pending: run greenpiste migrate` when a step failed. `--help`,
+  `--version`, `doctor` and `migrate` never trigger it.
+
+### Changed
+
+- **The state directory, the `tool` record field, the journal and corpus
+  headers, the review schemas, the temp-file prefix and the plugin
+  marketplace id are now `greenpiste`.** Old journal rows, review rows and
+  the committed `.cases` files are still read; 5.0.0 moves this machine's
+  state.
+- **Environment variables are `GREENPISTE_*` and git config keys
+  `greenpiste.*`** (ADR-0068). `AMONT_AGENT_OFF`, `AMONT_AGENT_PLAN_ROOT`
+  and the other `AMONT_AGENT_*` variables, and every `amont.agent.*` key, are
+  no longer read; 5.0.0 moves this machine's keys once (`greenpiste migrate`).
+
 ## v4.3.0
 
 ### Added

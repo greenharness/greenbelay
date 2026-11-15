@@ -28,6 +28,7 @@ use std::process::Command;
 use crate::ui;
 
 use crate::journal;
+use crate::names;
 use crate::rules;
 use crate::settings;
 use crate::stance;
@@ -91,6 +92,7 @@ pub fn run(table: &[rules::Rule], extra: Option<Finding>, found: &Scan) -> Vec<F
     out.push(journal_span());
     out.push(lsp_rules());
     out.extend(shadow_settings(table));
+    out.extend(migration());
     out.extend(extra);
     out
 }
@@ -124,7 +126,7 @@ fn shadow_findings(
             .join(", ");
         return vec![Finding::warn(
             "shadow: a rate does not parse, so that part is not shadowed",
-            format!("{list}: set a number in [0,1], or unset amont.agent.<id>.shadow"),
+            format!("{list}: set a number in [0,1], or unset greenpiste.<id>.shadow"),
         )];
     }
     let mut on = Vec::new();
@@ -148,7 +150,7 @@ fn shadow_findings(
                 "shadow: a rate is set on an irreversible part, so it is refused (irreversible): {}",
                 refused.join(", ")
             ),
-            "an irreversible part is judged by replay and never switched off live; unset amont.agent.<id>.shadow",
+            "an irreversible part is judged by replay and never switched off live; unset greenpiste.<id>.shadow",
         ));
     }
     out
@@ -359,6 +361,97 @@ pub fn integration(found: &Scan) -> Integration {
     }
 }
 
+/// What the 5.0 migration has left, read-only: this never migrates, takes
+/// no lock and writes nothing.
+fn migration() -> Vec<Finding> {
+    let variables: Vec<String> = std::env::vars_os()
+        .filter_map(|(name, _)| {
+            let name = name.to_string_lossy().into_owned();
+            name.starts_with(names::old::ENV_PREFIX).then_some(name)
+        })
+        .collect();
+    let env = crate::migrate::Env::from_process();
+    migration_findings(env.as_ref(), &variables)
+}
+
+fn migration_findings(env: Option<&crate::migrate::Env>, variables: &[String]) -> Vec<Finding> {
+    let fix = format!("{} migrate", names::PRODUCT);
+    // Findings greenpiste can fix: not advisory, doctor exits non-zero.
+    let mut blocking: Vec<String> = Vec::new();
+    // Names greenpiste cannot fix (the person's own environment): advisory.
+    let mut advisory: Vec<String> = Vec::new();
+    if let Some(env) = env {
+        let markers = crate::migrate::marker_state(env);
+        if let Some(note) = markers.failed {
+            blocking.push(format!(
+                "migration failed earlier: {}; run {fix}",
+                note.trim().replace('\n', ": ")
+            ));
+        }
+        if markers.reversed {
+            blocking.push(format!("migration was reversed; run {fix} to redo it"));
+        }
+        for root in crate::migrate::old_roots(env) {
+            blocking.push(format!(
+                "old state directory {} is still a directory; run {fix}",
+                root.display()
+            ));
+        }
+        match crate::migrate_config::old_keys(env) {
+            Ok(keys) => {
+                for (key, file) in keys {
+                    blocking.push(format!(
+                        "old git config key {key} in {}; run {fix}",
+                        file.display()
+                    ));
+                }
+            }
+            Err(why) => blocking.push(format!("could not read the git config keys: {why}")),
+        }
+        match crate::migrate_plugin::old_registration(env) {
+            Ok(Some(settings)) => blocking.push(format!(
+                "old plugin registration in {}; run {fix}",
+                settings.display()
+            )),
+            Ok(None) => {}
+            Err(why) => blocking.push(format!("could not read the plugin registration: {why}")),
+        }
+    }
+    for name in variables {
+        let rest = name.strip_prefix(names::old::ENV_PREFIX).unwrap_or(name);
+        advisory.push(format!(
+            "old environment variable {name} is set; set {}{rest} instead",
+            names::ENV_PREFIX
+        ));
+    }
+    let done = env.and_then(|env| crate::migrate::marker_state(env).done);
+    if blocking.is_empty() && advisory.is_empty() {
+        return vec![Finding::good(match done {
+            Some(wall) => format!("migration: done in {wall} ms, nothing left"),
+            None => "migration: nothing left over".to_string(),
+        })];
+    }
+    let mut out: Vec<Finding> = Vec::new();
+    if let Some(wall) = done {
+        out.push(Finding::good(format!(
+            "migration marker: done in {wall} ms"
+        )));
+    }
+    out.extend(blocking.into_iter().map(|line| Finding {
+        ok: false,
+        advisory: false,
+        line,
+        detail: None,
+    }));
+    out.extend(advisory.into_iter().map(|line| Finding {
+        ok: false,
+        advisory: true,
+        line,
+        detail: None,
+    }));
+    out
+}
+
 /// Whether no finding is a failure; advisories do not count.
 pub fn healthy(findings: &[Finding]) -> bool {
     findings.iter().all(|f| f.ok || f.advisory)
@@ -534,7 +627,7 @@ fn self_test() -> Finding {
                 "every rule may be demoted, or the guard is switched off — check \
              `",
                 crate::bin!(),
-                " status` and $AMONT_AGENT_OFF"
+                " status` and $GREENPISTE_OFF"
             )
             .to_string(),
         );

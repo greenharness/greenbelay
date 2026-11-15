@@ -15,7 +15,7 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 fn check(dir: &Path, extra: &[&str], command: &str) -> (bool, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let out = greenpiste_command()
         .arg("check")
         .arg("--cwd")
         .arg(dir)
@@ -130,8 +130,47 @@ fn a_confirmed_stale_base_prints_its_remedy() {
     );
     git(&clone, &["config", "user.email", "t@example.invalid"]);
     git(&clone, &["config", "user.name", "t"]);
-    git(&clone, &["config", "amont.agent.fetch", "true"]);
+    git(&clone, &["config", "greenpiste.fetch", "true"]);
     assert_prints_remedy(&clone, "stale-base", "git switch -c feat/z");
     let _ = std::fs::remove_dir_all(&origin); // best-effort cleanup of a temp directory; a leftover is harmless
     let _ = std::fs::remove_dir_all(&clone); // best-effort cleanup of a temp directory; a leftover is harmless
+}
+
+/// The greenpiste binary pointed at scratch directories, so the migration every
+/// subcommand runs first never touches the real home of whoever runs the tests.
+/// A caller that sets one of these variables itself overrides it afterwards.
+fn greenpiste_command() -> Command {
+    let scratch = fresh_scratch("check_confirm");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    command
+        .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
+        .env("XDG_STATE_HOME", scratch.join("state"))
+        .env("GIT_CONFIG_GLOBAL", scratch.join("gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    command
+}
+
+/// A new, empty scratch directory for one spawn, named by process id, the
+/// clock and a retry counter; `create_dir` fails on a name already taken.
+fn fresh_scratch(label: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let mut suffix = 0u32;
+    loop {
+        let dir = std::env::temp_dir().join(format!(
+            "gp-{label}-{}-{nanos}-{suffix}",
+            std::process::id()
+        ));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => {
+                std::fs::create_dir(dir.join("claude")).expect("scratch config dir");
+                std::fs::create_dir(dir.join("state")).expect("scratch state home");
+                return dir;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => suffix += 1,
+            Err(error) => panic!("scratch directory {}: {error}", dir.display()),
+        }
+    }
 }

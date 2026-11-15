@@ -13,7 +13,7 @@ struct Scratch(PathBuf);
 impl Scratch {
     fn new(name: &str) -> Scratch {
         let dir =
-            std::env::temp_dir().join(format!("amont-agent-open-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-open-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir); // a stale scratch directory may not exist
         std::fs::create_dir_all(dir.join("docs")).unwrap();
         // The binary reports its working directory as the OS spells it
@@ -25,20 +25,20 @@ impl Scratch {
         let ok = Command::new("git")
             .args(["config", "--file"])
             .arg(self.0.join("gitconfig"))
-            .args(["amont.agent.opener", template])
+            .args(["greenpiste.opener", template])
             .status()
             .unwrap();
         assert!(ok.success());
     }
 
     fn run(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        greenpiste_command()
             .arg("open")
             .args(args)
             .current_dir(&self.0)
             .env("GIT_CONFIG_GLOBAL", self.0.join("gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .output()
             .expect("the binary runs")
     }
@@ -164,7 +164,7 @@ fn an_opener_that_fails_fast_exits_1_naming_the_page_and_the_setting() {
         said.contains("No such file") || said.contains("cannot access"),
         "{said}"
     );
-    assert!(said.contains("amont.agent.opener"), "{said}");
+    assert!(said.contains("greenpiste.opener"), "{said}");
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn an_opener_that_is_not_found_exits_1() {
     s.with_opener("/nonexistent/opener {}");
     let out = s.run(&["http://localhost:1/"]);
     assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("amont.agent.opener"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("greenpiste.opener"));
 }
 
 #[test]
@@ -205,4 +205,43 @@ fn a_separator_lets_a_dash_named_file_open() {
     assert_eq!(out.status.code(), Some(0));
     let expected = format!("file://{}/./-x.html", s.0.display());
     assert_eq!(wait_for(&got), expected);
+}
+
+/// The greenpiste binary pointed at scratch directories, so the migration every
+/// subcommand runs first never touches the real home of whoever runs the tests.
+/// A caller that sets one of these variables itself overrides it afterwards.
+fn greenpiste_command() -> Command {
+    let scratch = fresh_scratch("open");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    command
+        .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
+        .env("XDG_STATE_HOME", scratch.join("state"))
+        .env("GIT_CONFIG_GLOBAL", scratch.join("gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    command
+}
+
+/// A new, empty scratch directory for one spawn, named by process id, the
+/// clock and a retry counter; `create_dir` fails on a name already taken.
+fn fresh_scratch(label: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let mut suffix = 0u32;
+    loop {
+        let dir = std::env::temp_dir().join(format!(
+            "gp-{label}-{}-{nanos}-{suffix}",
+            std::process::id()
+        ));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => {
+                std::fs::create_dir(dir.join("claude")).expect("scratch config dir");
+                std::fs::create_dir(dir.join("state")).expect("scratch state home");
+                return dir;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => suffix += 1,
+            Err(error) => panic!("scratch directory {}: {error}", dir.display()),
+        }
+    }
 }

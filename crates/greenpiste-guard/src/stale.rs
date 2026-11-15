@@ -37,10 +37,10 @@ use std::time::{Duration, Instant, SystemTime};
 use crate::git;
 use crate::gitconfig as config;
 
-/// `amont.agent.fetch` — whether a session opening may touch the network at
+/// `greenpiste.fetch` — whether a session opening may touch the network at
 /// all. `false` still reports the distance to the last-fetched `origin/main`;
 /// it only stops the guard from refreshing it.
-pub const KEY_FETCH: &str = "amont.agent.fetch";
+pub const KEY_FETCH: &str = crate::config_key!("fetch");
 
 /// Wall clock for one fetch. Half the hook's own timeout, so a fetch that is
 /// killed still leaves time to compute and emit the notice.
@@ -57,7 +57,7 @@ pub const FETCH_FRESH_SECS: u64 = 600;
 pub enum Fetch {
     /// Ran and succeeded.
     Done,
-    /// Not run: a recent fetch was trusted, or `amont.agent.fetch` is off.
+    /// Not run: a recent fetch was trusted, or `greenpiste.fetch` is off.
     Skipped,
     /// Ran and failed, or was killed at the budget. The distance is against
     /// the previous fetch.
@@ -334,7 +334,7 @@ mod tests {
     /// Outside a repository there is nothing to measure, and nothing said.
     #[test]
     fn not_a_repository_is_silence() {
-        let dir = std::env::temp_dir().join(format!("amont-agent-stale-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-stale-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         assert!(measure(&dir, "HEAD").is_none());
     }

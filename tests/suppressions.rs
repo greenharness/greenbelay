@@ -9,7 +9,6 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 const BIN: &str = env!("CARGO_BIN_EXE_greenpiste");
 const GIT_ENV: [&str; 12] = [
@@ -20,7 +19,7 @@ const GIT_ENV: [&str; 12] = [
     "GIT_PREFIX",
     "GIT_CONFIG_PARAMETERS",
     "GIT_CONFIG_COUNT",
-    "AMONT_AGENT_OFF",
+    "GREENPISTE_OFF",
     "AMONT_INDEX_FILE",
     "AMONT_INDEX_GIT_DIR",
     "GREENGATE_INDEX_FILE",
@@ -40,14 +39,22 @@ impl Drop for Repo {
 }
 
 fn scratch() -> PathBuf {
-    static NEXT: AtomicUsize = AtomicUsize::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "amont-agent-suppressions-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::SeqCst)
-    ));
-    fs::create_dir_all(&dir).unwrap();
-    dir
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let mut suffix = 0u32;
+    loop {
+        let dir = std::env::temp_dir().join(format!(
+            "gp-suppressions-{}-{nanos}-{suffix}",
+            std::process::id()
+        ));
+        match fs::create_dir(&dir) {
+            Ok(()) => return dir,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => suffix += 1,
+            Err(error) => panic!("scratch directory {}: {error}", dir.display()),
+        }
+    }
 }
 
 fn real_git() -> String {
@@ -76,11 +83,22 @@ impl Repo {
         repo
     }
 
+    /// The test's own temp directory, which holds the scratch config and state
+    /// the binary's migration is pointed at.
+    fn scratch_root(&self) -> &Path {
+        self.config
+            .parent()
+            .expect("the config file sits in the scratch directory")
+    }
+
     fn command(&self, program: &str) -> Command {
         let mut cmd = Command::new(program);
         cmd.current_dir(&self.dir)
             .env("GIT_CONFIG_GLOBAL", &self.config)
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("CLAUDE_CONFIG_DIR", self.scratch_root().join("claude"))
+            .env("XDG_STATE_HOME", self.scratch_root().join("state"))
             .env("GIT_AUTHOR_NAME", "t")
             .env("GIT_AUTHOR_EMAIL", "t@example.com")
             .env("GIT_COMMITTER_NAME", "t")
@@ -210,7 +228,7 @@ fn an_added_bare_marker_blocks_with_its_fix() {
     let stderr = text(&out.stderr);
     assert!(stderr.contains("fix the cause, or stop and tell the person"));
     assert!(stderr.contains("for the person only (an agent's attempt is refused):"));
-    assert!(stderr.contains("git -c amont.agent.suppressions=allow commit"));
+    assert!(stderr.contains("git -c greenpiste.suppressions=allow commit"));
     assert!(!stdout.contains("for the person only"), "{stdout}");
 }
 
@@ -348,7 +366,7 @@ fn under_observe_a_scan_error_prints_its_reason_and_exits_zero() {
         "config",
         "--file",
         repo.config.to_str().unwrap(),
-        "amont.agent.lint-suppression-added.stance",
+        "greenpiste.lint-suppression-added.stance",
         "observe",
     ]);
     let (bin, _) = repo.missing_names_shim();
@@ -469,7 +487,7 @@ fn only_a_command_scoped_allow_passes() {
     repo.stage("a.py", "x = 1\n");
     repo.commit("base");
     repo.install_hook();
-    repo.git(&["config", "--local", "amont.agent.suppressions", "allow"]);
+    repo.git(&["config", "--local", "greenpiste.suppressions", "allow"]);
     repo.write("a.py", BARE);
     repo.git(&["add", "a.py"]);
     let base = repo.head();
@@ -477,7 +495,7 @@ fn only_a_command_scoped_allow_passes() {
     let plain = repo.git_output(&["commit", "-q", "-m", "plain"]);
     assert!(!plain.status.success(), "a repo-config allow must not pass");
     assert!(
-        text(&plain.stderr).contains("amont.agent.suppressions=allow in local config is ignored"),
+        text(&plain.stderr).contains("greenpiste.suppressions=allow in local config is ignored"),
         "{}",
         text(&plain.stderr)
     );
@@ -485,7 +503,7 @@ fn only_a_command_scoped_allow_passes() {
 
     let scoped = repo.git_output(&[
         "-c",
-        "amont.agent.suppressions=allow",
+        "greenpiste.suppressions=allow",
         "commit",
         "-q",
         "-m",
@@ -523,7 +541,7 @@ fn an_extensionless_shell_script_is_judged_by_its_shebang() {
 fn the_stance_decides_the_exit_status() {
     let repo = Repo::new();
     repo.stage("a.py", BARE);
-    let key = "amont.agent.lint-suppression-added.stance";
+    let key = "greenpiste.lint-suppression-added.stance";
 
     assert_eq!(code(&repo.gate()), 1, "advise is the default");
 
@@ -807,7 +825,7 @@ fn a_command_scoped_allow_passes_even_with_an_invalid_amont_index_file() {
         .env("AMONT_INDEX_FILE", &missing)
         .env("AMONT_INDEX_GIT_DIR", repo.dir.join(".git"))
         .env("GIT_CONFIG_COUNT", "1")
-        .env("GIT_CONFIG_KEY_0", "amont.agent.suppressions")
+        .env("GIT_CONFIG_KEY_0", "greenpiste.suppressions")
         .env("GIT_CONFIG_VALUE_0", "allow")
         .output()
         .unwrap();
@@ -819,7 +837,7 @@ fn a_command_scoped_allow_passes_even_with_an_invalid_amont_index_file() {
         text(&scoped.stderr)
     );
 
-    repo.git(&["config", "--local", "amont.agent.suppressions", "allow"]);
+    repo.git(&["config", "--local", "greenpiste.suppressions", "allow"]);
     let persistent = repo
         .command(BIN)
         .args(["suppressions", "--staged"])
@@ -1092,7 +1110,7 @@ fn a_failed_identity_query_is_exit_two_unless_scoped_allow_or_observe() {
     let scoped = hinted_gate(&repo, alternate.as_os_str(), owner.as_os_str())
         .env("PATH", &path)
         .env("GIT_CONFIG_COUNT", "1")
-        .env("GIT_CONFIG_KEY_0", "amont.agent.suppressions")
+        .env("GIT_CONFIG_KEY_0", "greenpiste.suppressions")
         .env("GIT_CONFIG_VALUE_0", "allow")
         .output()
         .unwrap();
@@ -1108,7 +1126,7 @@ fn a_failed_identity_query_is_exit_two_unless_scoped_allow_or_observe() {
         "config",
         "--file",
         repo.config.to_str().unwrap(),
-        "amont.agent.lint-suppression-added.stance",
+        "greenpiste.lint-suppression-added.stance",
         "observe",
     ]);
     let observed = hinted_gate(&repo, alternate.as_os_str(), owner.as_os_str())

@@ -24,7 +24,7 @@ terminal, a local page, and the app already open in their browser.
 1. **Verify.** The agent drives the changed route in a real browser, checks the
    console and network, and takes before and after screenshots.
 2. **Write the guide** — markdown, **outside the worktree**
-   (`~/.claude/amont-agent/attestations/<sha>/guide.md` by convention, the
+   (`~/.claude/greenpiste/attestations/<sha>/guide.md` by convention, the
    screenshots beside it), because a file inside it, or the page rendered
    beside it, would dirty the commit it describes. The format is
    [below](#the-guide).
@@ -39,7 +39,7 @@ terminal, a local page, and the app already open in their browser.
 
    ```sh
    greenpiste preview register --url http://localhost:5173/settings \
-     --guide ~/.claude/amont-agent/attestations/abc1234/guide.md
+     --guide ~/.claude/greenpiste/attestations/abc1234/guide.md
    ```
 
    Run it in the foreground as the **last command of its line**. Anything
@@ -65,7 +65,7 @@ terminal, a local page, and the app already open in their browser.
    | `attestation` | `guide` again, for hooks older than 2.21.0 |
 
    `--open` also opens the page through the machine's opener
-   (`amont.agent.opener`, see [configuration](configuration.md); the platform
+   (`greenpiste.opener`, see [configuration](configuration.md); the platform
    opener by default) and prints the JSON after the attempt with
    `"opened": true` or `"opened": false`; failing to open never fails the
    command.
@@ -177,7 +177,7 @@ reads does not clear `change.dependency-bar`.
 
 When the previewed branch commits a picked mockup — a `*.dc.html` artboard
 under `docs/mockups/<screen>/` (or the directory `git config
-amont.agent.preview.mockups` names; the application-landscape `ui-handoff`
+greenpiste.preview.mockups` names; the application-landscape `ui-handoff`
 PR check reads the same key) — the guide must prove fidelity
 (`handoff.prove-fidelity`, ADR-0016). Added to the five sections:
 
@@ -275,7 +275,7 @@ it runs.
 `push-preview` fires on a push only when all of these hold:
 
 - the repository has a user interface: a `dev` script in `package.json` at
-  the root or in `web/`, or `git config amont.agent.push-preview.ui true`
+  the root or in `web/`, or `git config greenpiste.push-preview.ui true`
   (`false` opts a repository out);
 - a pushed branch carries an **interface change** (below);
 - the plan the branch landed does not declare the evidence
@@ -302,7 +302,7 @@ Two hooks make it checkable:
    plan) and, when the result has the approve shape (`tool_response` an
    object carrying `plan`, no `is_error`), writes the plan's canonical body
    sha ([plan review](plan-review.md): front matter and review sections
-   left out) to `~/.claude/amont-agent/plan-approved/<sha>`, journalled
+   left out) to `~/.claude/greenpiste/plan-approved/<sha>`, journalled
    `plan-approved`.
 2. **The check, at the push.** For a branch whose interface change carries
    no picked mockup (mockup mode always asks; a screen list that cannot be
@@ -375,7 +375,7 @@ all. Within a gated repository, one changed file counts only when all hold:
    foo()`), a `*` line that reads like code (CSS `* {`), a binary file or a
    diff that cannot be taken all count. Any doubt counts.
 
-`git config amont.agent.push-preview.ui` still overrides the repository
+`git config greenpiste.push-preview.ui` still overrides the repository
 decision; it does not change how files are judged.
 
 A push to `main` or `master` is left to amont's `branch-protect`.
@@ -421,7 +421,7 @@ shell, and it is a workflow aid, not a Git enforcement boundary.
 ## Reading the soak
 
 ```sh
-grep -E 'push-(preview|published)' ~/.claude/amont-agent/journal.log
+grep -E 'push-(preview|published)' ~/.claude/greenpiste/journal.log
 ```
 
 Every line names the repository the push ran in or the registration

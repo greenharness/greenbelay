@@ -67,7 +67,7 @@ fn install_agents(config: &Path) {
 impl World {
     fn new(name: &str) -> World {
         let root = std::env::temp_dir().join(format!(
-            "amont-agent-impl-review-{name}-{}-{:?}",
+            "greenpiste-impl-review-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -80,7 +80,7 @@ impl World {
             ids: std::cell::Cell::new(0),
         };
         // No test runs the machine's own `aval`: a fake prints `abc` always,
-        // on every platform, and `bin` names it through `AMONT_AGENT_AVAL`.
+        // on every platform, and `bin` names it through `GREENPISTE_AVAL`.
         world.fake_aval("abc");
         world
     }
@@ -132,24 +132,25 @@ impl World {
     }
 
     fn bin(&self) -> Command {
-        let mut c = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+        let mut c = greenpiste_command();
         // The fakes (`aval`, and `amont` or `git` where a test installs
         // them) come first on PATH.
         let path = std::env::var_os("PATH").unwrap_or_default();
         let mut dirs = vec![self.root.join("bin")];
         dirs.extend(std::env::split_paths(&path));
         c.env("PATH", std::env::join_paths(dirs).unwrap());
-        c.env("AMONT_AGENT_AVAL", self.aval_path());
-        c.env_remove("AMONT_AGENT_PLAN_ROOT");
+        c.env("GREENPISTE_AVAL", self.aval_path());
+        c.env_remove("GREENPISTE_PLAN_ROOT");
         c.env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
+            .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", self.root.join("global"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("AMONT_AGENT_OFF");
+            .env_remove("GREENPISTE_OFF");
         c
     }
 
     /// Where the fake `aval` is: a `#!/bin/sh` script on unix, a batch file
-    /// on Windows. `bin` passes the path in `AMONT_AGENT_AVAL`, because
+    /// on Windows. `bin` passes the path in `GREENPISTE_AVAL`, because
     /// Windows finds only `aval.exe` on PATH, never a script.
     fn aval_path(&self) -> PathBuf {
         let name = if cfg!(windows) { "aval.bat" } else { "aval" };
@@ -426,7 +427,7 @@ printf '{"branch":"%s","remote":"origin","push_url":"u","pushed":"%s","dst":"ref
     fn store(&self) -> PathBuf {
         self.root
             .join("claude")
-            .join("amont-agent")
+            .join("greenpiste")
             .join("implementation-review")
     }
 
@@ -438,7 +439,7 @@ printf '{"branch":"%s","remote":"origin","push_url":"u","pushed":"%s","dst":"ref
     }
 
     fn journal(&self) -> Vec<String> {
-        std::fs::read_to_string(self.root.join("claude/amont-agent/journal.log"))
+        std::fs::read_to_string(self.root.join("claude/greenpiste/journal.log"))
             .unwrap_or_default()
             .lines()
             .filter(|l| {
@@ -452,7 +453,7 @@ printf '{"branch":"%s","remote":"origin","push_url":"u","pushed":"%s","dst":"ref
 
     /// The provenance lines the hook journalled.
     fn provenance_journal(&self) -> Vec<String> {
-        std::fs::read_to_string(self.root.join("claude/amont-agent/journal.log"))
+        std::fs::read_to_string(self.root.join("claude/greenpiste/journal.log"))
             .unwrap_or_default()
             .lines()
             .filter(|l| l.contains(" implementation-review ") && l.contains(" provenance-"))
@@ -461,7 +462,7 @@ printf '{"branch":"%s","remote":"origin","push_url":"u","pushed":"%s","dst":"ref
     }
 
     fn provenance_dir(&self) -> PathBuf {
-        self.root.join("claude/amont-agent/provenance")
+        self.root.join("claude/greenpiste/provenance")
     }
 
     fn edit_tool(&self, dir: &Path, path: &Path) -> Said {
@@ -941,7 +942,7 @@ fn the_stance_ladder_observe_says_nothing_and_deny_holds_a_missing_review() {
     let tree = w.tree(&repo);
     let empty = w.transcript("empty", &Transcript::default());
 
-    w.set_global("amont.agent.implementation-review.stance", "observe");
+    w.set_global("greenpiste.implementation-review.stance", "observe");
     assert_eq!(w.push(&repo, "s1", Some(&empty)), Said::Silent);
     assert!(
         w.last_line().contains(" observe watched "),
@@ -949,7 +950,7 @@ fn the_stance_ladder_observe_says_nothing_and_deny_holds_a_missing_review() {
         w.last_line()
     );
 
-    w.set_global("amont.agent.implementation-review.stance", "deny");
+    w.set_global("greenpiste.implementation-review.stance", "deny");
     match w.push(&repo, "s1", Some(&empty)) {
         Said::Deny(text) => {
             assert!(text.contains(&tree[..12]), "names the tree: {text}");
@@ -991,7 +992,7 @@ fn only_the_hook_writes_a_pass_file() {
     assert!(w.last_line().contains(" deny denied "), "{}", w.last_line());
 
     // Bash, by the words it can see, whatever the stance.
-    w.set_global("amont.agent.implementation-review.stance", "observe");
+    w.set_global("greenpiste.implementation-review.stance", "observe");
     // Quoted as a session writes it: an unquoted Windows path's backslashes
     // are shell escapes.
     let cmd = format!("echo '{{}}' > '{}'", target.display());
@@ -1306,7 +1307,7 @@ fn receipt(repo: &Path, branch: &str, pushed: &str, status: &str) {
 
 #[cfg(unix)]
 fn land_journal(w: &World) -> Vec<String> {
-    std::fs::read_to_string(w.root.join("claude/amont-agent/journal.log"))
+    std::fs::read_to_string(w.root.join("claude/greenpiste/journal.log"))
         .unwrap_or_default()
         .lines()
         .filter(|l| l.starts_with("F ") && l.contains(" land-retry "))
@@ -1322,7 +1323,7 @@ fn a_land_is_held_like_a_push_until_it_is_reviewed() {
     let repo = w.repo("app");
     let tree = w.tree(&repo);
     let empty = w.transcript("empty", &Transcript::default());
-    w.set_global("amont.agent.implementation-review.stance", "deny");
+    w.set_global("greenpiste.implementation-review.stance", "deny");
 
     match w.push_cmd(&repo, "s1", Some(&empty), "amont land --json") {
         Said::Deny(text) => {
@@ -1365,7 +1366,7 @@ fn a_land_shape_that_cannot_be_read_is_held_under_deny_and_names_the_one_that_is
     w.fake_amont();
     let repo = w.repo("app");
     let empty = w.transcript("empty", &Transcript::default());
-    w.set_global("amont.agent.implementation-review.stance", "deny");
+    w.set_global("greenpiste.implementation-review.stance", "deny");
     for cmd in [
         "git commit -m x && amont land",
         "git fetch --set-upstream origin x && amont land",
@@ -1401,7 +1402,7 @@ fn a_land_amont_refuses_is_not_held() {
     let repo = w.repo("app");
     git(&repo, &["checkout", "-q", "main"]);
     let empty = w.transcript("empty", &Transcript::default());
-    w.set_global("amont.agent.implementation-review.stance", "deny");
+    w.set_global("greenpiste.implementation-review.stance", "deny");
     assert_eq!(
         w.push_cmd(&repo, "s1", Some(&empty), "amont land"),
         Said::Silent,
@@ -1957,7 +1958,7 @@ fn a_passing_push_with_a_plan_writes_the_provenance_record() {
     assert_eq!(parts[0], "plan");
     assert_eq!(parts[1], "docs/plans/2026-09-29-x.md");
     assert_eq!(parts[2].len(), 64, "{plan}");
-    let shown = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let shown = greenpiste_command()
         .arg("plan-sha")
         .arg(repo.join("docs/plans/2026-09-29-x.md"))
         .output()
@@ -1971,7 +1972,7 @@ fn a_passing_push_with_a_plan_writes_the_provenance_record() {
     assert_eq!(l[6], "preview not-required");
     assert_eq!(
         l[7],
-        format!("producer amont-agent {}", env!("CARGO_PKG_VERSION"))
+        format!("producer greenpiste {}", env!("CARGO_PKG_VERSION"))
     );
     assert!(std::fs::read_to_string(&f).unwrap().ends_with('\n'));
     assert!(
@@ -2027,15 +2028,15 @@ fn a_plan_approved_with_evidence_is_recorded_as_preview_evidence() {
     git(&repo, &["reset", "-q", "--hard", "origin/main"]);
     w.commit(&repo, &[(plan_rel, plan)]);
     w.commit(&repo, &[("src/lib.rs", "fn a() { b() }\nfn b() {}\n")]);
-    git(&repo, &["config", "amont.agent.push-preview.ui", "true"]);
+    git(&repo, &["config", "greenpiste.push-preview.ui", "true"]);
     let head = git(&repo, &["rev-parse", "HEAD"]);
-    let shown = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let shown = greenpiste_command()
         .arg("plan-sha")
         .arg(repo.join(plan_rel))
         .output()
         .unwrap();
     let sha = String::from_utf8_lossy(&shown.stdout).trim().to_string();
-    let approved = w.root.join("claude/amont-agent/plan-approved");
+    let approved = w.root.join("claude/greenpiste/plan-approved");
     std::fs::create_dir_all(&approved).unwrap();
     std::fs::write(approved.join(&sha), "s\tp\t1\n").unwrap();
     reviewed(&w, &repo);
@@ -2052,7 +2053,7 @@ fn a_mockup_change_with_an_approval_is_recorded_as_preview_approved() {
     // only the person's approval can stand.
     let plan = "---\nstatus: active\n---\n# X\n\n## Preview\n\nevidence: nothing visible is left to judge.\n";
     git(&repo, &["reset", "-q", "--hard", "origin/main"]);
-    git(&repo, &["config", "amont.agent.push-preview.ui", "true"]);
+    git(&repo, &["config", "greenpiste.push-preview.ui", "true"]);
     w.commit(&repo, &[(plan_rel, plan)]);
     let head = w.commit(
         &repo,
@@ -2061,16 +2062,16 @@ fn a_mockup_change_with_an_approval_is_recorded_as_preview_approved() {
             ("docs/mockups/pill/Main.dc.html", "<x-dc></x-dc>\n"),
         ],
     );
-    let shown = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let shown = greenpiste_command()
         .arg("plan-sha")
         .arg(repo.join(plan_rel))
         .output()
         .unwrap();
     let sha = String::from_utf8_lossy(&shown.stdout).trim().to_string();
-    let approved = w.root.join("claude/amont-agent/plan-approved");
+    let approved = w.root.join("claude/greenpiste/plan-approved");
     std::fs::create_dir_all(&approved).unwrap();
     std::fs::write(approved.join(&sha), "s\tp\t1\n").unwrap();
-    let previews = w.root.join("claude/amont-agent/previews");
+    let previews = w.root.join("claude/greenpiste/previews");
     std::fs::create_dir_all(&previews).unwrap();
     let at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2096,7 +2097,7 @@ fn a_gated_change_outside_the_interface_is_recorded_as_not_required() {
     let w = World::new("provnoui");
     let repo = w.repo("app");
     git(&repo, &["reset", "-q", "--hard", "origin/main"]);
-    git(&repo, &["config", "amont.agent.push-preview.ui", "true"]);
+    git(&repo, &["config", "greenpiste.push-preview.ui", "true"]);
     w.commit(&repo, &[("docs/plans/2026-09-29-x.md", "# X\n")]);
     let head = w.commit(&repo, &[("README.md", "words\n")]);
     reviewed(&w, &repo);
@@ -2109,7 +2110,7 @@ fn a_preview_not_yet_approved_defers_the_record_until_it_is() {
     let w = World::new("provdefer");
     let repo = w.repo("app");
     git(&repo, &["reset", "-q", "--hard", "origin/main"]);
-    git(&repo, &["config", "amont.agent.push-preview.ui", "true"]);
+    git(&repo, &["config", "greenpiste.push-preview.ui", "true"]);
     w.commit(&repo, &[("docs/plans/2026-09-29-x.md", "# X\n")]);
     let head = w.commit(&repo, &[("src/lib.rs", "fn a() { b() }\nfn b() {}\n")]);
     let mut t = Transcript::default();
@@ -2132,7 +2133,7 @@ fn a_preview_not_yet_approved_defers_the_record_until_it_is() {
         "{:?}",
         w.provenance_journal()
     );
-    let previews = w.root.join("claude/amont-agent/previews");
+    let previews = w.root.join("claude/greenpiste/previews");
     std::fs::create_dir_all(&previews).unwrap();
     let at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2176,7 +2177,7 @@ fn a_held_push_or_a_push_without_a_plan_writes_no_provenance() {
 fn an_unwritable_provenance_directory_is_journalled_and_the_push_passes() {
     let w = World::new("provfail");
     let repo = w.repo("app");
-    std::fs::create_dir_all(w.root.join("claude/amont-agent")).unwrap();
+    std::fs::create_dir_all(w.root.join("claude/greenpiste")).unwrap();
     std::fs::write(w.provenance_dir(), "a file where the directory goes").unwrap();
     let transcript = {
         let mut t = Transcript::default();
@@ -2467,7 +2468,7 @@ const RULING_FIELDS: [&str; 12] = [
 ];
 
 fn rulings_file(w: &World) -> PathBuf {
-    w.root.join("claude/amont-agent/rulings/app.jsonl")
+    w.root.join("claude/greenpiste/rulings/app.jsonl")
 }
 
 #[test]
@@ -2501,7 +2502,7 @@ fn rulings_are_appended_once_per_review_and_candidate() {
         wanted.sort_unstable();
         assert_eq!(keys, wanted, "{record}");
         assert_eq!(record["format"], "adr-lint.ruling/1");
-        assert_eq!(record["tool"], "amont-agent");
+        assert_eq!(record["tool"], "greenpiste");
         assert_eq!(record["repo"], "app");
         assert_eq!(record["tree"], tree.as_str());
         assert_eq!(record["rule"], "names.reveal-intent");
@@ -2614,6 +2615,15 @@ fn check_with_adr_lint(file: &Path) {
         .arg(file)
         .output()
         .unwrap();
+    // An installed adr-lint older than the rename names only the old tool
+    // value; the check then says nothing about this record.
+    if String::from_utf8_lossy(&checked.stderr).contains(&format!(
+        "want {} or relais",
+        greenpiste_guard::names::old::RECORD_TOOL
+    )) {
+        eprintln!("skipped: the installed adr-lint predates the greenpiste tool value");
+        return;
+    }
     assert!(
         checked.status.success(),
         "adr-lint ruling-record --check: {}",
@@ -2679,7 +2689,7 @@ fn no_implementation_review_agent_is_allowed_with_one_gap_line_unless_a_plugin_h
     let w = World::new("gap");
     let repo = w.repo("app");
     let empty = w.transcript("empty", &Transcript::default());
-    w.set_global("amont.agent.implementation-review.stance", "deny");
+    w.set_global("greenpiste.implementation-review.stance", "deny");
     let config = w.root.join("claude");
     std::fs::remove_dir_all(config.join("agents")).unwrap();
     let said = w.push(&repo, "s1", Some(&empty));
@@ -2709,15 +2719,15 @@ fn a_review_in_the_transcript_is_honoured_with_no_agent_installed() {
     git(&repo, &["reset", "-q", "--hard", "origin/main"]);
     w.commit(&repo, &[(plan_rel, plan)]);
     w.commit(&repo, &[("src/lib.rs", "fn a() { b() }\nfn b() {}\n")]);
-    git(&repo, &["config", "amont.agent.push-preview.ui", "true"]);
+    git(&repo, &["config", "greenpiste.push-preview.ui", "true"]);
     let head = git(&repo, &["rev-parse", "HEAD"]);
-    let shown = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let shown = greenpiste_command()
         .arg("plan-sha")
         .arg(repo.join(plan_rel))
         .output()
         .unwrap();
     let sha = String::from_utf8_lossy(&shown.stdout).trim().to_string();
-    let approved = w.root.join("claude/amont-agent/plan-approved");
+    let approved = w.root.join("claude/greenpiste/plan-approved");
     std::fs::create_dir_all(&approved).unwrap();
     std::fs::write(approved.join(&sha), "s\tp\t1\n").unwrap();
     std::fs::remove_dir_all(w.root.join("claude").join("agents")).unwrap();
@@ -2740,7 +2750,7 @@ fn an_unreadable_agents_dir_keeps_the_deny() {
     let w = World::new("gap-unreadable");
     let repo = w.repo("app");
     let empty = w.transcript("empty", &Transcript::default());
-    w.set_global("amont.agent.implementation-review.stance", "deny");
+    w.set_global("greenpiste.implementation-review.stance", "deny");
     let agents = w.root.join("claude").join("agents");
     std::fs::set_permissions(&agents, std::fs::Permissions::from_mode(0o000)).unwrap();
     let readable = std::fs::read_dir(&agents).is_ok(); // root reads anything
@@ -3327,10 +3337,7 @@ fn a_pointer_plan_declares_through_its_canonical_plan() {
         "# P\n\n## Code review\n\n- app: backend\n",
     )
     .unwrap();
-    w.set_global(
-        "amont.agent.plan-review.root",
-        &w.root.display().to_string(),
-    );
+    w.set_global("greenpiste.plan-review.root", &w.root.display().to_string());
     w.commit(
         &repo,
         &[(
@@ -3364,7 +3371,7 @@ fn a_pointer_plan_declares_through_its_canonical_plan() {
         "{:?}",
         w.journal()
     );
-    w.set_global("amont.agent.implementation-review.stance", "deny");
+    w.set_global("greenpiste.implementation-review.stance", "deny");
     match w.push(&repo, "s3", Some(&transcript)) {
         Said::Deny(text) => assert!(text.contains("cannot be read"), "{text}"),
         other => panic!("expected a hold, got {other:?}"),
@@ -3809,7 +3816,7 @@ fn an_unreadable_declaration_at_the_approved_commit_is_not_a_carry() {
     let w = World::new("session-unreadable");
     let repo = w.repo("app");
     declare(&w, &repo, "- app: wizard");
-    w.set_global("amont.agent.implementation-review.stance", "deny");
+    w.set_global("greenpiste.implementation-review.stance", "deny");
     let tree_a = reviewed_tree(&w, &repo, "fn a() { b() }\nfn b() { 12; }\n");
     let prompt_a = format!(
         "{}\nProfile: backend\nRound 1.\n",
@@ -3856,10 +3863,7 @@ fn a_pointer_plan_gets_no_session_carry() {
             .unwrap();
         };
         declare_canonical("- app: backend");
-        w.set_global(
-            "amont.agent.plan-review.root",
-            &w.root.display().to_string(),
-        );
+        w.set_global("greenpiste.plan-review.root", &w.root.display().to_string());
         w.commit(
             &repo,
             &[(
@@ -4042,10 +4046,7 @@ fn pointer_repo(w: &World, name: &str, own: &str, canonical: Option<&str>) -> Pa
         )
         .unwrap();
     }
-    w.set_global(
-        "amont.agent.plan-review.root",
-        &w.root.display().to_string(),
-    );
+    w.set_global("greenpiste.plan-review.root", &w.root.display().to_string());
     let mut plan =
         "---\ncanonical: decisions:docs/plans/p.md\nstatus: active\n---\n# X (pointer)\n"
             .to_string();
@@ -4061,7 +4062,7 @@ fn pointer_repo(w: &World, name: &str, own: &str, canonical: Option<&str>) -> Pa
 fn a_pointer_declares_through_its_own_line() {
     let w = World::new("pointer-own");
     let repo = pointer_repo(&w, "app", "- app: backend", None);
-    w.set_global("amont.agent.implementation-review.stance", "deny");
+    w.set_global("greenpiste.implementation-review.stance", "deny");
     let transcript = w.transcript("t", &impl_review_only(&w, &repo));
     match w.push(&repo, "s1", Some(&transcript)) {
         Said::Deny(text) => {
@@ -4079,7 +4080,7 @@ fn a_pointer_section_without_this_repository_is_an_error() {
     for own in ["- other: backend", "- app: wizard"] {
         let w = World::new("pointer-wrong");
         let repo = pointer_repo(&w, "app", own, Some("- app: backend"));
-        w.set_global("amont.agent.implementation-review.stance", "deny");
+        w.set_global("greenpiste.implementation-review.stance", "deny");
         let transcript = w.transcript("t", &impl_review_only(&w, &repo));
         match w.push(&repo, "s1", Some(&transcript)) {
             Said::Deny(text) => assert!(text.contains("code review declared in"), "{own}: {text}"),
@@ -4184,11 +4185,11 @@ fn an_invalid_pointer_line_at_the_reviewed_commit_does_not_carry() {
 const FULL_SET: &str = "backend, lang:rust";
 
 fn deny(w: &World) {
-    w.set_global("amont.agent.implementation-review.stance", "deny");
+    w.set_global("greenpiste.implementation-review.stance", "deny");
 }
 
 fn state_dir(w: &World) -> PathBuf {
-    w.root.join("claude").join("amont-agent")
+    w.root.join("claude").join("greenpiste")
 }
 
 /// The fingerprint of the repository's branch against `origin/main`.
@@ -4391,7 +4392,7 @@ fn a_pin_record_made_with_the_gh_override_is_a_miss_without_it() {
     store_pin(&w, &copy, &pin_record(passed_pin(), true));
     denied_with(
         push_copy(&w, &copy, "s2"),
-        "the pin record was made with AMONT_AGENT_GH set; run review-brief without it",
+        "the pin record was made with GREENPISTE_GH set; run review-brief without it",
     );
 }
 
@@ -4463,7 +4464,7 @@ fn a_revoked_block_never_matches_even_with_a_later_generation() {
 fn under_the_advise_stance_a_copy_line_is_a_miss() {
     let (w, _, copy) = registered_pilot("copy-advise");
     pin_passed(&w, &copy);
-    w.set_global("amont.agent.implementation-review.stance", "advise");
+    w.set_global("greenpiste.implementation-review.stance", "advise");
     let said = push_copy(&w, &copy, "s2");
     let text = advised(&said);
     assert!(text.contains("code-review-backend"), "{text}");
@@ -4761,11 +4762,50 @@ fn an_empty_gh_override_in_the_hook_counts_as_unset() {
     let transcript = w.transcript("empty", &t);
     let said = {
         let mut cmd = w.bin();
-        cmd.env("AMONT_AGENT_GH", "");
+        cmd.env("GREENPISTE_GH", "");
         w.hook_with(cmd, &copy, "empty", &transcript)
     };
     denied_with(
         said,
-        "the pin record was made with AMONT_AGENT_GH set; run review-brief without it",
+        "the pin record was made with GREENPISTE_GH set; run review-brief without it",
     );
+}
+
+/// The greenpiste binary pointed at scratch directories, so the migration every
+/// subcommand runs first never touches the real home of whoever runs the tests.
+/// A caller that sets one of these variables itself overrides it afterwards.
+fn greenpiste_command() -> Command {
+    let scratch = fresh_scratch("implementation_review");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    command
+        .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
+        .env("XDG_STATE_HOME", scratch.join("state"))
+        .env("GIT_CONFIG_GLOBAL", scratch.join("gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    command
+}
+
+/// A new, empty scratch directory for one spawn, named by process id, the
+/// clock and a retry counter; `create_dir` fails on a name already taken.
+fn fresh_scratch(label: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let mut suffix = 0u32;
+    loop {
+        let dir = std::env::temp_dir().join(format!(
+            "gp-{label}-{}-{nanos}-{suffix}",
+            std::process::id()
+        ));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => {
+                std::fs::create_dir(dir.join("claude")).expect("scratch config dir");
+                std::fs::create_dir(dir.join("state")).expect("scratch state home");
+                return dir;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => suffix += 1,
+            Err(error) => panic!("scratch directory {}: {error}", dir.display()),
+        }
+    }
 }

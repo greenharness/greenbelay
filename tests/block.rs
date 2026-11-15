@@ -193,7 +193,7 @@ impl Scratch {
     /// one in a subdirectory and one at the root.
     fn new(name: &str) -> Scratch {
         let root =
-            std::env::temp_dir().join(format!("amont-agent-block-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-block-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root); // a leftover scratch dir from an earlier run; absence is the goal
         let repo = root.join("repo");
         std::fs::create_dir_all(repo.join("sub")).unwrap();
@@ -222,11 +222,12 @@ impl Scratch {
     }
 
     fn sha(&self, cwd: &Path, global: Option<&Path>) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        greenpiste_command()
             .args(["block", "sha", "-C"])
             .arg(cwd)
             .args(["--base", "main"])
             .env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
+            .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("HOME", &self.root)
             .env(
@@ -343,7 +344,7 @@ fn a_binary_file_prints_nothing_and_exits_1() {
 }
 
 fn block(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    greenpiste_command()
         .arg("block")
         .args(args)
         .output()
@@ -382,17 +383,15 @@ const REVOKED_FP: &str = "bbbbbbbbbbbb111111111111111111111111111111111111111111
 
 impl Registry {
     fn new(name: &str) -> Registry {
-        let config = std::env::temp_dir().join(format!(
-            "amont-agent-registry-{name}-{}",
-            std::process::id()
-        ));
+        let config =
+            std::env::temp_dir().join(format!("greenpiste-registry-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&config); // a leftover dir from an earlier run; absence is the goal
         std::fs::create_dir_all(&config).unwrap();
         Registry { config }
     }
 
     fn base(&self) -> PathBuf {
-        self.config.join("amont-agent")
+        self.config.join("greenpiste")
     }
 
     fn register(&self, fingerprint: &str, roles: &[&str], repo: &str, commit: &str) {
@@ -430,10 +429,11 @@ impl Registry {
     }
 
     fn run(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        greenpiste_command()
             .arg("block")
             .args(args)
             .env("CLAUDE_CONFIG_DIR", &self.config)
+            .env_remove("XDG_STATE_HOME")
             .output()
             .unwrap()
     }
@@ -728,4 +728,43 @@ fn list_and_revoke_pick_the_same_source_across_generations() {
     );
     let revoked = registry.run(&["revoke", "fp:aaaaaaaaaaaa", "--because", "x"]);
     assert_eq!(out_text(&revoked), "o/second\ttopic\t-\n");
+}
+
+/// The greenpiste binary pointed at scratch directories, so the migration every
+/// subcommand runs first never touches the real home of whoever runs the tests.
+/// A caller that sets one of these variables itself overrides it afterwards.
+fn greenpiste_command() -> Command {
+    let scratch = fresh_scratch("block");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    command
+        .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
+        .env("XDG_STATE_HOME", scratch.join("state"))
+        .env("GIT_CONFIG_GLOBAL", scratch.join("gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    command
+}
+
+/// A new, empty scratch directory for one spawn, named by process id, the
+/// clock and a retry counter; `create_dir` fails on a name already taken.
+fn fresh_scratch(label: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let mut suffix = 0u32;
+    loop {
+        let dir = std::env::temp_dir().join(format!(
+            "gp-{label}-{}-{nanos}-{suffix}",
+            std::process::id()
+        ));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => {
+                std::fs::create_dir(dir.join("claude")).expect("scratch config dir");
+                std::fs::create_dir(dir.join("state")).expect("scratch state home");
+                return dir;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => suffix += 1,
+            Err(error) => panic!("scratch directory {}: {error}", dir.display()),
+        }
+    }
 }

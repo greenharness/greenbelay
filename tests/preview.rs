@@ -63,7 +63,7 @@ impl World {
     /// A UI repository whose `main` is on the remote, on a fresh branch.
     fn new(name: &str) -> World {
         let root = std::env::temp_dir().join(format!(
-            "amont-agent-preview-{name}-{}-{:?}",
+            "greenpiste-preview-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -126,9 +126,10 @@ impl World {
             .args(args)
             .current_dir(&self.work)
             .env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
+            .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", self.root.join("global"))
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -316,8 +317,7 @@ printf '{"branch":"%s","remote":"origin","push_url":"u","pushed":"%s","dst":"ref
     }
 
     fn journal(&self) -> String {
-        std::fs::read_to_string(self.root.join("claude/amont-agent/journal.log"))
-            .unwrap_or_default()
+        std::fs::read_to_string(self.root.join("claude/greenpiste/journal.log")).unwrap_or_default()
     }
 }
 
@@ -516,7 +516,7 @@ fn a_prefilled_marked_question_never_approves_and_is_refused_under_deny() {
         "a pre-answered question is not the person"
     );
 
-    w.set_global("amont.agent.push-preview.stance", "deny");
+    w.set_global("greenpiste.push-preview.stance", "deny");
     let out = w.ask("PreToolUse", ("s", "p1"), "q2", &q, None, true);
     assert!(out.contains("\"deny\""), "refused before it runs: {out}");
 }
@@ -953,7 +953,7 @@ fn a_register_that_is_not_last_piped_or_substituted_stays_unbound() {
 #[test]
 fn under_deny_an_unreadable_push_to_a_ui_repository_is_held() {
     let w = World::new("deny");
-    w.set_global("amont.agent.push-preview.stance", "deny");
+    w.set_global("greenpiste.push-preview.stance", "deny");
     w.commit("app/a.tsx", "1\n");
     let out = w.pre_bash("s", "t", "git push --all origin");
     assert!(out.contains("\"deny\""), "{out}");
@@ -964,7 +964,7 @@ fn under_deny_an_unreadable_push_to_a_ui_repository_is_held() {
 #[test]
 fn under_deny_a_delete_only_push_passes() {
     let w = World::new("deny-delete");
-    w.set_global("amont.agent.push-preview.stance", "deny");
+    w.set_global("greenpiste.push-preview.stance", "deny");
     w.commit("app/a.tsx", "1\n");
     for command in [
         "git push origin --delete old other",
@@ -999,7 +999,7 @@ fn a_removed_session_directory_neither_hides_nor_excuses_a_push() {
         "advise: nothing to look at: {out}"
     );
 
-    w.set_global("amont.agent.push-preview.stance", "deny");
+    w.set_global("greenpiste.push-preview.stance", "deny");
     let out = w.pre_bash_in(&gone, "s", "t", &cd);
     assert!(out.contains("\"deny\""), "{out}");
     let out = w.pre_bash_in(&gone, "s", "t", "git push -u origin feat/x");
@@ -1015,7 +1015,7 @@ fn a_removed_session_directory_neither_hides_nor_excuses_a_push() {
 #[test]
 fn a_repository_can_opt_out() {
     let w = World::new("opt-out");
-    git(&w.work, &["config", "amont.agent.push-preview.ui", "false"]);
+    git(&w.work, &["config", "greenpiste.push-preview.ui", "false"]);
     w.commit("app/a.tsx", "1\n");
     assert!(!w.push_advised("s"));
 }
@@ -1394,7 +1394,7 @@ fn an_unapproved_mockup_commit_is_held_and_a_plain_ui_one_is_advised() {
     assert!(held.contains("\"deny\""), "held: {held}");
 
     // Observe is how a person turns the rule off; mockup mode respects it.
-    w.set_global("amont.agent.push-preview.stance", "observe");
+    w.set_global("greenpiste.push-preview.stance", "observe");
     let off = w.pre_bash("s", "push3", "git push -u origin feat/x");
     assert!(!off.contains("\"deny\""), "{off}");
 }
@@ -1418,7 +1418,7 @@ fn an_unreadable_push_is_held_as_unreadable_not_as_unapproved() {
     // before the tag existed; the hold said "no approved preview covers",
     // and the session went looking for an approval it did not need.
     let w = World::new("deny-unborn-tag");
-    w.set_global("amont.agent.push-preview.stance", "deny");
+    w.set_global("greenpiste.push-preview.stance", "deny");
     w.commit("app/a.tsx", "1\n");
     let out = w.pre_bash("s", "t", "git tag v9.9.9 && git push origin v9.9.9");
     assert!(out.contains("\"deny\""), "still held: {out}");
@@ -1437,7 +1437,7 @@ fn an_unreadable_push_is_held_as_unreadable_not_as_unapproved() {
 #[test]
 fn under_deny_a_push_of_an_existing_tag_passes() {
     let w = World::new("deny-tag");
-    w.set_global("amont.agent.push-preview.stance", "deny");
+    w.set_global("greenpiste.push-preview.stance", "deny");
     w.commit("app/a.tsx", "1\n");
     git(&w.work, &["tag", "v9.9.9"]);
     let out = w.pre_bash("s", "t", "git push origin v9.9.9");
@@ -1474,7 +1474,7 @@ fn plan_sha(w: &World, plan: &Path) -> String {
 }
 
 fn approved_plans(w: &World) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(w.root.join("claude/amont-agent/plan-approved"))
+    let mut names: Vec<String> = std::fs::read_dir(w.root.join("claude/greenpiste/plan-approved"))
         .map(|d| {
             d.flatten()
                 .map(|e| e.file_name().to_string_lossy().into_owned())
@@ -1715,7 +1715,7 @@ fn an_approval_is_keyed_by_content_not_by_commit() {
 fn an_old_four_field_approval_matches_only_its_own_commit() {
     let w = World::new("bytree-old");
     let first = w.commit("app/routes/home.tsx", "1\n");
-    let dir = w.root.join("claude/amont-agent/previews");
+    let dir = w.root.join("claude/greenpiste/previews");
     std::fs::create_dir_all(&dir).unwrap();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2043,7 +2043,7 @@ fn an_identical_pair_in_a_guide_that_is_not_the_pages_is_not_approved() {
 /// Make the approvals file unwritable: a non-empty directory stands where
 /// the atomic rename would put it.
 fn block_approvals(w: &World) {
-    let blocked = w.root.join("claude/amont-agent/previews/approvals");
+    let blocked = w.root.join("claude/greenpiste/previews/approvals");
     std::fs::create_dir_all(&blocked).unwrap();
     std::fs::write(blocked.join("keep"), "x").unwrap();
 }
@@ -2088,7 +2088,7 @@ fn a_marked_approve_that_cannot_be_stored_is_journalled_and_still_asks() {
 fn register_opening(name: &str, opener: &str) -> serde_json::Value {
     let w = World::new(name);
     w.commit("src/a.txt", "a");
-    w.set_global("amont.agent.opener", opener);
+    w.set_global("greenpiste.opener", opener);
     let guide = w.guide();
     let (code, stdout, stderr) = w.run(
         &[

@@ -38,8 +38,8 @@ or a local branch, while that start point is behind. The remote form
 (`… -b feat/x origin/main`) is the remedy and never fires.
 
 ```sh
-git config --global amont.agent.stale-base.stance observe   # measure, say nothing
-git config --global amont.agent.fetch false                 # never touch the network
+git config --global greenpiste.stale-base.stance observe   # measure, say nothing
+git config --global greenpiste.fetch false                 # never touch the network
 git config checkout.defaultRemote forgejo                   # measure against another remote
 ```
 
@@ -74,7 +74,7 @@ error. A session-opening notice that cries wolf is worse than one that
 occasionally says nothing.
 
 ```sh
-git config --global amont.agent.agentsMdNotice false   # silence this half
+git config --global greenpiste.agentsMdNotice false   # silence this half
 ```
 
 ## Open plans

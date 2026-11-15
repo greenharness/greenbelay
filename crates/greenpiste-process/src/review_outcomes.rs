@@ -31,7 +31,7 @@ usage: ",
     " plan-review stats --time [--since <YYYY-MM-DD>] [--json]
 
 Append one row per completed plan-review reviewer of the plan to
-~/.claude/amont-agent/plan-review/outcomes.jsonl, skipping agents already
+~/.claude/greenpiste/plan-review/outcomes.jsonl, skipping agents already
 recorded (by agent id), and save each reviewed plan body once under
 plan-review/bodies/.
 
@@ -86,9 +86,32 @@ a usage error: an unknown flag, a malformed --since, --model with --time, or
 "
 );
 
-const SCHEMA: &str = "amont-agent-review-outcome-v1";
-const MERGE_SCHEMA: &str = "amont-agent-review-merge-v1";
-const DISPOSITION_SCHEMA: &str = "amont-agent-review-disposition-v1";
+use greenpiste_guard::names::{self, old};
+
+const SCHEMA: &str = names::REVIEW_OUTCOME_SCHEMA;
+const MERGE_SCHEMA: &str = names::REVIEW_MERGE_SCHEMA;
+const DISPOSITION_SCHEMA: &str = names::REVIEW_DISPOSITION_SCHEMA;
+
+/// Whether `schema` is a review-outcome row's, under either name.
+pub(crate) fn is_outcome_schema(schema: &str) -> bool {
+    schema == SCHEMA || schema == old::REVIEW_OUTCOME_SCHEMA
+}
+
+/// Whether `schema` is a review-merge row's, under either name.
+pub(crate) fn is_merge_schema(schema: &str) -> bool {
+    schema == MERGE_SCHEMA || schema == old::REVIEW_MERGE_SCHEMA
+}
+
+/// Whether `schema` is a review-disposition row's, under either name.
+pub(crate) fn is_disposition_schema(schema: &str) -> bool {
+    schema == DISPOSITION_SCHEMA || schema == old::REVIEW_DISPOSITION_SCHEMA
+}
+
+/// Whether `schema` is an implementation-review outcome row's, under either
+/// name.
+pub(crate) fn is_impl_schema(schema: &str) -> bool {
+    schema == IMPL_SCHEMA || schema == old::IMPL_REVIEW_OUTCOME_SCHEMA
+}
 pub(crate) const SEVERITIES: [&str; 4] = ["blocking", "high", "medium", "low"];
 const DISPOSITIONS: [&str; 3] = ["accepted", "rejected", "decision"];
 const LOCK_FILE: &str = "outcomes.jsonl.lock";
@@ -396,87 +419,10 @@ fn json_list<'a>(items: impl IntoIterator<Item = &'a String>) -> serde_json::Val
     serde_json::Value::Array(items.into_iter().map(|s| s.as_str().into()).collect())
 }
 
-/// An exclusive lock on the ledger's lock file, held until dropped. Two
-/// `record` calls on one transcript would otherwise both read "not yet
-/// recorded" and append the same reviewers twice.
-pub(crate) struct Lock {
-    _held: std::fs::File,
-}
-
-#[cfg(unix)]
-pub(crate) fn lock(path: &Path) -> std::io::Result<Lock> {
-    use std::os::unix::fs::OpenOptionsExt;
-    use std::os::unix::io::AsRawFd;
-    extern "C" {
-        fn flock(fd: i32, op: i32) -> i32;
-    }
-    const LOCK_EX: i32 = 2;
-    let f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .mode(0o600)
-        .open(path)?;
-    greenpiste_guard::journal::private(path, 0o600);
-    if unsafe { flock(f.as_raw_fd(), LOCK_EX) } != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(Lock { _held: f })
-}
-
-// holds-until: two `record` calls run at once on Windows. No lock is taken
-// there: `File::lock` needs Rust 1.89, above the 1.85 floor, and plan
-// reviews run on unix machines. Ends when the floor reaches 1.89.
-#[cfg(not(unix))]
-pub(crate) fn lock(path: &Path) -> std::io::Result<Lock> {
-    let f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
-    Ok(Lock { _held: f })
-}
+pub(crate) use greenpiste_guard::lock::lock;
 
 /// The longest the PostToolUse hook waits for the ledger lock.
 const HOOK_LOCK_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
-/// Pause between two non-blocking lock attempts.
-const HOOK_LOCK_RETRY: std::time::Duration = std::time::Duration::from_millis(25);
-
-/// Like [`lock`], but takes the lock with `LOCK_NB` and retries for at most
-/// `budget`; `TimedOut` when another process still holds it.
-#[cfg(unix)]
-pub(crate) fn lock_within(path: &Path, budget: std::time::Duration) -> std::io::Result<Lock> {
-    use std::os::unix::fs::OpenOptionsExt;
-    use std::os::unix::io::AsRawFd;
-    extern "C" {
-        fn flock(fd: i32, op: i32) -> i32;
-    }
-    const LOCK_EX_NB: i32 = 2 | 4;
-    let f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .mode(0o600)
-        .open(path)?;
-    greenpiste_guard::journal::private(path, 0o600);
-    let deadline = std::time::Instant::now() + budget;
-    loop {
-        if unsafe { flock(f.as_raw_fd(), LOCK_EX_NB) } == 0 {
-            return Ok(Lock { _held: f });
-        }
-        let e = std::io::Error::last_os_error();
-        if e.kind() != std::io::ErrorKind::WouldBlock {
-            return Err(e);
-        }
-        if std::time::Instant::now() >= deadline {
-            return Err(std::io::ErrorKind::TimedOut.into());
-        }
-        std::thread::sleep(HOOK_LOCK_RETRY);
-    }
-}
-
-// holds-until: see `lock`; no lock is taken off unix, so there is nothing to wait for.
-#[cfg(not(unix))]
-pub(crate) fn lock_within(path: &Path, _budget: std::time::Duration) -> std::io::Result<Lock> {
-    lock(path)
-}
 
 const HOOK_RULE: &str = "plan-review-record";
 
@@ -509,22 +455,23 @@ pub fn on_plan_answered(ev: &greenpiste_guard::payload::PlanAnswered) {
             record_approval(plan);
         }
         let store = prepare_store()?;
-        let held = match lock_within(&store.join(LOCK_FILE), HOOK_LOCK_BUDGET) {
-            Ok(l) => l,
-            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                let sha = std::fs::read_to_string(plan)
-                    .map(|t| crate::plan_text::body_sha(&t))
-                    .unwrap_or_default();
-                let real = plan_review::real(plan);
-                hook_note(
-                    "skipped",
-                    &ev.session,
-                    &format!("{} {}", sha.get(..12).unwrap_or("-"), real.display()),
-                );
-                return Ok(());
-            }
-            Err(e) => return Err(format!("cannot lock the ledger: {e}")),
-        };
+        let held =
+            match greenpiste_guard::lock::lock_within(&store.join(LOCK_FILE), HOOK_LOCK_BUDGET) {
+                Ok(Some(l)) => l,
+                Ok(None) => {
+                    let sha = std::fs::read_to_string(plan)
+                        .map(|t| crate::plan_text::body_sha(&t))
+                        .unwrap_or_default();
+                    let real = plan_review::real(plan);
+                    hook_note(
+                        "skipped",
+                        &ev.session,
+                        &format!("{} {}", sha.get(..12).unwrap_or("-"), real.display()),
+                    );
+                    return Ok(());
+                }
+                Err(e) => return Err(format!("cannot lock the ledger: {e}")),
+            };
         let done = record_locked(&store, plan, ev.transcript.clone(), &[]).map(|_| ());
         drop(held);
         done
@@ -620,8 +567,11 @@ struct Recorded {
 /// A torn line (a crash mid-append) is skipped, not fatal.
 fn recorded(path: &Path, plan: &str) -> std::io::Result<Recorded> {
     let rows = read_rows(path)?;
-    let is_review =
-        |v: &&serde_json::Value| v.get("schema").and_then(|s| s.as_str()) == Some(SCHEMA);
+    let is_review = |v: &&serde_json::Value| {
+        v.get("schema")
+            .and_then(|s| s.as_str())
+            .is_some_and(is_outcome_schema)
+    };
     // Only review rows: a merge row (`plan-apply`) has an `agent_id` too, and
     // must not make a reviewer look recorded.
     let reviewed = rows
@@ -676,7 +626,11 @@ pub(crate) fn round1_body(plan_id: &PlanId) -> Option<String> {
     let rows = read_rows(&store.join("outcomes.jsonl")).ok()?;
     let sha = rows
         .iter()
-        .filter(|v| v.get("schema").and_then(|s| s.as_str()) == Some(SCHEMA))
+        .filter(|v| {
+            v.get("schema")
+                .and_then(|s| s.as_str())
+                .is_some_and(is_outcome_schema)
+        })
         .find(|v| v.get("plan_id").and_then(|p| p.as_str()) == Some(plan_id.as_str()))?
         .get("first_round_sha")?
         .as_str()?
@@ -1055,7 +1009,7 @@ fn prune(dir: &Path) {
     }
 }
 
-pub(crate) const IMPL_SCHEMA: &str = "amont-agent-impl-review-outcome-v1";
+pub(crate) const IMPL_SCHEMA: &str = names::IMPL_REVIEW_OUTCOME_SCHEMA;
 const IMPL_ROLE: &str = "implementation-review";
 const RETIRE_MIN_REVIEWS: u64 = 20;
 const RETIRE_BELOW: f64 = 0.05;
@@ -1165,7 +1119,7 @@ impl<'a> Settled<'a> {
         for r in rows {
             let text = |k: &str| r.get(k).and_then(|v| v.as_str());
             match text("schema") {
-                Some(DISPOSITION_SCHEMA) => {
+                Some(schema) if is_disposition_schema(schema) => {
                     if let (Some(id), Some(sha), Some(n), Some(d)) = (
                         text("agent_id"),
                         text("body_sha"),
@@ -1175,7 +1129,7 @@ impl<'a> Settled<'a> {
                         out.dispositions.insert((id, sha, n), d);
                     }
                 }
-                Some(MERGE_SCHEMA) => {
+                Some(schema) if is_merge_schema(schema) => {
                     if let Some(sha) = text("body_sha_before") {
                         let labels = r
                             .get("applied_labels")
@@ -1277,8 +1231,8 @@ pub fn tally_with(
     for r in rows {
         let text = |k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or("");
         let (role, accepted_word, plan_review) = match text("schema") {
-            SCHEMA => (text("role").to_string(), "accepted", true),
-            IMPL_SCHEMA => (IMPL_ROLE.to_string(), "fixed", false),
+            schema if is_outcome_schema(schema) => (text("role").to_string(), "accepted", true),
+            schema if is_impl_schema(schema) => (IMPL_ROLE.to_string(), "fixed", false),
             _ => continue,
         };
         let is_copy = !plan_review
@@ -1376,7 +1330,7 @@ pub fn unrecorded_skips(rows: &[serde_json::Value], skips: &[Skip]) -> Vec<Skip>
     for s in skips {
         let caught_up = rows.iter().any(|r| {
             let text = |k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or("");
-            text("schema") == SCHEMA
+            is_outcome_schema(text("schema"))
                 && text("plan_path") == s.plan
                 && (text("body_sha").starts_with(&s.sha)
                     || r.get("recorded_at").and_then(|t| t.as_u64()).unwrap_or(0) >= s.ts)
@@ -1602,6 +1556,23 @@ pub fn seat_source(row: &serde_json::Value) -> Option<RecordedSeats> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_row_of_either_schema_name_is_read() {
+        use super::old;
+        use greenpiste_guard::names;
+        assert!(super::is_outcome_schema(names::REVIEW_OUTCOME_SCHEMA));
+        assert!(super::is_outcome_schema(old::REVIEW_OUTCOME_SCHEMA));
+        assert!(super::is_merge_schema(names::REVIEW_MERGE_SCHEMA));
+        assert!(super::is_merge_schema(old::REVIEW_MERGE_SCHEMA));
+        assert!(super::is_disposition_schema(
+            names::REVIEW_DISPOSITION_SCHEMA
+        ));
+        assert!(super::is_disposition_schema(old::REVIEW_DISPOSITION_SCHEMA));
+        assert!(super::is_impl_schema(names::IMPL_REVIEW_OUTCOME_SCHEMA));
+        assert!(super::is_impl_schema(old::IMPL_REVIEW_OUTCOME_SCHEMA));
+        assert!(!super::is_outcome_schema(names::REVIEW_MERGE_SCHEMA));
+    }
+
     #[test]
     fn a_row_before_seat_sources_reads_as_areas() {
         use super::{seat_source, RecordedSeats};

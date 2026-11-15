@@ -64,7 +64,7 @@ impl World {
     /// `main` on a bare `origin`, and a checkout on `feat/x`.
     fn new(name: &str) -> World {
         let root = std::env::temp_dir().join(format!(
-            "amont-agent-phases-{name}-{}-{:?}",
+            "greenpiste-phases-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -117,9 +117,10 @@ impl World {
         let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
             .arg("hook")
             .env("CLAUDE_CONFIG_DIR", claude)
+            .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", &self.global)
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -171,7 +172,7 @@ impl World {
     }
 
     fn state_dir(&self) -> PathBuf {
-        self.claude.join("amont-agent/plan-phases-open")
+        self.claude.join("greenpiste/plan-phases-open")
     }
 }
 
@@ -344,7 +345,7 @@ fn two_active_plans_choose_by_branch() {
 #[test]
 fn an_unusable_session_id_touches_nothing() {
     let w = with_open_plan("badid");
-    let agent_dir = w.claude.join("amont-agent");
+    let agent_dir = w.claude.join("greenpiste");
     std::fs::create_dir_all(&agent_dir).unwrap();
     // `../x` from the counter directory lands here.
     let sentinel = agent_dir.join("x");
@@ -408,7 +409,7 @@ fn three_blocks_then_a_release_then_silence() {
     assert!(w.stop().silent());
     assert!(w.stop().silent());
     let journal =
-        std::fs::read_to_string(w.claude.join("amont-agent/journal.log")).unwrap_or_default();
+        std::fs::read_to_string(w.claude.join("greenpiste/journal.log")).unwrap_or_default();
     for outcome in ["denied", "released", "watched"] {
         assert!(journal.contains(outcome), "{outcome} in:\n{journal}");
     }
@@ -509,7 +510,7 @@ fn at_advise_the_person_is_told_and_the_agent_stops() {
     let w = with_open_plan("advise");
     std::fs::write(
         &w.global,
-        "[amont \"agent.plan-phases-open\"]\n\tstance = advise\n",
+        "[greenpiste \"plan-phases-open\"]\n\tstance = advise\n",
     )
     .unwrap();
     let r = w.stop();
@@ -530,7 +531,7 @@ fn at_observe_it_only_journals() {
     let w = with_open_plan("observe");
     std::fs::write(
         &w.global,
-        "[amont \"agent.plan-phases-open\"]\n\tstance = observe\n",
+        "[greenpiste \"plan-phases-open\"]\n\tstance = observe\n",
     )
     .unwrap();
     assert!(w.stop().silent());

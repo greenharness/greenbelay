@@ -11,10 +11,8 @@ struct Home(PathBuf);
 
 impl Home {
     fn new(name: &str) -> Home {
-        let dir = std::env::temp_dir().join(format!(
-            "amont-agent-settings-{}-{name}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("greenpiste-settings-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch dir");
         Home(dir)
@@ -29,7 +27,7 @@ impl Home {
         std::fs::read_to_string(self.settings()).unwrap_or_default()
     }
     fn run(&self, args: &[&str]) -> (i32, String, String) {
-        let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let out = greenpiste_command()
             .args(args)
             .env("CLAUDE_CONFIG_DIR", &self.0)
             // The plugin's state goes beside the scratch config, never to a real XDG state home.
@@ -275,7 +273,7 @@ fn project_settings(root: &Path) -> PathBuf {
 }
 
 fn run_in(root: &Path, args: &[&str]) -> (i32, String, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let out = greenpiste_command()
         .args(args)
         .current_dir(root)
         // The plugin's state directory, never the person's real one.
@@ -364,4 +362,43 @@ fn uninstall_leaves_an_authors_empty_object_alone() {
         std::fs::read_to_string(project_settings(&h.0)).unwrap(),
         "{}\n"
     );
+}
+
+/// The greenpiste binary pointed at scratch directories, so the migration every
+/// subcommand runs first never touches the real home of whoever runs the tests.
+/// A caller that sets one of these variables itself overrides it afterwards.
+fn greenpiste_command() -> Command {
+    let scratch = fresh_scratch("settings_merge");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    command
+        .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
+        .env("XDG_STATE_HOME", scratch.join("state"))
+        .env("GIT_CONFIG_GLOBAL", scratch.join("gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    command
+}
+
+/// A new, empty scratch directory for one spawn, named by process id, the
+/// clock and a retry counter; `create_dir` fails on a name already taken.
+fn fresh_scratch(label: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let mut suffix = 0u32;
+    loop {
+        let dir = std::env::temp_dir().join(format!(
+            "gp-{label}-{}-{nanos}-{suffix}",
+            std::process::id()
+        ));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => {
+                std::fs::create_dir(dir.join("claude")).expect("scratch config dir");
+                std::fs::create_dir(dir.join("state")).expect("scratch state home");
+                return dir;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => suffix += 1,
+            Err(error) => panic!("scratch directory {}: {error}", dir.display()),
+        }
+    }
 }

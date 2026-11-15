@@ -42,8 +42,43 @@ pub fn config_dir() -> Option<std::path::PathBuf> {
     if let Some(d) = std::env::var_os("CLAUDE_CONFIG_DIR") {
         return Some(std::path::PathBuf::from(d));
     }
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    let home = std::env::var_os("HOME")
+        .filter(|d| !d.is_empty())
+        .or_else(|| std::env::var_os("USERPROFILE"))?;
     Some(std::path::PathBuf::from(home).join(".claude"))
+}
+
+/// The data root a hook writes under: the new root when it exists as a
+/// directory (or a symlink to one) or the migration is done; else the old root
+/// while it is still a real directory; else the new root. A hook that cannot
+/// migrate (busy, failed, reversed) so keeps using the root that holds the
+/// history instead of starting a second one.
+pub fn data_dir() -> Option<PathBuf> {
+    Some(data_dir_in(&config_dir()?))
+}
+
+/// Whether the migration's done-marker exists in `config_dir`.
+pub fn migration_done_in(config_dir: &Path) -> bool {
+    config_dir
+        .join(crate::names::MIGRATE_DONE_MARKER)
+        .symlink_metadata()
+        .is_ok()
+}
+
+pub(crate) fn data_dir_in(config: &Path) -> PathBuf {
+    let new_root = config.join(crate::names::DATA_DIR);
+    if new_root.is_dir() || migration_done_in(config) {
+        return new_root;
+    }
+    let old_root = config.join(crate::names::old::DATA_DIR);
+    let old_is_real_dir = old_root
+        .symlink_metadata()
+        .is_ok_and(|meta| meta.is_dir() && !meta.file_type().is_symlink());
+    if old_is_real_dir {
+        old_root
+    } else {
+        new_root
+    }
 }
 
 /// The directory under which `amont-agent/claude-marketplace` lives: the XDG
@@ -54,10 +89,12 @@ pub fn state_root() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("XDG_STATE_HOME").filter(|d| !d.is_empty()) {
         return Some(PathBuf::from(dir));
     }
-    if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR") {
+    if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|d| !d.is_empty()) {
         return Some(PathBuf::from(dir).join("state"));
     }
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    let home = std::env::var_os("HOME")
+        .filter(|d| !d.is_empty())
+        .or_else(|| std::env::var_os("USERPROFILE"))?;
     Some(PathBuf::from(home).join(".local").join("state"))
 }
 
@@ -134,7 +171,7 @@ impl Change {
 /// The promise at the top of this module is that we touch nothing else. When we
 /// cannot keep it, the right move is to say so and write nothing, not to keep it
 /// approximately.
-fn would_reformat(raw: &str, doc: &Value, indent: &str, nl: bool) -> bool {
+pub(crate) fn would_reformat(raw: &str, doc: &Value, indent: &str, nl: bool) -> bool {
     if raw.trim().is_empty() {
         return false;
     }
@@ -303,7 +340,7 @@ pub fn is_ours(h: &Value) -> bool {
 /// Two spaces unless the file says otherwise, and whether it ended in a
 /// newline. Preserving both is the difference between a one-line diff and a
 /// diff that looks like we rewrote the file.
-fn shape(raw: &str) -> (String, bool) {
+pub(crate) fn shape(raw: &str) -> (String, bool) {
     let indent = raw
         .lines()
         .find_map(|l| {
@@ -318,7 +355,7 @@ fn shape(raw: &str) -> (String, bool) {
     (indent, raw.ends_with('\n'))
 }
 
-fn render(doc: &Value, indent: &str, trailing_newline: bool) -> String {
+pub(crate) fn render(doc: &Value, indent: &str, trailing_newline: bool) -> String {
     let mut buf = Vec::new();
     let fmt = serde_json::ser::PrettyFormatter::with_indent(indent.as_bytes());
     let mut ser = serde_json::Serializer::with_formatter(&mut buf, fmt);
@@ -738,5 +775,47 @@ mod is_ours_tests {
             assert!(!is_ours(&entry(command)), "{command}");
         }
         assert!(!is_ours(&json!({ "type": "command" })));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn data_dir_follows_whichever_root_exists() {
+        use crate::names::{old, DATA_DIR, MIGRATE_DONE_MARKER};
+        let base = std::env::temp_dir().join(format!("gp-datadir-{}", std::process::id()));
+        let fresh = |tag: &str| {
+            let dir = base.join(tag);
+            let _ = std::fs::remove_dir_all(&dir); // a leftover of a crashed run
+            std::fs::create_dir_all(&dir).unwrap();
+            dir
+        };
+        let neither = fresh("neither");
+        assert_eq!(data_dir_in(&neither), neither.join(DATA_DIR));
+        let only_new = fresh("only-new");
+        std::fs::create_dir(only_new.join(DATA_DIR)).unwrap();
+        assert_eq!(data_dir_in(&only_new), only_new.join(DATA_DIR));
+        let only_old = fresh("only-old");
+        std::fs::create_dir(only_old.join(old::DATA_DIR)).unwrap();
+        assert_eq!(data_dir_in(&only_old), only_old.join(old::DATA_DIR));
+        let both = fresh("both");
+        std::fs::create_dir(both.join(old::DATA_DIR)).unwrap();
+        std::fs::create_dir(both.join(DATA_DIR)).unwrap();
+        assert_eq!(data_dir_in(&both), both.join(DATA_DIR));
+        let linked = fresh("linked");
+        std::fs::create_dir(linked.join(DATA_DIR)).unwrap();
+        std::os::unix::fs::symlink(linked.join(DATA_DIR), linked.join(old::DATA_DIR)).unwrap();
+        assert_eq!(data_dir_in(&linked), linked.join(DATA_DIR));
+        let old_link_only = fresh("old-link-only");
+        std::fs::create_dir(old_link_only.join("elsewhere")).unwrap();
+        std::os::unix::fs::symlink(
+            old_link_only.join("elsewhere"),
+            old_link_only.join(old::DATA_DIR),
+        )
+        .unwrap();
+        assert_eq!(data_dir_in(&old_link_only), old_link_only.join(DATA_DIR));
+        let marker_only = fresh("marker");
+        std::fs::create_dir(marker_only.join(old::DATA_DIR)).unwrap();
+        std::fs::write(marker_only.join(MIGRATE_DONE_MARKER), "1").unwrap();
+        assert_eq!(data_dir_in(&marker_only), marker_only.join(DATA_DIR));
+        let _ = std::fs::remove_dir_all(&base); // best-effort cleanup of a temp dir
     }
 }

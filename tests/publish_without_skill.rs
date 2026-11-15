@@ -37,7 +37,7 @@ struct World {
 impl World {
     fn new(name: &str) -> World {
         let root = std::env::temp_dir().join(format!(
-            "amont-agent-pws-{name}-{}-{:?}",
+            "greenpiste-pws-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -58,7 +58,7 @@ impl World {
         let out = Command::new("git")
             .args(["config", "--file"])
             .arg(self.root.join("global"))
-            .args([&format!("amont.agent.{rule}.stance"), stance])
+            .args([&format!("greenpiste.{rule}.stance"), stance])
             .output()
             .expect("git config");
         assert!(out.status.success());
@@ -92,9 +92,10 @@ impl World {
         let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
             .arg("hook")
             .env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
+            .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", self.root.join("global"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -131,8 +132,7 @@ impl World {
     }
 
     fn journal(&self) -> String {
-        std::fs::read_to_string(self.root.join("claude/amont-agent/journal.log"))
-            .unwrap_or_default()
+        std::fs::read_to_string(self.root.join("claude/greenpiste/journal.log")).unwrap_or_default()
     }
 }
 

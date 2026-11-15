@@ -1,6 +1,6 @@
 {
   "name": "clear-relay",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Clears the session and carries on by itself when an answer ends with the line: safe to /clear; next: `<prompt>`. Waits 10 s, stops when you type or run /stay, and never retries.",
   "author": { "name": "fredericrous" },
   "userConfig": {
@@ -13,7 +13,7 @@
     "stateDir": {
       "type": "string",
       "title": "State directory",
-      "description": "Where the relay's log goes, under clear-relay/<session>.jsonl. Empty uses ~/.local/state/amont-agent.",
+      "description": "Where the relay's log goes, under clear-relay/<session>.jsonl. Empty uses $XDG_STATE_HOME/greenpiste, else $CLAUDE_CONFIG_DIR/state/greenpiste, else ~/.local/state/greenpiste.",
       "default": ""
     }
   }

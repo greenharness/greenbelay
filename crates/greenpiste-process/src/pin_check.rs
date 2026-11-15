@@ -63,14 +63,16 @@ struct Marker {
     key: String,
 }
 
-/// Whether `AMONT_AGENT_GH` names the program to run.
+/// Whether `GREENPISTE_GH` names the program to run.
 pub fn gh_override_set() -> bool {
-    std::env::var_os("AMONT_AGENT_GH").is_some_and(|program| !program.is_empty())
+    std::env::var_os(greenpiste_guard::env_var!("GH")).is_some_and(|program| !program.is_empty())
 }
 
 /// The `gh` to run, or the failure when none can be found.
 fn gh_program() -> Result<std::ffi::OsString, String> {
-    if let Some(program) = std::env::var_os("AMONT_AGENT_GH").filter(|p| !p.is_empty()) {
+    if let Some(program) =
+        std::env::var_os(greenpiste_guard::env_var!("GH")).filter(|p| !p.is_empty())
+    {
         return Ok(program);
     }
     let path = std::env::var_os("PATH").unwrap_or_default();
@@ -82,10 +84,10 @@ fn gh_program() -> Result<std::ffi::OsString, String> {
     }
 }
 
-/// The deadline of the `gh` call; `AMONT_AGENT_GH_DEADLINE_MS` shortens it
+/// The deadline of the `gh` call; `GREENPISTE_GH_DEADLINE_MS` shortens it
 /// for tests, like the other tool overrides.
 fn gh_deadline() -> Duration {
-    std::env::var("AMONT_AGENT_GH_DEADLINE_MS")
+    std::env::var(greenpiste_guard::env_var!("GH_DEADLINE_MS"))
         .ok()
         .and_then(|millis| millis.parse::<u64>().ok())
         .map_or(GH_DEADLINE, Duration::from_millis)

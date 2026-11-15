@@ -30,7 +30,7 @@ use std::process::Command;
 /// regression test that only sometimes meets the condition it guards is a
 /// coin, not a test.
 fn big_transcript() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("amont-agent-sigpipe-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("greenpiste-sigpipe-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("scratch dir");
     let mut out = String::new();
@@ -81,7 +81,7 @@ fn a_closed_pipe_kills_a_listing_quietly() {
     // The guard on the guard: if this listing ever stops being bigger than a
     // pipe buffer, the race never happens and the test below stops testing
     // anything. It must say so rather than going quietly green.
-    let full = Command::new("sh")
+    let full = scratch_sh()
         .arg("-c")
         .arg(format!(
             "'{}' explain pipe-to-tail --transcripts '{}' --sample 4000",
@@ -97,7 +97,7 @@ fn a_closed_pipe_kills_a_listing_quietly() {
         full.stdout.len()
     );
 
-    Command::new("sh")
+    scratch_sh()
         .arg("-c")
         .arg(&script)
         .output()
@@ -140,7 +140,7 @@ fn a_closed_pipe_kills_a_listing_quietly() {
 fn rules_survives_a_closed_pipe() {
     let bin = env!("CARGO_BIN_EXE_greenpiste");
     for reader in ["head -1", "grep -q pipe-to-tail"] {
-        let out = Command::new("sh")
+        let out = scratch_sh()
             .arg("-c")
             .arg(format!("'{bin}' rules 2>&1 | {reader}"))
             .output()
@@ -168,7 +168,7 @@ fn rules_survives_a_closed_pipe() {
 #[test]
 fn help_survives_a_closed_pipe() {
     let bin = env!("CARGO_BIN_EXE_greenpiste");
-    let out = Command::new("sh")
+    let out = scratch_sh()
         .arg("-c")
         .arg(format!("'{bin}' --help 2>&1 | grep -q backtest"))
         .output()
@@ -183,4 +183,43 @@ fn help_survives_a_closed_pipe() {
         out.status.success(),
         "`--help | grep -q backtest` must pass"
     );
+}
+
+/// A shell whose children, the greenpiste binary among them, see scratch
+/// directories, so the migration every subcommand runs first never touches the
+/// real home of whoever runs the tests.
+fn scratch_sh() -> Command {
+    let scratch = fresh_scratch("sigpipe");
+    let mut command = Command::new("sh");
+    command
+        .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
+        .env("XDG_STATE_HOME", scratch.join("state"))
+        .env("GIT_CONFIG_GLOBAL", scratch.join("gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    command
+}
+
+/// A new, empty scratch directory for one spawn, named by process id, the
+/// clock and a retry counter; `create_dir` fails on a name already taken.
+fn fresh_scratch(label: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let mut suffix = 0u32;
+    loop {
+        let dir = std::env::temp_dir().join(format!(
+            "gp-{label}-{}-{nanos}-{suffix}",
+            std::process::id()
+        ));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => {
+                std::fs::create_dir(dir.join("claude")).expect("scratch config dir");
+                std::fs::create_dir(dir.join("state")).expect("scratch state home");
+                return dir;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => suffix += 1,
+            Err(error) => panic!("scratch directory {}: {error}", dir.display()),
+        }
+    }
 }

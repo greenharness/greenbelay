@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn a_snapshot_that_defines_the_function_is_recognised() {
-        let dir = std::env::temp_dir().join(format!("amont-agent-shim-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-shim-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         assert!(!defines_ugrep_grep(&dir));
         std::fs::write(
@@ -72,7 +72,7 @@ mod tests {
     #[test]
     fn a_missing_directory_is_silence() {
         assert!(!defines_ugrep_grep(Path::new(
-            "/nonexistent/amont-agent-shim"
+            "/nonexistent/greenpiste-shim"
         )));
     }
 }

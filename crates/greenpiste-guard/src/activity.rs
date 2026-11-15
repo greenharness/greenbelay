@@ -654,7 +654,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_failed_rename_leaves_the_file_whole_and_no_temp_sibling() {
-        let dir = std::env::temp_dir().join(format!("amont-agent-trim-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("greenpiste-trim-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         let file = dir.join("s.activity");
         let original = b"1 /r /w main\n2 /r /w feat\n";

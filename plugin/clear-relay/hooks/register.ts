@@ -95,17 +95,35 @@ function describe(failure: RelayFailure): string {
   }
 }
 
-async function logFile($: Engine, relayer: Relayer, sessionId: string): Promise<string> {
-  const base =
-    relayer.stateDir !== ''
-      ? relayer.stateDir
-      : `${(await $.env.get('HOME')) ?? ''}/.local/state/amont-agent`
+// The directory greenpiste keeps its state in when `stateDir` is not set, the
+// way its settings::state_root() finds it: the XDG state home, else a `state`
+// directory beside a relocated Claude config, else ~/.local/state under HOME or
+// USERPROFILE. With none of them there is no place to keep a log: `undefined`.
+async function defaultStateDir($: Engine): Promise<string | undefined> {
+  const xdg = (await $.env.get('XDG_STATE_HOME')) ?? ''
+  if (xdg !== '') return `${xdg}/greenpiste`
 
-  return `${base}/clear-relay/${sessionId}.jsonl`
+  const config = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? ''
+  if (config !== '') return `${config}/state/greenpiste`
+
+  const nonEmpty = (value: string | undefined) => (value === '' ? undefined : value)
+  const home = nonEmpty(await $.env.get('HOME')) ?? nonEmpty(await $.env.get('USERPROFILE')) ?? ''
+  return home !== '' ? `${home}/.local/state/greenpiste` : undefined
+}
+
+async function logFile($: Engine, relayer: Relayer, sessionId: string): Promise<string | undefined> {
+  const base = relayer.stateDir !== '' ? relayer.stateDir : await defaultStateDir($)
+
+  return base === undefined ? undefined : `${base}/clear-relay/${sessionId}.jsonl`
 }
 
 async function log($: Engine, relayer: Relayer, relay: Relay, entry: LogEntry): Promise<void> {
   const file = await logFile($, relayer, relay.sessionId)
+  if (file === undefined) {
+    // The log is a record: with nowhere to keep it, say so and go on.
+    await $.ui.log('clear-relay: no state directory (set stateDir, XDG_STATE_HOME or HOME): the log is not kept')
+    return
+  }
   const line = JSON.stringify({
     ...entry,
     session: relay.sessionId,

@@ -730,7 +730,7 @@ mod tests {
 
     fn scratch_repo(name: &str) -> Scratch {
         let dir =
-            std::env::temp_dir().join(format!("amont-agent-git-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-git-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir); // absent on a first run, which is fine
         std::fs::create_dir_all(&dir).unwrap();
         let run = |args: &[&str]| {

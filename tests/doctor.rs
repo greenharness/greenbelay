@@ -6,7 +6,9 @@
 //! produce identical evidence. Every test here sets up one of those states and
 //! insists `doctor` distinguishes it.
 
-use std::path::PathBuf;
+use greenpiste_guard::names::{self, old};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 struct Home(PathBuf);
@@ -14,7 +16,7 @@ struct Home(PathBuf);
 impl Home {
     fn new(name: &str) -> Home {
         let dir =
-            std::env::temp_dir().join(format!("amont-agent-doctor-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenpiste-doctor-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir); // a stale scratch directory may not exist
         std::fs::create_dir_all(&dir).expect("scratch dir");
         Home(dir)
@@ -34,9 +36,13 @@ impl Home {
             .args(args)
             .current_dir(&self.0)
             .env("CLAUDE_CONFIG_DIR", &self.0)
+            .env("HOME", self.0.join("home"))
+            .env("XDG_CONFIG_HOME", self.0.join("xdg-config"))
             // The plugin's state goes beside the scratch config, never to a real XDG state home.
-            .env_remove("XDG_STATE_HOME")
-            .env_remove("AMONT_AGENT_OFF")
+            .env("XDG_STATE_HOME", self.0.join("state"))
+            .env("GIT_CONFIG_GLOBAL", self.0.join("home").join(".gitconfig"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env_remove("GREENPISTE_OFF")
             .output()
             .expect("the binary runs");
         (
@@ -70,7 +76,7 @@ fn a_missing_binary_is_reported_as_broken() {
     // because that literal is NOT absolute on Windows — `doctor` then correctly
     // reported "not an absolute path" and this test, which had assumed POSIX
     // path semantics, failed on the Windows runner while the code was right.
-    let missing = h.0.join("nowhere").join("amont-agent");
+    let missing = h.0.join("nowhere").join("greenpiste");
     assert!(missing.is_absolute(), "the fixture must be absolute");
     std::fs::write(
         h.settings(),
@@ -286,6 +292,7 @@ fn two_installs_are_reported_as_a_double_fire() {
         .arg("doctor")
         .current_dir(h.0.join("proj"))
         .env("CLAUDE_CONFIG_DIR", &h.0)
+        .env_remove("XDG_STATE_HOME")
         .output()
         .expect("runs");
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -303,11 +310,12 @@ fn the_kill_switch_is_reported() {
     let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
         .arg("doctor")
         .env("CLAUDE_CONFIG_DIR", &h.0)
-        .env("AMONT_AGENT_OFF", "1")
+        .env_remove("XDG_STATE_HOME")
+        .env("GREENPISTE_OFF", "1")
         .output()
         .expect("runs");
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    assert!(text.contains("AMONT_AGENT_OFF"), "{text}");
+    assert!(text.contains("GREENPISTE_OFF"), "{text}");
     assert!(text.contains("observe"), "{text}");
 }
 
@@ -383,7 +391,7 @@ fn a_recent_firing_outweighs_an_old_heartbeat() {
     h.with_a_session();
     install_both(&h);
 
-    let dir = h.0.join("amont-agent");
+    let dir = h.0.join("greenpiste");
     std::fs::create_dir_all(&dir).expect("state dir");
     std::fs::write(dir.join("heartbeat"), "x\n").expect("heartbeat");
     // Well past the six-hour grace, and before the session was written.
@@ -411,7 +419,7 @@ fn doctor_reads_the_window_across_generations() {
     let h = Home::new("generations");
     h.with_a_session();
     install_both(&h);
-    let dir = h.0.join("amont-agent");
+    let dir = h.0.join("greenpiste");
     std::fs::create_dir_all(&dir).expect("state dir");
     std::fs::write(dir.join("heartbeat"), "x\n").expect("heartbeat");
     backdate(&dir.join("heartbeat"), "202001010000");
@@ -419,7 +427,7 @@ fn doctor_reads_the_window_across_generations() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let rec = |ago: u64| format!("amont-agent-v1\nF {} r deny denied - - - x\n", now - ago);
+    let rec = |ago: u64| format!("greenpiste-v1\nF {} r deny denied - - - x\n", now - ago);
     std::fs::write(dir.join("journal.log.3"), rec(6 * 86_400)).expect(".3");
     std::fs::write(dir.join("journal.log.1"), rec(86_400)).expect(".1");
     std::fs::write(dir.join("journal.log"), rec(10)).expect("live");
@@ -446,7 +454,7 @@ fn an_old_heartbeat_with_no_firings_still_accuses() {
     h.with_a_session();
     install_both(&h);
 
-    let dir = h.0.join("amont-agent");
+    let dir = h.0.join("greenpiste");
     std::fs::create_dir_all(&dir).expect("state dir");
     std::fs::write(dir.join("heartbeat"), "x\n").expect("heartbeat");
     backdate(&dir.join("heartbeat"), "202001010000");
@@ -475,7 +483,7 @@ fn doctor_does_not_journal_its_own_probe() {
     h.with_a_session();
     install_both(&h);
 
-    let journal = h.0.join("amont-agent").join("journal.log");
+    let journal = h.0.join("greenpiste").join("journal.log");
     let before = std::fs::read_to_string(&journal).unwrap_or_default();
 
     let (_code, out) = h.run(&["doctor"]);
@@ -521,11 +529,12 @@ fn doctor_says_whether_the_lsp_rules_can_speak_here() {
             .arg("doctor")
             .current_dir(&repo)
             .env("CLAUDE_CONFIG_DIR", &h.0)
+            .env_remove("XDG_STATE_HOME")
             .env(
                 "PATH",
                 std::env::join_paths([bin.clone()]).expect("a PATH of one directory"),
             )
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .output()
             .expect("the binary runs");
         String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr)
@@ -543,7 +552,8 @@ fn integration(h: &Home) -> (i32, serde_json::Value) {
     let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
         .args(["doctor", "--json"])
         .env("CLAUDE_CONFIG_DIR", &h.0)
-        .env_remove("AMONT_AGENT_OFF")
+        .env_remove("XDG_STATE_HOME")
+        .env_remove("GREENPISTE_OFF")
         .output()
         .expect("the binary runs");
     let stdout = String::from_utf8(out.stdout).expect("UTF-8");
@@ -564,7 +574,7 @@ fn json_reports_an_absent_integration_apart_from_health() {
 #[test]
 fn json_reports_present_but_unhealthy_with_file_and_binary() {
     let h = Home::new("json-present");
-    let missing = h.0.join("nowhere").join("amont-agent");
+    let missing = h.0.join("nowhere").join("greenpiste");
     let mut hooks = serde_json::Map::new();
     for (event, matcher) in greenpiste_guard::settings::TARGETS {
         let mut block = serde_json::json!({"hooks": [
@@ -633,6 +643,7 @@ fn doctor_help_prints_usage_on_stdout_and_exits_zero() {
         let out = std::process::Command::new(env!("CARGO_BIN_EXE_greenpiste"))
             .args(["doctor", flag])
             .env("CLAUDE_CONFIG_DIR", &h.0)
+            .env_remove("XDG_STATE_HOME")
             .output()
             .expect("the binary runs");
         assert_eq!(out.status.code(), Some(0), "{flag}");
@@ -683,7 +694,7 @@ fn plan_root_doctor(
         let ok = Command::new("git")
             .args(["config", "--file"])
             .arg(&gitconfig)
-            .args(["amont.agent.plan-review.root", v])
+            .args(["greenpiste.plan-review.root", v])
             .status()
             .unwrap();
         assert!(ok.success());
@@ -693,13 +704,14 @@ fn plan_root_doctor(
         .args(json.then_some("--json"))
         .current_dir(cwd)
         .env("CLAUDE_CONFIG_DIR", &w.0)
+        .env_remove("XDG_STATE_HOME")
         .env("HOME", &home)
         .env("GIT_CONFIG_GLOBAL", &gitconfig)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env_remove("AMONT_AGENT_OFF")
-        .env_remove("AMONT_AGENT_PLAN_ROOT");
+        .env_remove("GREENPISTE_OFF")
+        .env_remove("GREENPISTE_PLAN_ROOT");
     if let Some(v) = env {
-        c.env("AMONT_AGENT_PLAN_ROOT", v);
+        c.env("GREENPISTE_PLAN_ROOT", v);
     }
     let out = c.output().unwrap();
     String::from_utf8_lossy(&out.stdout).into_owned()
@@ -812,7 +824,7 @@ fn opener_doctor_line(home_dir: &Home, name: &str, opener: Option<&str>) -> Stri
         let ok = Command::new("git")
             .args(["config", "--file"])
             .arg(&gitconfig)
-            .args(["amont.agent.opener", v])
+            .args(["greenpiste.opener", v])
             .status()
             .unwrap();
         assert!(ok.success());
@@ -821,10 +833,11 @@ fn opener_doctor_line(home_dir: &Home, name: &str, opener: Option<&str>) -> Stri
         .args(["doctor", "--json"])
         .current_dir(&home_dir.0)
         .env("CLAUDE_CONFIG_DIR", &home_dir.0)
+        .env_remove("XDG_STATE_HOME")
         .env("HOME", &home)
         .env("GIT_CONFIG_GLOBAL", &gitconfig)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env_remove("AMONT_AGENT_OFF")
+        .env_remove("GREENPISTE_OFF")
         .output()
         .unwrap();
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -846,9 +859,229 @@ fn doctor_reports_the_opener_and_warns_when_its_program_is_missing() {
         "{missing}"
     );
     assert!(
-        missing.contains("git config --global amont.agent.opener"),
+        missing.contains("git config --global greenpiste.opener"),
         "{missing}"
     );
     let unset = opener_doctor_line(&home_dir, "unset", None);
     assert!(unset.contains("(platform default)"), "{unset}");
+}
+
+/// Everything under `dir`, files by content and links by target.
+fn tree(dir: &Path, into: &mut BTreeMap<String, Vec<u8>>) {
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+        let key = path.display().to_string();
+        if meta.file_type().is_symlink() {
+            into.insert(
+                key,
+                std::fs::read_link(&path)
+                    .unwrap()
+                    .display()
+                    .to_string()
+                    .into_bytes(),
+            );
+        } else if meta.is_dir() {
+            into.insert(format!("{key}/"), Vec::new());
+            tree(&path, into);
+        } else {
+            into.insert(key, std::fs::read(&path).unwrap());
+        }
+    }
+}
+
+impl Home {
+    /// An old-style machine inside the scratch directory: old config root,
+    /// old state root, an old plugin registration and an old git config key.
+    fn old_style(&self) -> &Home {
+        std::fs::create_dir_all(self.0.join(old::DATA_DIR)).unwrap();
+        std::fs::create_dir_all(self.0.join("state").join(old::DATA_DIR)).unwrap();
+        std::fs::create_dir_all(self.0.join("home")).unwrap();
+        let id = format!("clear-relay@{}", old::DATA_DIR);
+        std::fs::write(
+            self.settings(),
+            serde_json::to_string_pretty(&serde_json::json!({"enabledPlugins": {id: true}}))
+                .unwrap()
+                + "\n",
+        )
+        .unwrap();
+        let status = Command::new("git")
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .args(["config", "--file"])
+            .arg(self.0.join("home").join(".gitconfig"))
+            .arg(format!("{}git-add-broad.stance", old::CONFIG_PREFIX))
+            .arg("advise")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        self
+    }
+
+    fn doctor_with_old_variable(&self) -> (i32, String) {
+        let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+            .arg("doctor")
+            .current_dir(&self.0)
+            .env("CLAUDE_CONFIG_DIR", &self.0)
+            .env("HOME", self.0.join("home"))
+            .env("XDG_CONFIG_HOME", self.0.join("xdg-config"))
+            .env("XDG_STATE_HOME", self.0.join("state"))
+            .env("GIT_CONFIG_GLOBAL", self.0.join("home").join(".gitconfig"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env(format!("{}OFF", old::ENV_PREFIX), "secret-value")
+            .env_remove("GREENPISTE_OFF")
+            .output()
+            .expect("the binary runs");
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into_owned()
+                + &String::from_utf8_lossy(&out.stderr),
+        )
+    }
+}
+
+#[test]
+fn doctor_lists_each_thing_the_migration_left_with_its_fix_and_changes_nothing() {
+    let h = Home::new("migration-old");
+    h.old_style();
+    let before = {
+        let mut t = BTreeMap::new();
+        tree(&h.0, &mut t);
+        t
+    };
+    let (_, out) = h.doctor_with_old_variable();
+    let after = {
+        let mut t = BTreeMap::new();
+        tree(&h.0, &mut t);
+        t
+    };
+    assert_eq!(before, after, "doctor wrote to the tree");
+    let fix = "greenpiste migrate";
+    let line_with = |needle: &str| {
+        out.lines()
+            .find(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("no line with {needle:?} in:\n{out}"))
+            .to_string()
+    };
+    for needle in [
+        old::DATA_DIR,
+        &*format!("{}git-add-broad.stance", old::CONFIG_PREFIX),
+        "old plugin registration",
+    ] {
+        let line = line_with(needle);
+        assert!(line.contains(fix), "{line}");
+    }
+    let variable = line_with(&format!("{}OFF", old::ENV_PREFIX));
+    assert!(
+        variable.contains(&format!("{}OFF", names::ENV_PREFIX)),
+        "{variable}"
+    );
+    assert!(!out.contains("secret-value"), "{out}");
+}
+
+#[test]
+fn doctor_reports_the_markers() {
+    let h = Home::new("migration-markers");
+    std::fs::write(
+        h.0.join(names::MIGRATE_FAILED_MARKER),
+        "git config keys\nno way\n",
+    )
+    .unwrap();
+    let (_, out) = h.run(&["doctor"]);
+    assert!(out.contains("migration failed earlier"), "{out}");
+    assert!(out.contains("no way"), "{out}");
+    std::fs::remove_file(h.0.join(names::MIGRATE_FAILED_MARKER)).unwrap();
+    std::fs::write(h.0.join(names::MIGRATE_REVERSED_MARKER), "").unwrap();
+    let (_, out) = h.run(&["doctor"]);
+    assert!(out.contains("migration was reversed"), "{out}");
+}
+
+#[test]
+fn doctor_on_a_migrated_tree_has_nothing_to_report() {
+    let h = Home::new("migration-done");
+    h.old_style();
+    let migrated = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        .arg("migrate")
+        .current_dir(&h.0)
+        .env("CLAUDE_CONFIG_DIR", &h.0)
+        .env("HOME", h.0.join("home"))
+        .env("XDG_CONFIG_HOME", h.0.join("xdg-config"))
+        .env("XDG_STATE_HOME", h.0.join("state"))
+        .env("GIT_CONFIG_GLOBAL", h.0.join("home").join(".gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env_remove("GREENPISTE_OFF")
+        .output()
+        .unwrap();
+    assert!(migrated.status.success(), "{migrated:?}");
+    let (_, out) = h.run(&["doctor"]);
+    let line = out
+        .lines()
+        .find(|l| l.contains("migration"))
+        .unwrap_or_else(|| panic!("no migration line in:\n{out}"));
+    assert!(line.contains("nothing left"), "{line}");
+    assert!(!out.contains("old state directory"), "{out}");
+    assert!(!out.contains("old git config key"), "{out}");
+}
+
+/// A finding greenpiste can fix fails doctor (`✗`); the person's own
+/// environment is advice only (`!`). A bare scratch home fails doctor for other
+/// reasons (no hooks installed), so these read the marker on the finding's line.
+fn line_with<'a>(out: &'a str, needle: &str) -> &'a str {
+    out.lines()
+        .find(|l| l.contains(needle))
+        .unwrap_or_else(|| panic!("no line with {needle:?} in:\n{out}"))
+}
+
+#[test]
+fn a_failed_migration_is_a_failing_finding() {
+    let h = Home::new("migration-exit-failed");
+    std::fs::write(
+        h.0.join(names::MIGRATE_FAILED_MARKER),
+        "git config keys\nno way\n",
+    )
+    .unwrap();
+    let (_, out) = h.run(&["doctor"]);
+    let line = line_with(&out, "migration failed earlier");
+    assert!(
+        line.contains('✗'),
+        "a failed migration must fail doctor: {line}"
+    );
+    assert!(out.contains("no way"), "{out}");
+}
+
+#[test]
+fn a_leftover_of_the_old_names_is_a_failing_finding() {
+    let h = Home::new("migration-exit-leftover");
+    h.old_style();
+    let (_, out) = h.run(&["doctor"]);
+    for needle in [
+        old::DATA_DIR,
+        &*format!("{}git-add-broad.stance", old::CONFIG_PREFIX),
+        "old plugin registration",
+    ] {
+        let line = line_with(&out, needle);
+        assert!(line.contains('✗'), "{needle}: {line}");
+    }
+}
+
+#[test]
+fn an_old_environment_variable_is_advice_only() {
+    let h = Home::new("migration-exit-variable");
+    let (_, out) = h.doctor_with_old_variable();
+    let line = line_with(&out, &format!("{}OFF", old::ENV_PREFIX));
+    assert!(line.contains('!') && !line.contains('✗'), "{line}");
+}
+
+#[test]
+fn a_settings_file_that_does_not_parse_is_said_not_assumed_clean() {
+    let h = Home::new("migration-exit-unreadable");
+    std::fs::write(h.settings(), "{ not json").unwrap();
+    let (_, out) = h.run(&["doctor"]);
+    let line = line_with(&out, "could not read the plugin registration");
+    assert!(line.contains('✗'), "{line}");
+    assert!(
+        !out.contains("migration: nothing left over"),
+        "doctor claimed a clean machine it could not read:\n{out}"
+    );
 }
