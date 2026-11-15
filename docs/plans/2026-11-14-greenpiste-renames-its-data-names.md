@@ -263,7 +263,8 @@ dotfile or grh allowance tells an agent to use the old ones.
 - [ ] Phase 6 — record: `decisions/docs/programmes/gate-guardrails/map.md`
   (3b-2 done; the census list gains every old read this plan keeps, and what the
   migration leaves behind: the four marker files and the lock file in the Claude
-  config directory, and the symlinks at the old state roots).
+  config directory, and the symlinks at the old state roots), and lists the two
+  5.0.1 follow-ups above.
 
 ## Verification
 
@@ -314,9 +315,32 @@ dotfile or grh allowance tells an agent to use the old ones.
   this machine by accident (below): 30 keys, both state roots and the plugin
   registration moved in 430 ms, and `migrate --reverse` put all 30 keys back
   with identical values (compared against a copy taken first). Not run on a
-  real `kill -9`. `scripts/leak-hunt.sh` reports 40 of 40 test files clean.
+  real `kill -9`. `scripts/leak-hunt.sh` reports 40 of 40 `tests/*.rs` files clean
+  (it does not run a crate's own `--lib` tests).
+
+### Phase 3, checks the Verification list names that were not run as written
+
+- `kill -9` after step 2: not run. `an_interrupted_copy_leaves_old_keys...` and
+  `an_interrupted_rename_resumes_with_the_symlink` build the interrupted state
+  by a test seam and re-run; no process was killed.
+- A hook concurrent with the step-1 rename: the seam test
+  `a_recreated_old_directory_is_merged_before_the_symlink` recreates the old
+  directory between the rename and the symlink; no two real processes raced.
+- `register.test.ts` passes, including the no-options cases: run with
+  `claude plugin test` (25 tests); `marketplace.json` names the current
+  marketplace in each direction: `the_marketplace_name_flips_in_each_direction`.
 
 ### Phase 4, observed on this machine (2026-11-15)
+
+Not as the plan wrote it: the first command after `brew upgrade` did NOT
+migrate this machine. An earlier `migrate --reverse` had left the
+reversed-marker, which stops hooks from migrating forward, so the migration was
+run by hand (`greenpiste migrate`). The hook path (first hook migrates, wall
+time recorded) is exercised by `tests/migrate.rs` on scratch machines only.
+`~/.claude/greenpiste/journal.log` exists (header `greenpiste-v1`, the old rows
+appended; it rotated once). greengate's provenance push reading the moved
+directory was NOT yet exercised on this machine: it happens on the next
+greengate push, and the Phase 5 push is where to read it.
 
 - 5.0.0 released: the run concluded `success` (14 assets, crates.io
   greenpiste and greenpiste-guard 5.0.0, the tap, "the published release
@@ -328,9 +352,14 @@ dotfile or grh allowance tells an agent to use the old ones.
   `~/.local/state/amont-agent` are symlinks; settings.json names
   `clear-relay@greenpiste`; `doctor`: migration done, no failing finding;
   `relais native review-outcome --dry-run` reads the moved ledger (1,187 rows).
-- The migration merged a stray `~/.claude/greenpiste` (116 rows written
-  by a 5.x process before the install) with the real history: appended, one
-  header, rotated normally (the oldest rotation aged out).
+- A `~/.claude/greenpiste` (116 rows and a `sessions/` file of this session,
+  written at 22:53, around the install) already existed when the migration ran;
+  it was merged with the real history (appended, one header, the journal
+  rotated once and the oldest rotation aged out). What created it is NOT
+  established: a hook, `doctor`, `status` and `attestations` of the installed
+  5.0.0 binary leave an old real root alone on a scratch machine in the same
+  state (reproduced), so the writer was something else (suspect: a process of
+  another session or a branch build that was not under the canary).
 - Claude Code's own plugin registry was NOT migrated: it still held the
   `amont-agent` marketplace and `clear-relay@amont-agent`, so the plugin was
   disabled after the migration until `claude plugin marketplace add
@@ -338,9 +367,9 @@ dotfile or grh allowance tells an agent to use the old ones.
   clear-relay@greenpiste` were run (and the old entries removed). Follow-up
   for 5.0.1: `migrate` prints that command, and `doctor` names a registry still
   holding the old id.
-- `scripts/leak-hunt.sh` covers `tests/*.rs` only; a crate's own unit tests that
-  write the journal under the real config directory are not covered (the stray
-  root above). Follow-up: run the crates' `--lib` tests under the canary too.
+- `scripts/leak-hunt.sh` covers `tests/*.rs` only; a crate's own `--lib` tests
+  are not run under the canary. Follow-up: run them there too.
+- Both follow-ups go on the programme map as 5.0.1 items (Phase 6).
 
 ### Kept as they are (review lows, 2026-11-15)
 
