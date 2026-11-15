@@ -49,7 +49,7 @@ impl World {
     fn stance(&self, stance: &str) {
         std::fs::write(
             self.home.join("no-global-gitconfig"),
-            format!("[amont \"agent.lint-suppression-added\"]\n\tstance = {stance}\n"),
+            format!("[greenpiste \"lint-suppression-added\"]\n\tstance = {stance}\n"),
         )
         .expect("global gitconfig");
     }
@@ -85,7 +85,7 @@ impl World {
             .env("PATH", search)
             .env("GIT_CONFIG_GLOBAL", self.home.join("no-global-gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .env_remove("GREENHARNESS_HOST_SLOT")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

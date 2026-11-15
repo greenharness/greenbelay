@@ -47,7 +47,7 @@ impl Home {
             .arg("--out")
             .arg(self.out())
             .env("CLAUDE_CONFIG_DIR", &self.0)
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .output()
             .expect("the binary runs");
         (

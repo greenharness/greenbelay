@@ -2,18 +2,18 @@
 //!
 //! `amont-agent suppressions --staged` blocks a commit that adds a bare or
 //! blanket lint suppression. The person commits those cases themselves with
-//! `git -c amont.agent.suppressions=allow commit`; an agent that reaches the
+//! `git -c greenpiste.suppressions=allow commit`; an agent that reaches the
 //! same switch, or lowers the gate another way, has loosened a safety
 //! mechanism (`general.no-disabled-safety`). This rule refuses every channel a
 //! single command can use:
 //!
-//! - `-c amont.agent.suppressions=…`, `git config … amont.agent.suppressions`,
+//! - `-c greenpiste.suppressions=…`, `git config … greenpiste.suppressions`,
 //!   and `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_PARAMETERS` carrying that key;
 //! - `hook.skip` naming `suppressions` or `pre-commit-suppressions`
 //!   (`hook.skip=pre-commit` as a whole is a different decision and passes);
 //! - a `greengate.severity.pre-commit-suppressions` (or 3.x's
 //!   `amont.severity.…`) other than `block`;
-//! - a write of `amont.agent.lint-suppression-added.stance`, the rollback
+//! - a write of `greenpiste.lint-suppression-added.stance`, the rollback
 //!   switch.
 //!
 //! An agent editing a config file with Edit or Write is not covered; that is a
@@ -37,8 +37,8 @@ pub const RULE: Rule = Rule {
     confirm: None,
 };
 
-const OVERRIDE_KEY: &str = "amont.agent.suppressions";
-const STANCE_KEY: &str = "amont.agent.lint-suppression-added.stance";
+const OVERRIDE_KEY: &str = crate::config_key!("suppressions");
+const STANCE_KEY: &str = crate::config_key!("lint-suppression-added.stance");
 /// greengate 4.0's severity key, then the one greengate 3.x and amont read.
 /// The old one is refused as long as an installed gate may still read it.
 const SEVERITY_KEYS: [&str; 2] = [
@@ -73,7 +73,7 @@ fn examine(input: &Input) -> Option<Finding> {
 const SEPARATOR: &str = ";";
 
 /// Words of a text the lexer did not read: split on whitespace and quoting
-/// characters, so `bash -c 'git -c amont.agent.suppressions=allow commit'`
+/// characters, so `bash -c 'git -c greenpiste.suppressions=allow commit'`
 /// is still seen. A `;`, `&`, `|` or newline becomes a [`SEPARATOR`] word, so
 /// one invocation can be told from the next.
 fn loose_words(text: &str) -> Vec<String> {
@@ -225,11 +225,11 @@ mod tests {
     #[test]
     fn each_channel_is_refused() {
         for command in [
-            "git -c amont.agent.suppressions=allow commit -m x",
-            "git config amont.agent.suppressions allow",
-            "git config --global amont.agent.suppressions allow",
-            "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=amont.agent.suppressions GIT_CONFIG_VALUE_0=allow git commit",
-            "GIT_CONFIG_PARAMETERS=\"'amont.agent.suppressions'='allow'\" git commit",
+            "git -c greenpiste.suppressions=allow commit -m x",
+            "git config greenpiste.suppressions allow",
+            "git config --global greenpiste.suppressions allow",
+            "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=greenpiste.suppressions GIT_CONFIG_VALUE_0=allow git commit",
+            "GIT_CONFIG_PARAMETERS=\"'greenpiste.suppressions'='allow'\" git commit",
             "git -c hook.skip=pre-commit-suppressions commit",
             "git -c hook.skip=pre-commit,suppressions commit",
             "git -c amont.severity.pre-commit-suppressions=warn commit",
@@ -237,12 +237,12 @@ mod tests {
             "git -c greengate.severity.pre-commit-suppressions=warn commit",
             "git config greengate.severity.pre-commit-suppressions warn",
             "GIT_CONFIG_PARAMETERS=\"'greengate.severity.pre-commit-suppressions'='off'\" git commit",
-            "git config amont.agent.lint-suppression-added.stance observe",
-            "git -c amont.agent.lint-suppression-added.stance=observe commit",
-            "GIT_CONFIG_KEY_0=amont.agent.lint-suppression-added.stance git commit",
-            "bash -c 'git -c amont.agent.suppressions=allow commit'",
-            "bash -c 'git config --get user.name; git config amont.agent.suppressions allow'",
-            "bash -c 'git config --get user.name && git config --unset amont.agent.suppressions'",
+            "git config greenpiste.lint-suppression-added.stance observe",
+            "git -c greenpiste.lint-suppression-added.stance=observe commit",
+            "GIT_CONFIG_KEY_0=greenpiste.lint-suppression-added.stance git commit",
+            "bash -c 'git -c greenpiste.suppressions=allow commit'",
+            "bash -c 'git config --get user.name; git config greenpiste.suppressions allow'",
+            "bash -c 'git config --get user.name && git config --unset greenpiste.suppressions'",
         ] {
             assert!(denied(command), "{command}");
         }
@@ -253,13 +253,13 @@ mod tests {
         for command in [
             "git commit -m x",
             "git -c hook.skip=pre-commit commit -m x",
-            "git config amont.agent.suppressions",
-            "git config --get amont.agent.lint-suppression-added.stance",
-            "git commit -m \"explain -c amont.agent.suppressions=allow\"",
-            "git log --grep=amont.agent.suppressions",
+            "git config greenpiste.suppressions",
+            "git config --get greenpiste.lint-suppression-added.stance",
+            "git commit -m \"explain -c greenpiste.suppressions=allow\"",
+            "git log --grep=greenpiste.suppressions",
             "git -c amont.severity.pre-commit-suppressions=block commit",
             "git -c greengate.severity.pre-commit-suppressions=block commit",
-            "bash -c 'git config --get user.name; git config amont.agent.suppressions'",
+            "bash -c 'git config --get user.name; git config greenpiste.suppressions'",
         ] {
             assert!(!denied(command), "{command}");
         }

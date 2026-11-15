@@ -110,7 +110,7 @@ fn send(payload: &str) -> Reply {
     let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
         .arg("hook")
         .env("CLAUDE_CONFIG_DIR", &home)
-        .env_remove("AMONT_AGENT_OFF")
+        .env_remove("GREENPISTE_OFF")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -135,7 +135,7 @@ fn send(payload: &str) -> Reply {
 fn send_speaking(payload: &str) -> Reply {
     let home = scratch("speak-home");
     let cfg = home.join("gitconfig");
-    // Written BY git, not by hand: `amont.agent.push-landed.stance` is a
+    // Written BY git, not by hand: `greenpiste.push-landed.stance` is a
     // three-part key whose middle part is a subsection, and the file syntax for
     // that is not what you would guess. Let git spell its own config.
     std::fs::write(&cfg, "").unwrap();
@@ -144,7 +144,7 @@ fn send_speaking(payload: &str) -> Reply {
             "config",
             "--file",
             &cfg.display().to_string(),
-            "amont.agent.push-landed.stance",
+            "greenpiste.push-landed.stance",
             "advise",
         ])
         .output()
@@ -155,7 +155,7 @@ fn send_speaking(payload: &str) -> Reply {
         .env("CLAUDE_CONFIG_DIR", &home)
         .env("GIT_CONFIG_GLOBAL", &cfg)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env_remove("AMONT_AGENT_OFF")
+        .env_remove("GREENPISTE_OFF")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

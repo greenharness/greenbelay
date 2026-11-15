@@ -65,18 +65,18 @@ const MAX_BLOBS: usize = 200;
 // The two names, spelled once: `concat!` takes literals, not constants.
 macro_rules! env_root {
     () => {
-        "AMONT_AGENT_PLAN_ROOT"
+        greenpiste_guard::env_var!("PLAN_ROOT")
     };
 }
 macro_rules! git_key_root {
     () => {
-        "amont.agent.plan-review.root"
+        greenpiste_guard::config_key!("plan-review.root")
     };
 }
-/// Where `repos=` names resolve: `git config amont.agent.plan-review.<name>.path`
+/// Where `repos=` names resolve: `git config greenpiste.plan-review.<name>.path`
 /// for a repository kept elsewhere (dotfiles under `~/.local/share/chezmoi`),
-/// else `<plan root>/<name>`. The plan root is `$AMONT_AGENT_PLAN_ROOT`, else
-/// `git config --global amont.agent.plan-review.root`. Name resolution
+/// else `<plan root>/<name>`. The plan root is `$GREENPISTE_PLAN_ROOT`, else
+/// `git config --global greenpiste.plan-review.root`. Name resolution
 /// (plan review, `shipped`) then falls back to the working directory (see
 /// [`fallback_root`]); the attestations sweep never does.
 pub const ENV_ROOT: &str = env_root!();
@@ -336,14 +336,17 @@ pub fn remit(role: &str) -> BTreeSet<String> {
 /// Where one `repos=` name lives. The config key's subsection keeps the
 /// name's case, so any valid name can be configured.
 pub fn locate(root: &Path, name: &str) -> PathBuf {
-    let key = format!("amont.agent.plan-review.{name}.path");
+    let key = format!(
+        "{}plan-review.{name}.path",
+        greenpiste_guard::names::CONFIG_PREFIX
+    );
     match greenpiste_guard::git::output(&["config", "--get", "--type=path", &key]) {
         Some(o) if o.code == 0 && !o.stdout.is_empty() => PathBuf::from(o.stdout),
         _ => root.join(name),
     }
 }
 
-/// The explicitly set plan root: `$AMONT_AGENT_PLAN_ROOT` when non-empty, else
+/// The explicitly set plan root: `$GREENPISTE_PLAN_ROOT` when non-empty, else
 /// the global git config key (a leading `~/` expanded by git). Nothing else.
 pub fn explicit_root() -> Option<(PathBuf, RootSource)> {
     pick_explicit(std::env::var_os(ENV_ROOT), || {
@@ -2216,7 +2219,7 @@ fn trees_of(machine: &Meta) -> Result<Vec<(String, RepoTree)>, Said> {
             }
             Ok(None) => {
                 return Err(Said::Refuse(format!(
-                    "repos= names `{name}`, which is not a repository at {} (set `git config --global amont.agent.plan-review.{name}.path <dir>` for one kept elsewhere); a plan that creates one declares its language in adds=lang:<language>;",
+                    "repos= names `{name}`, which is not a repository at {} (set `git config --global greenpiste.plan-review.{name}.path <dir>` for one kept elsewhere); a plan that creates one declares its language in adds=lang:<language>;",
                     locate(&root, name).display()
                 )))
             }

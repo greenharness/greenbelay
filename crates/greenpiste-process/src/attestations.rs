@@ -43,7 +43,6 @@ pub const DAY: u64 = 86_400;
 const KEEP_FOR: u64 = 30 * DAY;
 const TRASH_FOR: u64 = 7 * DAY;
 const LOCK_STALE: u64 = 3600;
-const GIT_ROOTS_KEY: &str = r"^amont\.agent\.plan-review\..*\.path$";
 
 /// Where the scan or the sweep could not read, and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -202,16 +201,17 @@ fn scan_root(root: &Path, base: &Path, out: &mut Cited) -> Result<(), Failure> {
     }
 }
 
-/// The `amont.agent.plan-review.<name>.path` roots from global git config.
+/// The `greenpiste.plan-review.<name>.path` roots from global git config.
 /// Exit 1 with no output is git saying no key matched; git not running, or
 /// any other exit, is a failure.
 fn git_roots() -> Result<Vec<PathBuf>, Failure> {
+    let roots_pattern = greenpiste_guard::names::config_pattern(r"plan-review\..*\.path$");
     let args = [
         "config",
         "--global",
         "--type=path",
         "--get-regexp",
-        GIT_ROOTS_KEY,
+        roots_pattern.as_str(),
     ];
     let bad = |err: String| Failure {
         path: "git config --global".to_string(),
@@ -1131,7 +1131,7 @@ mod tests {
         let s = Scratch::new();
         s.dir("old", 40);
         let mut env = s.env();
-        env.plan_root = Err("the plan root is unset; set AMONT_AGENT_PLAN_ROOT".into());
+        env.plan_root = Err("the plan root is unset; set GREENPISTE_PLAN_ROOT".into());
         let r = run(&env, NOW, true);
         let f = r.failure.expect("scan failed");
         assert_eq!(f.path, "plan root");
@@ -1277,7 +1277,7 @@ mod tests {
     #[test]
     fn git_exit_codes_map_to_roots_or_a_failure() {
         assert_eq!(
-            roots_from(0, "amont.agent.plan-review.dots.path /h/dots\n", ""),
+            roots_from(0, "greenpiste.plan-review.dots.path /h/dots\n", ""),
             Ok(vec![PathBuf::from("/h/dots")])
         );
         assert_eq!(roots_from(1, "", ""), Ok(vec![]), "no key matched");

@@ -133,7 +133,7 @@ impl Stance {
         }
     }
     /// The inverse of [`Stance::as_str`], for reading a stance back out of
-    /// `git config amont.agent.<rule>.stance`. Paired with `as_str` from the
+    /// `git config greenpiste.<rule>.stance`. Paired with `as_str` from the
     /// start so the two spellings cannot drift apart later.
     pub fn parse(s: &str) -> Option<Stance> {
         match s {
@@ -235,7 +235,7 @@ pub struct Rule {
     pub default_stance: Stance,
     /// The loudest this rule may ever be, whatever git config says.
     ///
-    /// `amont.agent.stance deny` promotes every rule at once, and the
+    /// `greenpiste.stance deny` promotes every rule at once, and the
     /// per-rule key promotes one. For a rule whose match is exact that is the
     /// person's call to make. For a rule built on an estimate — "this loop MAY
     /// make hundreds of requests" — a refusal would be the guard claiming a

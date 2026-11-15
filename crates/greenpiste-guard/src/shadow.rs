@@ -5,7 +5,7 @@
 //! the current model. The rate is per part:
 //!
 //! ```text
-//! git config --global amont.agent.<id>.shadow <rate>     # a number in [0,1]
+//! git config --global greenpiste.<id>.shadow <rate>     # a number in [0,1]
 //! ```
 //!
 //! Absent or `0` is off. An unparseable value is off too, and `doctor`
@@ -54,10 +54,10 @@ pub fn parse_rate(raw: &str) -> Rate {
 }
 
 pub fn key_for(id: &str) -> String {
-    format!("amont.agent.{id}.shadow")
+    format!("{}{id}.shadow", crate::names::CONFIG_PREFIX)
 }
 
-/// Every configured `amont.agent.<id>.shadow`, keyed by id. System first, then
+/// Every configured `greenpiste.<id>.shadow`, keyed by id. System first, then
 /// global, so the user's own file wins. The repository's config is never read,
 /// for the reason `gitconfig` gives. One process per scope, once per run.
 pub fn configured() -> &'static BTreeMap<String, String> {
@@ -70,7 +70,7 @@ pub fn configured() -> &'static BTreeMap<String, String> {
                     "config",
                     scope,
                     "--get-regexp",
-                    r"^amont\.agent\..*\.shadow$",
+                    &crate::names::config_pattern(r".*\.shadow$"),
                 ])
                 .stdin(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -81,7 +81,7 @@ pub fn configured() -> &'static BTreeMap<String, String> {
             for line in String::from_utf8_lossy(&o.stdout).lines() {
                 let (key, value) = line.split_once(' ').unwrap_or((line, ""));
                 if let Some(id) = key
-                    .strip_prefix("amont.agent.")
+                    .strip_prefix(crate::names::CONFIG_PREFIX)
                     .and_then(|k| k.strip_suffix(".shadow"))
                 {
                     out.insert(id.to_string(), value.to_string());

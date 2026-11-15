@@ -36,7 +36,7 @@ impl Home {
             .env("CLAUDE_CONFIG_DIR", &self.0)
             // The plugin's state goes beside the scratch config, never to a real XDG state home.
             .env_remove("XDG_STATE_HOME")
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .output()
             .expect("the binary runs");
         (
@@ -303,11 +303,11 @@ fn the_kill_switch_is_reported() {
     let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
         .arg("doctor")
         .env("CLAUDE_CONFIG_DIR", &h.0)
-        .env("AMONT_AGENT_OFF", "1")
+        .env("GREENPISTE_OFF", "1")
         .output()
         .expect("runs");
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    assert!(text.contains("AMONT_AGENT_OFF"), "{text}");
+    assert!(text.contains("GREENPISTE_OFF"), "{text}");
     assert!(text.contains("observe"), "{text}");
 }
 
@@ -525,7 +525,7 @@ fn doctor_says_whether_the_lsp_rules_can_speak_here() {
                 "PATH",
                 std::env::join_paths([bin.clone()]).expect("a PATH of one directory"),
             )
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .output()
             .expect("the binary runs");
         String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr)
@@ -543,7 +543,7 @@ fn integration(h: &Home) -> (i32, serde_json::Value) {
     let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
         .args(["doctor", "--json"])
         .env("CLAUDE_CONFIG_DIR", &h.0)
-        .env_remove("AMONT_AGENT_OFF")
+        .env_remove("GREENPISTE_OFF")
         .output()
         .expect("the binary runs");
     let stdout = String::from_utf8(out.stdout).expect("UTF-8");
@@ -683,7 +683,7 @@ fn plan_root_doctor(
         let ok = Command::new("git")
             .args(["config", "--file"])
             .arg(&gitconfig)
-            .args(["amont.agent.plan-review.root", v])
+            .args(["greenpiste.plan-review.root", v])
             .status()
             .unwrap();
         assert!(ok.success());
@@ -696,10 +696,10 @@ fn plan_root_doctor(
         .env("HOME", &home)
         .env("GIT_CONFIG_GLOBAL", &gitconfig)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env_remove("AMONT_AGENT_OFF")
-        .env_remove("AMONT_AGENT_PLAN_ROOT");
+        .env_remove("GREENPISTE_OFF")
+        .env_remove("GREENPISTE_PLAN_ROOT");
     if let Some(v) = env {
-        c.env("AMONT_AGENT_PLAN_ROOT", v);
+        c.env("GREENPISTE_PLAN_ROOT", v);
     }
     let out = c.output().unwrap();
     String::from_utf8_lossy(&out.stdout).into_owned()
@@ -812,7 +812,7 @@ fn opener_doctor_line(home_dir: &Home, name: &str, opener: Option<&str>) -> Stri
         let ok = Command::new("git")
             .args(["config", "--file"])
             .arg(&gitconfig)
-            .args(["amont.agent.opener", v])
+            .args(["greenpiste.opener", v])
             .status()
             .unwrap();
         assert!(ok.success());
@@ -824,7 +824,7 @@ fn opener_doctor_line(home_dir: &Home, name: &str, opener: Option<&str>) -> Stri
         .env("HOME", &home)
         .env("GIT_CONFIG_GLOBAL", &gitconfig)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env_remove("AMONT_AGENT_OFF")
+        .env_remove("GREENPISTE_OFF")
         .output()
         .unwrap();
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -846,7 +846,7 @@ fn doctor_reports_the_opener_and_warns_when_its_program_is_missing() {
         "{missing}"
     );
     assert!(
-        missing.contains("git config --global amont.agent.opener"),
+        missing.contains("git config --global greenpiste.opener"),
         "{missing}"
     );
     let unset = opener_doctor_line(&home_dir, "unset", None);

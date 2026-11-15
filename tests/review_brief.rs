@@ -29,7 +29,7 @@ fn run(args: &[&str], bin: &std::path::Path) -> Output {
     dirs.extend(std::env::split_paths(&inherited));
     cmd.env("PATH", std::env::join_paths(dirs).unwrap());
     // No test reaches the machine's own `adr-lint`: a fake in `bin`, or none.
-    cmd.env("AMONT_AGENT_ADR_LINT", bin.join("adr-lint"));
+    cmd.env("GREENPISTE_ADR_LINT", bin.join("adr-lint"));
     cmd.output().expect("greenpiste runs")
 }
 
@@ -514,10 +514,10 @@ fn run_without_aval(args: &[&str], dir: &std::path::Path, aval: Option<&str>) ->
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
     cmd.args(args);
     cmd.env("PATH", std::env::join_paths([dir, &only]).unwrap());
-    cmd.env("AMONT_AGENT_ADR_LINT", dir.join("adr-lint"));
-    cmd.env_remove("AMONT_AGENT_AVAL");
+    cmd.env("GREENPISTE_ADR_LINT", dir.join("adr-lint"));
+    cmd.env_remove("GREENPISTE_AVAL");
     if let Some(program) = aval {
-        cmd.env("AMONT_AGENT_AVAL", program);
+        cmd.env("GREENPISTE_AVAL", program);
     }
     cmd.output().expect("greenpiste runs")
 }
@@ -945,7 +945,7 @@ fn interdiff_with(
     let mut dirs = vec![bin.to_path_buf()];
     dirs.extend(std::env::split_paths(&inherited));
     cmd.env("PATH", std::env::join_paths(dirs).unwrap());
-    cmd.env("AMONT_AGENT_ADR_LINT", bin.join("adr-lint"));
+    cmd.env("GREENPISTE_ADR_LINT", bin.join("adr-lint"));
     cmd.env("CLAUDE_CONFIG_DIR", bin.join("config"));
     cmd.output().expect("greenpiste runs")
 }
@@ -1453,17 +1453,17 @@ impl PinWorld {
         cmd.args(["review-brief", "-C"])
             .arg(&self.repo)
             .args(["--base", "HEAD~1"]);
-        cmd.env("AMONT_AGENT_ADR_LINT", self.bin.join("adr-lint"));
+        cmd.env("GREENPISTE_ADR_LINT", self.bin.join("adr-lint"));
         cmd.env("CLAUDE_CONFIG_DIR", self.bin.join("config"));
-        cmd.env("AMONT_AGENT_GH_DEADLINE_MS", deadline_ms);
-        cmd.env_remove("AMONT_AGENT_GH");
+        cmd.env("GREENPISTE_GH_DEADLINE_MS", deadline_ms);
+        cmd.env_remove("GREENPISTE_GH");
         match gh {
             Some(gh) => {
                 let inherited = std::env::var_os("PATH").unwrap_or_default();
                 let mut dirs = vec![self.bin.clone()];
                 dirs.extend(std::env::split_paths(&inherited));
                 cmd.env("PATH", std::env::join_paths(dirs).unwrap());
-                cmd.env("AMONT_AGENT_GH", gh);
+                cmd.env("GREENPISTE_GH", gh);
             }
             None => {
                 let only = self.bin.join("only-git");
@@ -1526,9 +1526,9 @@ fn a_missing_journal_directory_is_said_in_the_pin_section() {
         .args(["review-brief", "-C"])
         .arg(&world.repo)
         .args(["--base", "HEAD~1"])
-        .env("AMONT_AGENT_ADR_LINT", world.bin.join("adr-lint"))
+        .env("GREENPISTE_ADR_LINT", world.bin.join("adr-lint"))
         .env("PATH", std::env::join_paths(dirs).unwrap())
-        .env("AMONT_AGENT_GH", &gh)
+        .env("GREENPISTE_GH", &gh)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .env_remove("CLAUDE_CONFIG_DIR")

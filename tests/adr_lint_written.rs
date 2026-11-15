@@ -101,10 +101,10 @@ impl World {
             .arg("hook")
             .env("CLAUDE_CONFIG_DIR", self.root.join("config"))
             .env("PATH", path)
-            .env("AMONT_AGENT_ADR_LINT", self.bin("adr-lint"))
+            .env("GREENPISTE_ADR_LINT", self.bin("adr-lint"))
             .env("GIT_CONFIG_GLOBAL", self.root.join("no-global-gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -304,7 +304,7 @@ fn observing_journals_the_findings_and_says_nothing() {
     // stance by writing one.
     std::fs::write(
         w.root.join("no-global-gitconfig"),
-        "[amont \"agent\"]\n\tstance = observe\n",
+        "[greenpiste]\n\tstance = observe\n",
     )
     .unwrap();
     let (stdout, _) = w.edit("adr-i", "src/a.rs");

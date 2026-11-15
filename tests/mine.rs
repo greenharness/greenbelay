@@ -84,7 +84,7 @@ impl Transcript {
             .arg(dir.join("projects"))
             .env("GIT_CONFIG_GLOBAL", dir.join("global"))
             .env("GIT_CONFIG_SYSTEM", dir.join("system"))
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .output()
             .expect("the binary runs");
         assert!(

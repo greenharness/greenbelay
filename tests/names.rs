@@ -23,6 +23,10 @@ const KEPT_LINES: &[(&str, &str)] = &[
     ),
 ];
 
+/// The old environment-variable and git-config prefixes, which only
+/// `names::old` and this test may spell.
+const OLD_PREFIXES: &[&str] = &["amont.agent.", "AMONT_AGENT_"];
+
 /// The module that says the names, and this test, which spells them out.
 const NAMES_MODULES: &[&str] = &["crates/greenpiste-guard/src/names.rs", "tests/names.rs"];
 
@@ -302,4 +306,62 @@ fn a_planted_message_is_found_and_the_kept_data_names_are_not() {
     ] {
         assert_eq!(stray_names(kept), Vec::<usize>::new(), "{kept}");
     }
+}
+
+/// Whether any string literal of `source` contains an old prefix, in any
+/// case: git folds a key's section to lower case, so `AMONT.agent.x` is the
+/// old name too.
+fn has_old_prefix_literal(source: &str) -> bool {
+    literals(source).iter().any(|literal| {
+        let text = literal.text.to_ascii_lowercase();
+        OLD_PREFIXES
+            .iter()
+            .any(|old| text.contains(&old.to_ascii_lowercase()))
+    })
+}
+
+#[test]
+fn no_source_string_spells_an_old_env_or_config_prefix() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = rust_files(&root.join("src"));
+    files.extend(rust_files(&root.join("tests")));
+    for krate in std::fs::read_dir(root.join("crates"))
+        .expect("crates dir")
+        .flatten()
+    {
+        files.extend(rust_files(&krate.path().join("src")));
+    }
+    assert!(files.len() > 50, "found only {} sources", files.len());
+    let mut strays = Vec::new();
+    for file in files {
+        let shown = file
+            .strip_prefix(root)
+            .unwrap_or(&file)
+            .display()
+            .to_string()
+            .replace('\\', "/");
+        if NAMES_MODULES.contains(&shown.as_str()) {
+            continue;
+        }
+        let source = std::fs::read_to_string(&file).expect("readable source");
+        if has_old_prefix_literal(&source) {
+            strays.push(shown);
+        }
+    }
+    assert!(
+        strays.is_empty(),
+        "an old `amont.agent.` or `AMONT_AGENT_` name in a string literal; the old prefixes live \
+         in `names::old` alone:\n{}",
+        strays.join("\n")
+    );
+}
+
+#[test]
+fn a_planted_old_prefix_literal_is_found() {
+    assert!(has_old_prefix_literal("let k = \"amont.agent.stance\";"));
+    assert!(has_old_prefix_literal("std::env::var(\"AMONT_AGENT_OFF\")"));
+    assert!(has_old_prefix_literal("let k = \"AMONT.agent.x.STANCE\";"));
+    assert!(!has_old_prefix_literal(
+        "// amont.agent.stance in a comment\nlet k = \"greenpiste.stance\";"
+    ));
 }

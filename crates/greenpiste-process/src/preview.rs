@@ -93,13 +93,17 @@ use greenpiste_guard::push_record::{dir, ensure, Before};
 
 /// Whether a repository has a user interface a person can preview.
 ///
-/// `git config amont.agent.push-preview.ui true|false` decides when set (the
+/// `git config greenpiste.push-preview.ui true|false` decides when set (the
 /// repository's own config, which a clone never carries). Otherwise: a `dev`
 /// script in `package.json` at the root or in `web/`.
 pub fn gated(repo: &Path) -> bool {
     match greenpiste_guard::git::stdout_in(
         repo,
-        &["config", "--get", "amont.agent.push-preview.ui"],
+        &[
+            "config",
+            "--get",
+            greenpiste_guard::config_key!("push-preview.ui"),
+        ],
     )
     .as_deref()
     {
@@ -610,13 +614,20 @@ pub(crate) fn outcome(repo: &Path, t: &Target) -> Option<Outcome> {
 // --- mockup mode -----------------------------------------------------------
 
 /// Where a repository keeps its picked mockups: `git config
-/// amont.agent.preview.mockups`, else `docs/mockups` — the same key the
+/// greenpiste.preview.mockups`, else `docs/mockups` — the same key the
 /// application-landscape `ui-handoff` check reads.
 fn mockups_dir(repo: &Path) -> String {
-    git(repo, &["config", "--get", "amont.agent.preview.mockups"])
-        .filter(|d| !d.trim().is_empty())
-        .map(|d| d.trim().trim_end_matches('/').to_string())
-        .unwrap_or_else(|| "docs/mockups".to_string())
+    git(
+        repo,
+        &[
+            "config",
+            "--get",
+            greenpiste_guard::config_key!("preview.mockups"),
+        ],
+    )
+    .filter(|d| !d.trim().is_empty())
+    .map(|d| d.trim().trim_end_matches('/').to_string())
+    .unwrap_or_else(|| "docs/mockups".to_string())
 }
 
 /// The screens a commit's branch carries picked mockups for: folders under

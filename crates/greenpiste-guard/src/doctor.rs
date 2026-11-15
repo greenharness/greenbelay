@@ -124,7 +124,7 @@ fn shadow_findings(
             .join(", ");
         return vec![Finding::warn(
             "shadow: a rate does not parse, so that part is not shadowed",
-            format!("{list}: set a number in [0,1], or unset amont.agent.<id>.shadow"),
+            format!("{list}: set a number in [0,1], or unset greenpiste.<id>.shadow"),
         )];
     }
     let mut on = Vec::new();
@@ -148,7 +148,7 @@ fn shadow_findings(
                 "shadow: a rate is set on an irreversible part, so it is refused (irreversible): {}",
                 refused.join(", ")
             ),
-            "an irreversible part is judged by replay and never switched off live; unset amont.agent.<id>.shadow",
+            "an irreversible part is judged by replay and never switched off live; unset greenpiste.<id>.shadow",
         ));
     }
     out
@@ -534,7 +534,7 @@ fn self_test() -> Finding {
                 "every rule may be demoted, or the guard is switched off — check \
              `",
                 crate::bin!(),
-                " status` and $AMONT_AGENT_OFF"
+                " status` and $GREENPISTE_OFF"
             )
             .to_string(),
         );

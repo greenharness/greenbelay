@@ -2,7 +2,7 @@
 //! `work.plan-review-panel`).
 //!
 //! Each test builds its repositories under an isolated root
-//! (`AMONT_AGENT_PLAN_ROOT`), writes a plan and a transcript in the shapes
+//! (`GREENPISTE_PLAN_ROOT`), writes a plan and a transcript in the shapes
 //! captured from real sessions on 2026-09-29 — a foreground `Agent` result
 //! carries `toolUseResult.status: "completed"` and `agentType`; a background
 //! one reports through a `user` entry with `origin.kind:
@@ -125,8 +125,8 @@ impl World {
         c.env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
             .env("GIT_CONFIG_GLOBAL", self.root.join("global"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("AMONT_AGENT_PLAN_ROOT", self.root.join("repos"))
-            .env_remove("AMONT_AGENT_OFF");
+            .env("GREENPISTE_PLAN_ROOT", self.root.join("repos"))
+            .env_remove("GREENPISTE_OFF");
         c
     }
 
@@ -1580,7 +1580,7 @@ fn a_plan_naming_no_file_is_advised_and_still_allowed() {
     // Its stance is the person's: observed, it is journalled and silent.
     std::fs::write(
         w.root.join("global"),
-        "[amont \"agent.plan-names-no-paths\"]\n\tstance = observe\n",
+        "[greenpiste \"plan-names-no-paths\"]\n\tstance = observe\n",
     )
     .unwrap();
     assert_eq!(w.present(&plan, &t), Said::Silent);
@@ -1977,7 +1977,7 @@ impl CopyWorld {
                 "config",
                 "--file",
                 &self.w.root.join("global").display().to_string(),
-                "amont.agent.implementation-review.stance",
+                "greenpiste.implementation-review.stance",
                 "deny",
             ],
         );
@@ -1998,12 +1998,12 @@ impl CopyWorld {
             .arg(&self.repo)
             .args(["--base", "origin/main"])
             .arg(&self.plan)
-            .env("AMONT_AGENT_GH_DEADLINE_MS", deadline_ms)
-            .env_remove("AMONT_AGENT_GH");
+            .env("GREENPISTE_GH_DEADLINE_MS", deadline_ms)
+            .env_remove("GREENPISTE_GH");
         match gh {
             Some(gh) => {
                 cmd.env("PATH", std::env::join_paths(dirs).unwrap());
-                cmd.env("AMONT_AGENT_GH", gh);
+                cmd.env("GREENPISTE_GH", gh);
             }
             None => {
                 // A PATH with git and the fake aval and no gh at all.

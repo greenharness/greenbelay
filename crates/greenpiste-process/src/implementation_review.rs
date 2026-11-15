@@ -1903,7 +1903,7 @@ impl ProfileGate<'_> {
         }
         if record.gh_override_set && !crate::pin_check::gh_override_set() {
             return Err(
-                "the pin record was made with AMONT_AGENT_GH set; run review-brief without it"
+                "the pin record was made with GREENPISTE_GH set; run review-brief without it"
                     .to_string(),
             );
         }

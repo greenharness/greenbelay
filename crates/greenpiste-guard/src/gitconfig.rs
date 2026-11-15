@@ -12,7 +12,7 @@
 //! commands a coding agent is about to run, and a repository that could set
 //!
 //! ```text
-//! amont.agent.pipe-to-tail.stance = observe
+//! greenpiste.pipe-to-tail.stance = observe
 //! ```
 //!
 //! could disarm the guard on the machine of anybody who cloned it, without
@@ -40,7 +40,7 @@
 //! [`boolean`] shells out with `--type=bool` rather than comparing strings:
 //! git's boolean dialect is `true`/`false`/`yes`/`no`/`on`/`off`/`1`/`0`,
 //! case-insensitively, plus a valueless key meaning true. A hand-rolled
-//! `== "true"` would silently turn `amont.agent.enabled = yes` into a
+//! `== "true"` would silently turn `greenpiste.enabled = yes` into a
 //! no-op — a setting that reads as working and does nothing. Letting git
 //! normalise means there is one config dialect, and it is git's.
 //!
@@ -75,7 +75,7 @@ pub enum Value<T> {
 /// coding agent is about to run:
 ///
 ///   * the agent that just had a command refused can write
-///     `git config amont.agent.pipe-to-tail.stance observe` into `.git/config`
+///     `git config greenpiste.pipe-to-tail.stance observe` into `.git/config`
 ///     — an ordinary command no rule here objects to — and the next call is
 ///     allowed. A guard a guarded process can switch off is decoration.
 ///   * `amont-agent graduate` and `demote` write `--global` (see `graduate`),
@@ -115,9 +115,9 @@ fn read_scope(index: usize, scope: &str, key: &str, ty: Option<&str>) -> Value<S
 
 /// Every key this crate reads lives under this prefix, so one
 /// `--get-regexp` per scope answers all of them.
-const PREFIX: &str = "amont.agent.";
+const PREFIX: &str = crate::names::CONFIG_PREFIX;
 
-/// One scope's `amont.agent.*` keys, read once per process.
+/// One scope's `greenpiste.*` keys, read once per process.
 ///
 /// Measured (#70): a `git config` spawn costs ~40 ms on a loaded macOS
 /// machine, and the firing path read three keys in two scopes — six spawns,
@@ -154,7 +154,7 @@ fn snapshot_of(scope: &str) -> Snapshot {
         "--includes",
         "--null",
         "--get-regexp",
-        r"^amont\.agent\.",
+        &crate::names::config_pattern(""),
     ]) else {
         // Git did not run: every key takes its default, as before.
         return Snapshot::Keys(Vec::new());
@@ -550,18 +550,18 @@ mod tests {
 
     #[test]
     fn null_output_keeps_values_whole_and_valueless_keys_apart() {
-        let raw = "amont.agent.enabled\0amont.agent.stance\nadvise\0\
-                   amont.agent.x.stance\nline one\nline two\0amont.agent.y.stance\n\0";
+        let raw = "greenpiste.enabled\0greenpiste.stance\nadvise\0\
+                   greenpiste.x.stance\nline one\nline two\0greenpiste.y.stance\n\0";
         assert_eq!(
             parse_null(raw),
             vec![
-                ("amont.agent.enabled".to_string(), None),
-                ("amont.agent.stance".to_string(), Some("advise".to_string())),
+                ("greenpiste.enabled".to_string(), None),
+                ("greenpiste.stance".to_string(), Some("advise".to_string())),
                 (
-                    "amont.agent.x.stance".to_string(),
+                    "greenpiste.x.stance".to_string(),
                     Some("line one\nline two".to_string())
                 ),
-                ("amont.agent.y.stance".to_string(), Some(String::new())),
+                ("greenpiste.y.stance".to_string(), Some(String::new())),
             ]
         );
     }
@@ -571,34 +571,34 @@ mod tests {
     #[test]
     fn keys_compare_the_way_git_compares_them() {
         assert_eq!(
-            canonical("amont.agent.agentsMdNotice"),
-            canonical("amont.agent.agentsmdnotice")
+            canonical("greenpiste.agentsMdNotice"),
+            canonical("greenpiste.agentsmdnotice")
         );
         assert_eq!(
-            canonical("AMONT.agent.pipe-to-tail.Stance"),
-            "amont.agent.pipe-to-tail.stance"
+            canonical("GREENPISTE.pipe-to-tail.Stance"),
+            "greenpiste.pipe-to-tail.stance"
         );
         assert_ne!(
-            canonical("amont.Agent.stance"),
-            canonical("amont.agent.stance")
+            canonical("greenpiste.Pipe-to-tail.stance"),
+            canonical("greenpiste.pipe-to-tail.stance")
         );
     }
 
     #[test]
     fn values_merge_in_file_order_and_a_refused_scope_adds_none() {
         let keys = Snapshot::Keys(vec![
-            ("amont.agent.r.denyAgents".into(), Some("a".into())),
-            ("amont.agent.other".into(), Some("x".into())),
-            ("AMONT.agent.r.denyagents".into(), Some("b*".into())),
-            ("amont.agent.r.denyAgents".into(), None),
+            ("greenpiste.r.denyAgents".into(), Some("a".into())),
+            ("greenpiste.other".into(), Some("x".into())),
+            ("GREENPISTE.r.denyagents".into(), Some("b*".into())),
+            ("greenpiste.r.denyAgents".into(), None),
         ]);
         assert_eq!(
-            values_in(&keys, "amont.agent.r.denyAgents"),
+            values_in(&keys, "greenpiste.r.denyAgents"),
             Ok(vec!["a".to_string(), "b*".to_string(), String::new()])
         );
         let refused = Snapshot::Refused("bad config".into());
         assert_eq!(
-            values_in(&refused, "amont.agent.r.denyAgents"),
+            values_in(&refused, "greenpiste.r.denyAgents"),
             Err("bad config".to_string())
         );
     }

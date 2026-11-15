@@ -130,7 +130,7 @@ fn a_confirmed_stale_base_prints_its_remedy() {
     );
     git(&clone, &["config", "user.email", "t@example.invalid"]);
     git(&clone, &["config", "user.name", "t"]);
-    git(&clone, &["config", "amont.agent.fetch", "true"]);
+    git(&clone, &["config", "greenpiste.fetch", "true"]);
     assert_prints_remedy(&clone, "stale-base", "git switch -c feat/z");
     let _ = std::fs::remove_dir_all(&origin); // best-effort cleanup of a temp directory; a leftover is harmless
     let _ = std::fs::remove_dir_all(&clone); // best-effort cleanup of a temp directory; a leftover is harmless

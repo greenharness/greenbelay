@@ -1,6 +1,6 @@
 //! `amont-agent quiet`, driven through the real binary.
 //!
-//! The failure injections (`AMONT_AGENT_TEST_*`) exist only behind the
+//! The failure injections (`GREENPISTE_TEST_*`) exist only behind the
 //! `test-hooks` cargo feature, so the tests that need them are compiled only
 //! with it: `cargo test --features test-hooks --test quiet`.
 #![cfg(unix)]
@@ -431,7 +431,7 @@ mod injected {
         let script =
             "i=0; while [ $i -lt 200 ]; do echo \"error: line $i\"; i=$((i+1)); done; exit 7";
         let out = quiet_cmd(&home, &["--", "sh", "-c", script])
-            .env("AMONT_AGENT_TEST_LOG_FAIL_AFTER", "100")
+            .env("GREENPISTE_TEST_LOG_FAIL_AFTER", "100")
             .output()
             .unwrap();
         assert_eq!(out.status.code(), Some(7));
@@ -479,7 +479,7 @@ mod injected {
         let home = scratch("big");
         let script = "yes 'error: failure on a line that is not short at all, really' | head -c 50000000; exit 1";
         let out = quiet_cmd(&home, &["--", "sh", "-c", script])
-            .env("AMONT_AGENT_TEST_REPORT_PEAK", "1")
+            .env("GREENPISTE_TEST_REPORT_PEAK", "1")
             .output()
             .unwrap();
         assert_eq!(out.status.code(), Some(1));
@@ -498,7 +498,7 @@ mod injected {
     fn the_running_line_appears_only_after_the_delay() {
         let home = scratch("running");
         let out = quiet_cmd(&home, &["--", "sleep", "1"])
-            .env("AMONT_AGENT_TEST_RUNNING_AFTER_MS", "200")
+            .env("GREENPISTE_TEST_RUNNING_AFTER_MS", "200")
             .output()
             .unwrap();
         let stderr = text(&out.stderr);

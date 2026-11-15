@@ -4,7 +4,7 @@
 //! on top:
 //!
 //! ```text
-//! rule.default_stance  <  amont.agent.stance  <  amont.agent.<id>.stance
+//! rule.default_stance  <  greenpiste.stance  <  greenpiste.<id>.stance
 //! ```
 //!
 //! then capped at the rule's own [`Rule::max_stance`], and clamped to
@@ -30,8 +30,8 @@
 //!
 //! ## The kill switch is an environment variable on purpose
 //!
-//! Reading a git config key costs a process. `$AMONT_AGENT_OFF` costs nothing
-//! and is checked first, before any rule has run. `amont.agent.enabled` exists
+//! Reading a git config key costs a process. `$GREENPISTE_OFF` costs nothing
+//! and is checked first, before any rule has run. `greenpiste.enabled` exists
 //! too, but it is consulted only once something has already fired — where its
 //! effect is to clamp to silence anyway. That asymmetry looks like an
 //! inconsistency and is a deliberate one.
@@ -40,9 +40,9 @@ use crate::gitconfig as config;
 
 use crate::rules::{Rule, Stance};
 
-pub const KEY_ENABLED: &str = "amont.agent.enabled";
-pub const KEY_STANCE: &str = "amont.agent.stance";
-pub const ENV_OFF: &str = "AMONT_AGENT_OFF";
+pub const KEY_ENABLED: &str = crate::config_key!("enabled");
+pub const KEY_STANCE: &str = crate::config_key!("stance");
+pub const ENV_OFF: &str = crate::env_var!("OFF");
 
 const ALLOWED: &[&str] = &["observe", "advise", "deny"];
 
@@ -53,13 +53,13 @@ pub fn switched_off() -> bool {
 
 /// The key naming one rule's stance.
 ///
-/// `amont.agent.<id>.stance` parses as section `amont`, subsection
-/// `agent.<id>`, key `stance` — and git treats subsections as case-SENSITIVE
+/// `greenpiste.<id>.stance` parses as section `greenpiste`, subsection
+/// `<id>`, key `stance` — and git treats subsections as case-SENSITIVE
 /// while lowercasing sections and keys. Every rule id is lowercase kebab-case,
 /// which keeps that from mattering; `rule_ids_are_lowercase_kebab` is what
 /// keeps it true.
 pub fn key_for(rule: &Rule) -> String {
-    format!("amont.agent.{}.stance", rule.id)
+    format!("{}{}.stance", crate::names::CONFIG_PREFIX, rule.id)
 }
 
 /// The effective stance for a rule that has already fired.
@@ -86,7 +86,7 @@ pub fn resolve(rule: &Rule) -> Stance {
 
 /// The key listing the agent types a rule is raised to `Deny` for.
 pub fn deny_agents_key(rule: &Rule) -> String {
-    format!("amont.agent.{}.denyAgents", rule.id)
+    format!("{}{}.denyAgents", crate::names::CONFIG_PREFIX, rule.id)
 }
 
 /// Whether an agent type matches one pattern: equal, or the pattern is a
@@ -131,7 +131,7 @@ pub enum Source {
 }
 
 /// [`resolve`], raised from `Advise` to `Deny` for the agent types the
-/// machine's `amont.agent.<id>.denyAgents` lists (global and system git
+/// machine's `greenpiste.<id>.denyAgents` lists (global and system git
 /// config only, like the stance keys), with where the stance came from. The
 /// key is read only for a named agent whose stance is `Advise`.
 pub fn resolve_for(rule: &Rule, agent: &crate::lsp::Agent) -> (Stance, Source) {
@@ -158,7 +158,7 @@ pub fn ladder(rule: &Rule, configured: Option<Stance>) -> Stance {
 
 /// The same ladder for an assertion.
 ///
-/// Deliberately the same config keys — `amont.agent.<id>.stance`, global or
+/// Deliberately the same config keys — `greenpiste.<id>.stance`, global or
 /// system only — because "which of these is speaking" is one question, and
 /// splitting it into two vocabularies would mean two places to look when
 /// something is too loud. `deny` resolves like any other stance here; the hook
@@ -169,7 +169,7 @@ pub fn resolve_assertion(assertion: &crate::assertions::Assertion) -> Stance {
         return Stance::Observe;
     }
     let floor = config::enumerated_or(KEY_STANCE, ALLOWED, assertion.default_stance.as_str());
-    let key = format!("amont.agent.{}.stance", assertion.id);
+    let key = format!("{}{}.stance", crate::names::CONFIG_PREFIX, assertion.id);
     let mine = config::enumerated_or(&key, ALLOWED, floor);
     let st = Stance::parse(mine).unwrap_or(assertion.default_stance);
     if st != Stance::Observe && crate::shadow::drops(assertion.id, assertion.irreversible) {
@@ -199,7 +199,7 @@ mod tests {
         }
     }
 
-    /// Both configuration paths — the global `amont.agent.stance` floor and
+    /// Both configuration paths — the global `greenpiste.stance` floor and
     /// the rule's own key — arrive here as the same configured value, and
     /// neither may carry a capped rule past its ceiling.
     #[test]
@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn the_key_names_the_rule() {
         let r = &crate::rules::pipe_to_tail::RULE;
-        assert_eq!(key_for(r), format!("amont.agent.{}.stance", r.id));
+        assert_eq!(key_for(r), format!("greenpiste.{}.stance", r.id));
     }
 
     fn named(t: &str) -> crate::lsp::Agent {

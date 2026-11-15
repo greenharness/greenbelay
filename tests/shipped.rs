@@ -183,11 +183,11 @@ impl World {
             .arg("shipped")
             .arg(&plan)
             .args(extra)
-            .env("AMONT_AGENT_PLAN_ROOT", self.top.join("root"))
+            .env("GREENPISTE_PLAN_ROOT", self.top.join("root"))
             .env("CLAUDE_CONFIG_DIR", self.top.join("claude"))
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .env("AMONT_AGENT_GH", gh)
+            .env("GREENPISTE_GH", gh)
             .stdin(Stdio::null())
             .output()
             .expect("runs");

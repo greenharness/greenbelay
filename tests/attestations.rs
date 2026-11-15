@@ -2,7 +2,7 @@
 //! `attestations` subcommand and the `doctor` line.
 //!
 //! Every test runs the binary against a scratch `CLAUDE_CONFIG_DIR`, `HOME`
-//! and `AMONT_AGENT_PLAN_ROOT`; none of them touches the real `~/.claude`.
+//! and `GREENPISTE_PLAN_ROOT`; none of them touches the real `~/.claude`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -42,9 +42,9 @@ impl World {
         let mut c = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
         c.env("CLAUDE_CONFIG_DIR", self.0.join("claude"))
             .env("HOME", self.0.join("home"))
-            .env("AMONT_AGENT_PLAN_ROOT", self.0.join("root"))
+            .env("GREENPISTE_PLAN_ROOT", self.0.join("root"))
             .env_remove("GIT_CONFIG_GLOBAL")
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .env("XDG_CONFIG_HOME", self.0.join("home/.config"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("NO_COLOR", "1");
@@ -311,7 +311,7 @@ fn a_scan_failure_exits_1_and_removes_nothing() {
     let gone = w.0.join("nowhere");
     let (code, out, err) = w
         .cmd()
-        .env("AMONT_AGENT_PLAN_ROOT", &gone)
+        .env("GREENPISTE_PLAN_ROOT", &gone)
         .args(["attestations", "--apply"])
         .output()
         .map(|o| {
@@ -401,7 +401,7 @@ fn a_global_git_root_outside_the_plan_root_is_scanned() {
         .args([
             "config",
             "--global",
-            "amont.agent.plan-review.dots.path",
+            "greenpiste.plan-review.dots.path",
             "~/dots",
         ])
         .env("HOME", w.0.join("home"))
@@ -435,7 +435,7 @@ fn a_closed_pipe_is_quiet() {
         .env("CLAUDE_CONFIG_DIR", w.0.join("claude"))
         .env("HOME", w.0.join("home"))
         .env("XDG_CONFIG_HOME", w.0.join("home/.config"))
-        .env("AMONT_AGENT_PLAN_ROOT", w.0.join("root"))
+        .env("GREENPISTE_PLAN_ROOT", w.0.join("root"))
         .output()
         .unwrap();
     assert_eq!(o.status.code(), Some(0));
@@ -478,7 +478,7 @@ fn doctor_warns_on_a_failed_scan_and_on_a_stale_stamp() {
     let gone = w.0.join("nowhere");
     let o = w
         .cmd()
-        .env("AMONT_AGENT_PLAN_ROOT", &gone)
+        .env("GREENPISTE_PLAN_ROOT", &gone)
         .args(["attestations", "--apply"])
         .output()
         .unwrap();
@@ -487,7 +487,7 @@ fn doctor_warns_on_a_failed_scan_and_on_a_stale_stamp() {
     // last run failed.
     let o = w
         .cmd()
-        .env("AMONT_AGENT_PLAN_ROOT", &gone)
+        .env("GREENPISTE_PLAN_ROOT", &gone)
         .arg("doctor")
         .output()
         .unwrap();
@@ -502,7 +502,7 @@ fn an_unset_plan_root_removes_nothing_and_says_so() {
     w.dir("old", 40);
     let o = w
         .cmd()
-        .env_remove("AMONT_AGENT_PLAN_ROOT")
+        .env_remove("GREENPISTE_PLAN_ROOT")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .args(["attestations", "--apply"])
         .output()
@@ -510,6 +510,6 @@ fn an_unset_plan_root_removes_nothing_and_says_so() {
     let err = String::from_utf8_lossy(&o.stderr);
     assert_eq!(o.status.code(), Some(1), "{err}");
     assert!(err.contains("unset"), "{err}");
-    assert!(err.contains("AMONT_AGENT_PLAN_ROOT"), "{err}");
+    assert!(err.contains("GREENPISTE_PLAN_ROOT"), "{err}");
     assert!(w.names().contains(&"old".to_string()));
 }

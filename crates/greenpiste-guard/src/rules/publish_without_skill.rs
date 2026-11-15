@@ -46,7 +46,7 @@
 //!
 //! It ships at `Advise`, the fleet pattern, with a `Deny` ceiling. A person
 //! who wants the refusal sets
-//! `amont.agent.publish-without-skill.stance deny`, and `observe` turns it off.
+//! `greenpiste.publish-without-skill.stance deny`, and `observe` turns it off.
 
 use crate::publish_cmd::{self, Kind};
 use crate::rules::{Confirmed, Context, Evidence, Examine, Finding, Rule, Stance, Trend};
@@ -103,7 +103,7 @@ fn remedy(skill: &str) -> String {
     format!(
         "Run the Skill tool with `{skill}`, follow it, then re-run this command. If \
          the skill does not apply here, ask the person; they can run `git config \
-         --global amont.agent.publish-without-skill.stance observe`."
+         --global greenpiste.publish-without-skill.stance observe`."
     )
 }
 

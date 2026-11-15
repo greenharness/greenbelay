@@ -25,7 +25,7 @@ impl Scratch {
         let ok = Command::new("git")
             .args(["config", "--file"])
             .arg(self.0.join("gitconfig"))
-            .args(["amont.agent.opener", template])
+            .args(["greenpiste.opener", template])
             .status()
             .unwrap();
         assert!(ok.success());
@@ -38,7 +38,7 @@ impl Scratch {
             .current_dir(&self.0)
             .env("GIT_CONFIG_GLOBAL", self.0.join("gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .output()
             .expect("the binary runs")
     }
@@ -164,7 +164,7 @@ fn an_opener_that_fails_fast_exits_1_naming_the_page_and_the_setting() {
         said.contains("No such file") || said.contains("cannot access"),
         "{said}"
     );
-    assert!(said.contains("amont.agent.opener"), "{said}");
+    assert!(said.contains("greenpiste.opener"), "{said}");
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn an_opener_that_is_not_found_exits_1() {
     s.with_opener("/nonexistent/opener {}");
     let out = s.run(&["http://localhost:1/"]);
     assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("amont.agent.opener"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("greenpiste.opener"));
 }
 
 #[test]

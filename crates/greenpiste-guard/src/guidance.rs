@@ -43,10 +43,10 @@ use std::time::Duration;
 
 use crate::gitconfig as config;
 
-/// `amont.agent.agentsMdNotice` — whether a session opening may mention a
+/// `greenpiste.agentsMdNotice` — whether a session opening may mention a
 /// stale guidance block. Boolean rather than a stance: there is nothing to
 /// deny, and nothing to measure a rate of.
-pub const KEY_NOTICE: &str = "amont.agent.agentsMdNotice";
+pub const KEY_NOTICE: &str = crate::config_key!("agentsMdNotice");
 
 /// The opening markers the gate writes: greengate 4.0's, then the one
 /// greengate 3.x and amont wrote, read until the fleet sweep renames them.

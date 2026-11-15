@@ -131,7 +131,7 @@ fn send(payload: &str) -> Reply {
     let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
         .arg("hook")
         .env("CLAUDE_CONFIG_DIR", &config)
-        .env_remove("AMONT_AGENT_OFF")
+        .env_remove("GREENPISTE_OFF")
         .env_remove("GREENHARNESS_HOST_SLOT")
         .env("GIT_CONFIG_GLOBAL", config.join("no-global-gitconfig"))
         .env("GIT_CONFIG_NOSYSTEM", "1")

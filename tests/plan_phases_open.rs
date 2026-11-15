@@ -119,7 +119,7 @@ impl World {
             .env("CLAUDE_CONFIG_DIR", claude)
             .env("GIT_CONFIG_GLOBAL", &self.global)
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -509,7 +509,7 @@ fn at_advise_the_person_is_told_and_the_agent_stops() {
     let w = with_open_plan("advise");
     std::fs::write(
         &w.global,
-        "[amont \"agent.plan-phases-open\"]\n\tstance = advise\n",
+        "[greenpiste \"plan-phases-open\"]\n\tstance = advise\n",
     )
     .unwrap();
     let r = w.stop();
@@ -530,7 +530,7 @@ fn at_observe_it_only_journals() {
     let w = with_open_plan("observe");
     std::fs::write(
         &w.global,
-        "[amont \"agent.plan-phases-open\"]\n\tstance = observe\n",
+        "[greenpiste \"plan-phases-open\"]\n\tstance = observe\n",
     )
     .unwrap();
     assert!(w.stop().silent());

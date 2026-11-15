@@ -9,7 +9,7 @@
 # the root `make check` never compiles it.
 #
 # It exercises the analyzer ONLY through the built binary
-# (`amont-agent analyze`): `AMONT_AGENT_BIN` if set, otherwise the tests
+# (`amont-agent analyze`): `GREENPISTE_BIN` if set, otherwise the tests
 # build the repository's own debug binary once and use that.
 #
 # Run (needs bash and zsh on PATH):

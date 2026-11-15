@@ -127,7 +127,7 @@ usage: ",
   suppressions --staged judge the staged change: a lint suppression it adds
                         without a reason blocks (exit 1); the pre-commit gate
   open <url|path>       open a page for the person, through the opener in
-                        `git config --global amont.agent.opener`
+                        `git config --global greenpiste.opener`
   plan-sha [--short] [--block [--lang <l>]] [--legacy] [--] <file|->
                         the sha256 of a plan's canonical body, as reviewed
   plan-panel <plan.md>  the review agents a plan still needs, as the
@@ -2088,7 +2088,7 @@ candidates, the code rules in full (a --profile brief: its own judge rules
 and an index of the rest, ADR-0065), the constraint rules, the decisions that
 bear on the changed files, and the plan's Non-goals. A repository with no
 .adr.yaml gets no rules line and a note that no decided code rules apply.
-adr-lint is `adr-lint` from PATH, or $AMONT_AGENT_ADR_LINT; when it cannot
+adr-lint is `adr-lint` from PATH, or $GREENPISTE_ADR_LINT; when it cannot
 answer, the block is <<<CANDIDATES unavailable>>> and the brief goes on.
 
   -C <dir>        the repository (default: the current directory)
@@ -2540,7 +2540,7 @@ Code hook binds its output to the session.
                       Mockup mode: when the branch (from its merge base
                       with the default branch) commits a picked mockup's
                       artboards (`*.dc.html` under docs/mockups/<screen>, or
-                      `git config amont.agent.preview.mockups`), the guide
+                      `git config greenpiste.preview.mockups`), the guide
                       must also show, under ## Reference, the screen path,
                       `Viewport: <width>px · <theme>`, and the artboard
                       beside the built screen as files next to it

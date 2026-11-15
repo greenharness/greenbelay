@@ -49,7 +49,7 @@ pub const RULE: Rule = Rule {
     // command bare) and the refusal carries it. If it turns out to be wrong,
     // demotion is one command and takes effect immediately:
     //
-    //     git config --global amont.agent.pipe-to-tail.stance observe
+    //     git config --global greenpiste.pipe-to-tail.stance observe
     default_stance: Stance::Deny,
     max_stance: Stance::Deny,
     evidence: Evidence {

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- **Environment variables are `GREENPISTE_*` and git config keys
+  `greenpiste.*`** (ADR-0068). `AMONT_AGENT_OFF`, `AMONT_AGENT_PLAN_ROOT`
+  and the other `AMONT_AGENT_*` variables, and every `amont.agent.*` key, are
+  no longer read; 5.0.0 moves this machine's keys once (`greenpiste migrate`).
+
 ## v4.1.0
 
 ### Added

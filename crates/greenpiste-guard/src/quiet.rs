@@ -451,7 +451,7 @@ fn env_u64(name: &str) -> Option<u64> {
 
 #[cfg(feature = "test-hooks")]
 fn running_after() -> u64 {
-    env_u64("AMONT_AGENT_TEST_RUNNING_AFTER_MS").unwrap_or(RUNNING_AFTER_MS)
+    env_u64(crate::env_var!("TEST_RUNNING_AFTER_MS")).unwrap_or(RUNNING_AFTER_MS)
 }
 
 #[cfg(not(feature = "test-hooks"))]
@@ -568,7 +568,7 @@ fn execute(parsed: Parsed) -> ExitCode {
         err: log.err.clone(),
         written: 0,
         #[cfg(feature = "test-hooks")]
-        fail_after: env_u64("AMONT_AGENT_TEST_LOG_FAIL_AFTER"),
+        fail_after: env_u64(crate::env_var!("TEST_LOG_FAIL_AFTER")),
         acc: Accumulator::new(parsed.bound),
     };
     let reader_exited = Arc::clone(&exited);
@@ -629,7 +629,7 @@ fn execute(parsed: Parsed) -> ExitCode {
     active.finish();
 
     #[cfg(feature = "test-hooks")]
-    if std::env::var_os("AMONT_AGENT_TEST_REPORT_PEAK").is_some() {
+    if std::env::var_os(crate::env_var!("TEST_REPORT_PEAK")).is_some() {
         eprintln!("accumulator peak {}", cap.acc.peak());
     }
 

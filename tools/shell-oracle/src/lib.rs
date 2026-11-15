@@ -25,12 +25,12 @@ pub fn repo_root() -> PathBuf {
         .expect("repository root")
 }
 
-/// `$AMONT_AGENT_BIN`, else `<repo>/target/debug/greenpiste`. Panics with
+/// `$GREENPISTE_BIN`, else `<repo>/target/debug/greenpiste`. Panics with
 /// the fix when it is missing: this harness never builds the crate itself.
 pub fn amont_bin() -> PathBuf {
-    if let Some(p) = std::env::var_os("AMONT_AGENT_BIN") {
+    if let Some(p) = std::env::var_os("GREENPISTE_BIN") {
         let p = PathBuf::from(p);
-        assert!(p.is_file(), "AMONT_AGENT_BIN={} is not a file", p.display());
+        assert!(p.is_file(), "GREENPISTE_BIN={} is not a file", p.display());
         return p;
     }
     static BUILT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();

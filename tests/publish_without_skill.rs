@@ -58,7 +58,7 @@ impl World {
         let out = Command::new("git")
             .args(["config", "--file"])
             .arg(self.root.join("global"))
-            .args([&format!("amont.agent.{rule}.stance"), stance])
+            .args([&format!("greenpiste.{rule}.stance"), stance])
             .output()
             .expect("git config");
         assert!(out.status.success());
@@ -94,7 +94,7 @@ impl World {
             .env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
             .env("GIT_CONFIG_GLOBAL", self.root.join("global"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())

@@ -80,7 +80,7 @@ impl World {
             ids: std::cell::Cell::new(0),
         };
         // No test runs the machine's own `aval`: a fake prints `abc` always,
-        // on every platform, and `bin` names it through `AMONT_AGENT_AVAL`.
+        // on every platform, and `bin` names it through `GREENPISTE_AVAL`.
         world.fake_aval("abc");
         world
     }
@@ -139,17 +139,17 @@ impl World {
         let mut dirs = vec![self.root.join("bin")];
         dirs.extend(std::env::split_paths(&path));
         c.env("PATH", std::env::join_paths(dirs).unwrap());
-        c.env("AMONT_AGENT_AVAL", self.aval_path());
-        c.env_remove("AMONT_AGENT_PLAN_ROOT");
+        c.env("GREENPISTE_AVAL", self.aval_path());
+        c.env_remove("GREENPISTE_PLAN_ROOT");
         c.env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
             .env("GIT_CONFIG_GLOBAL", self.root.join("global"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("AMONT_AGENT_OFF");
+            .env_remove("GREENPISTE_OFF");
         c
     }
 
     /// Where the fake `aval` is: a `#!/bin/sh` script on unix, a batch file
-    /// on Windows. `bin` passes the path in `AMONT_AGENT_AVAL`, because
+    /// on Windows. `bin` passes the path in `GREENPISTE_AVAL`, because
     /// Windows finds only `aval.exe` on PATH, never a script.
     fn aval_path(&self) -> PathBuf {
         let name = if cfg!(windows) { "aval.bat" } else { "aval" };
@@ -941,7 +941,7 @@ fn the_stance_ladder_observe_says_nothing_and_deny_holds_a_missing_review() {
     let tree = w.tree(&repo);
     let empty = w.transcript("empty", &Transcript::default());
 
-    w.set_global("amont.agent.implementation-review.stance", "observe");
+    w.set_global("greenpiste.implementation-review.stance", "observe");
     assert_eq!(w.push(&repo, "s1", Some(&empty)), Said::Silent);
     assert!(
         w.last_line().contains(" observe watched "),
@@ -949,7 +949,7 @@ fn the_stance_ladder_observe_says_nothing_and_deny_holds_a_missing_review() {
         w.last_line()
     );
 
-    w.set_global("amont.agent.implementation-review.stance", "deny");
+    w.set_global("greenpiste.implementation-review.stance", "deny");
     match w.push(&repo, "s1", Some(&empty)) {
         Said::Deny(text) => {
             assert!(text.contains(&tree[..12]), "names the tree: {text}");
@@ -991,7 +991,7 @@ fn only_the_hook_writes_a_pass_file() {
     assert!(w.last_line().contains(" deny denied "), "{}", w.last_line());
 
     // Bash, by the words it can see, whatever the stance.
-    w.set_global("amont.agent.implementation-review.stance", "observe");
+    w.set_global("greenpiste.implementation-review.stance", "observe");
     // Quoted as a session writes it: an unquoted Windows path's backslashes
     // are shell escapes.
     let cmd = format!("echo '{{}}' > '{}'", target.display());
@@ -1322,7 +1322,7 @@ fn a_land_is_held_like_a_push_until_it_is_reviewed() {
     let repo = w.repo("app");
     let tree = w.tree(&repo);
     let empty = w.transcript("empty", &Transcript::default());
-    w.set_global("amont.agent.implementation-review.stance", "deny");
+    w.set_global("greenpiste.implementation-review.stance", "deny");
 
     match w.push_cmd(&repo, "s1", Some(&empty), "amont land --json") {
         Said::Deny(text) => {
@@ -1365,7 +1365,7 @@ fn a_land_shape_that_cannot_be_read_is_held_under_deny_and_names_the_one_that_is
     w.fake_amont();
     let repo = w.repo("app");
     let empty = w.transcript("empty", &Transcript::default());
-    w.set_global("amont.agent.implementation-review.stance", "deny");
+    w.set_global("greenpiste.implementation-review.stance", "deny");
     for cmd in [
         "git commit -m x && amont land",
         "git fetch --set-upstream origin x && amont land",
@@ -1401,7 +1401,7 @@ fn a_land_amont_refuses_is_not_held() {
     let repo = w.repo("app");
     git(&repo, &["checkout", "-q", "main"]);
     let empty = w.transcript("empty", &Transcript::default());
-    w.set_global("amont.agent.implementation-review.stance", "deny");
+    w.set_global("greenpiste.implementation-review.stance", "deny");
     assert_eq!(
         w.push_cmd(&repo, "s1", Some(&empty), "amont land"),
         Said::Silent,
@@ -2027,7 +2027,7 @@ fn a_plan_approved_with_evidence_is_recorded_as_preview_evidence() {
     git(&repo, &["reset", "-q", "--hard", "origin/main"]);
     w.commit(&repo, &[(plan_rel, plan)]);
     w.commit(&repo, &[("src/lib.rs", "fn a() { b() }\nfn b() {}\n")]);
-    git(&repo, &["config", "amont.agent.push-preview.ui", "true"]);
+    git(&repo, &["config", "greenpiste.push-preview.ui", "true"]);
     let head = git(&repo, &["rev-parse", "HEAD"]);
     let shown = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
         .arg("plan-sha")
@@ -2052,7 +2052,7 @@ fn a_mockup_change_with_an_approval_is_recorded_as_preview_approved() {
     // only the person's approval can stand.
     let plan = "---\nstatus: active\n---\n# X\n\n## Preview\n\nevidence: nothing visible is left to judge.\n";
     git(&repo, &["reset", "-q", "--hard", "origin/main"]);
-    git(&repo, &["config", "amont.agent.push-preview.ui", "true"]);
+    git(&repo, &["config", "greenpiste.push-preview.ui", "true"]);
     w.commit(&repo, &[(plan_rel, plan)]);
     let head = w.commit(
         &repo,
@@ -2096,7 +2096,7 @@ fn a_gated_change_outside_the_interface_is_recorded_as_not_required() {
     let w = World::new("provnoui");
     let repo = w.repo("app");
     git(&repo, &["reset", "-q", "--hard", "origin/main"]);
-    git(&repo, &["config", "amont.agent.push-preview.ui", "true"]);
+    git(&repo, &["config", "greenpiste.push-preview.ui", "true"]);
     w.commit(&repo, &[("docs/plans/2026-09-29-x.md", "# X\n")]);
     let head = w.commit(&repo, &[("README.md", "words\n")]);
     reviewed(&w, &repo);
@@ -2109,7 +2109,7 @@ fn a_preview_not_yet_approved_defers_the_record_until_it_is() {
     let w = World::new("provdefer");
     let repo = w.repo("app");
     git(&repo, &["reset", "-q", "--hard", "origin/main"]);
-    git(&repo, &["config", "amont.agent.push-preview.ui", "true"]);
+    git(&repo, &["config", "greenpiste.push-preview.ui", "true"]);
     w.commit(&repo, &[("docs/plans/2026-09-29-x.md", "# X\n")]);
     let head = w.commit(&repo, &[("src/lib.rs", "fn a() { b() }\nfn b() {}\n")]);
     let mut t = Transcript::default();
@@ -2679,7 +2679,7 @@ fn no_implementation_review_agent_is_allowed_with_one_gap_line_unless_a_plugin_h
     let w = World::new("gap");
     let repo = w.repo("app");
     let empty = w.transcript("empty", &Transcript::default());
-    w.set_global("amont.agent.implementation-review.stance", "deny");
+    w.set_global("greenpiste.implementation-review.stance", "deny");
     let config = w.root.join("claude");
     std::fs::remove_dir_all(config.join("agents")).unwrap();
     let said = w.push(&repo, "s1", Some(&empty));
@@ -2709,7 +2709,7 @@ fn a_review_in_the_transcript_is_honoured_with_no_agent_installed() {
     git(&repo, &["reset", "-q", "--hard", "origin/main"]);
     w.commit(&repo, &[(plan_rel, plan)]);
     w.commit(&repo, &[("src/lib.rs", "fn a() { b() }\nfn b() {}\n")]);
-    git(&repo, &["config", "amont.agent.push-preview.ui", "true"]);
+    git(&repo, &["config", "greenpiste.push-preview.ui", "true"]);
     let head = git(&repo, &["rev-parse", "HEAD"]);
     let shown = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
         .arg("plan-sha")
@@ -2740,7 +2740,7 @@ fn an_unreadable_agents_dir_keeps_the_deny() {
     let w = World::new("gap-unreadable");
     let repo = w.repo("app");
     let empty = w.transcript("empty", &Transcript::default());
-    w.set_global("amont.agent.implementation-review.stance", "deny");
+    w.set_global("greenpiste.implementation-review.stance", "deny");
     let agents = w.root.join("claude").join("agents");
     std::fs::set_permissions(&agents, std::fs::Permissions::from_mode(0o000)).unwrap();
     let readable = std::fs::read_dir(&agents).is_ok(); // root reads anything
@@ -3327,10 +3327,7 @@ fn a_pointer_plan_declares_through_its_canonical_plan() {
         "# P\n\n## Code review\n\n- app: backend\n",
     )
     .unwrap();
-    w.set_global(
-        "amont.agent.plan-review.root",
-        &w.root.display().to_string(),
-    );
+    w.set_global("greenpiste.plan-review.root", &w.root.display().to_string());
     w.commit(
         &repo,
         &[(
@@ -3364,7 +3361,7 @@ fn a_pointer_plan_declares_through_its_canonical_plan() {
         "{:?}",
         w.journal()
     );
-    w.set_global("amont.agent.implementation-review.stance", "deny");
+    w.set_global("greenpiste.implementation-review.stance", "deny");
     match w.push(&repo, "s3", Some(&transcript)) {
         Said::Deny(text) => assert!(text.contains("cannot be read"), "{text}"),
         other => panic!("expected a hold, got {other:?}"),
@@ -3809,7 +3806,7 @@ fn an_unreadable_declaration_at_the_approved_commit_is_not_a_carry() {
     let w = World::new("session-unreadable");
     let repo = w.repo("app");
     declare(&w, &repo, "- app: wizard");
-    w.set_global("amont.agent.implementation-review.stance", "deny");
+    w.set_global("greenpiste.implementation-review.stance", "deny");
     let tree_a = reviewed_tree(&w, &repo, "fn a() { b() }\nfn b() { 12; }\n");
     let prompt_a = format!(
         "{}\nProfile: backend\nRound 1.\n",
@@ -3856,10 +3853,7 @@ fn a_pointer_plan_gets_no_session_carry() {
             .unwrap();
         };
         declare_canonical("- app: backend");
-        w.set_global(
-            "amont.agent.plan-review.root",
-            &w.root.display().to_string(),
-        );
+        w.set_global("greenpiste.plan-review.root", &w.root.display().to_string());
         w.commit(
             &repo,
             &[(
@@ -4042,10 +4036,7 @@ fn pointer_repo(w: &World, name: &str, own: &str, canonical: Option<&str>) -> Pa
         )
         .unwrap();
     }
-    w.set_global(
-        "amont.agent.plan-review.root",
-        &w.root.display().to_string(),
-    );
+    w.set_global("greenpiste.plan-review.root", &w.root.display().to_string());
     let mut plan =
         "---\ncanonical: decisions:docs/plans/p.md\nstatus: active\n---\n# X (pointer)\n"
             .to_string();
@@ -4061,7 +4052,7 @@ fn pointer_repo(w: &World, name: &str, own: &str, canonical: Option<&str>) -> Pa
 fn a_pointer_declares_through_its_own_line() {
     let w = World::new("pointer-own");
     let repo = pointer_repo(&w, "app", "- app: backend", None);
-    w.set_global("amont.agent.implementation-review.stance", "deny");
+    w.set_global("greenpiste.implementation-review.stance", "deny");
     let transcript = w.transcript("t", &impl_review_only(&w, &repo));
     match w.push(&repo, "s1", Some(&transcript)) {
         Said::Deny(text) => {
@@ -4079,7 +4070,7 @@ fn a_pointer_section_without_this_repository_is_an_error() {
     for own in ["- other: backend", "- app: wizard"] {
         let w = World::new("pointer-wrong");
         let repo = pointer_repo(&w, "app", own, Some("- app: backend"));
-        w.set_global("amont.agent.implementation-review.stance", "deny");
+        w.set_global("greenpiste.implementation-review.stance", "deny");
         let transcript = w.transcript("t", &impl_review_only(&w, &repo));
         match w.push(&repo, "s1", Some(&transcript)) {
             Said::Deny(text) => assert!(text.contains("code review declared in"), "{own}: {text}"),
@@ -4184,7 +4175,7 @@ fn an_invalid_pointer_line_at_the_reviewed_commit_does_not_carry() {
 const FULL_SET: &str = "backend, lang:rust";
 
 fn deny(w: &World) {
-    w.set_global("amont.agent.implementation-review.stance", "deny");
+    w.set_global("greenpiste.implementation-review.stance", "deny");
 }
 
 fn state_dir(w: &World) -> PathBuf {
@@ -4391,7 +4382,7 @@ fn a_pin_record_made_with_the_gh_override_is_a_miss_without_it() {
     store_pin(&w, &copy, &pin_record(passed_pin(), true));
     denied_with(
         push_copy(&w, &copy, "s2"),
-        "the pin record was made with AMONT_AGENT_GH set; run review-brief without it",
+        "the pin record was made with GREENPISTE_GH set; run review-brief without it",
     );
 }
 
@@ -4463,7 +4454,7 @@ fn a_revoked_block_never_matches_even_with_a_later_generation() {
 fn under_the_advise_stance_a_copy_line_is_a_miss() {
     let (w, _, copy) = registered_pilot("copy-advise");
     pin_passed(&w, &copy);
-    w.set_global("amont.agent.implementation-review.stance", "advise");
+    w.set_global("greenpiste.implementation-review.stance", "advise");
     let said = push_copy(&w, &copy, "s2");
     let text = advised(&said);
     assert!(text.contains("code-review-backend"), "{text}");
@@ -4761,11 +4752,11 @@ fn an_empty_gh_override_in_the_hook_counts_as_unset() {
     let transcript = w.transcript("empty", &t);
     let said = {
         let mut cmd = w.bin();
-        cmd.env("AMONT_AGENT_GH", "");
+        cmd.env("GREENPISTE_GH", "");
         w.hook_with(cmd, &copy, "empty", &transcript)
     };
     denied_with(
         said,
-        "the pin record was made with AMONT_AGENT_GH set; run review-brief without it",
+        "the pin record was made with GREENPISTE_GH set; run review-brief without it",
     );
 }

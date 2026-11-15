@@ -62,8 +62,8 @@ impl World {
     fn bin(&self) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
         c.env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
-            .env("AMONT_AGENT_PLAN_ROOT", self.root.join("repos"))
-            .env_remove("AMONT_AGENT_OFF");
+            .env("GREENPISTE_PLAN_ROOT", self.root.join("repos"))
+            .env_remove("GREENPISTE_OFF");
         c
     }
 
@@ -744,8 +744,8 @@ fn stdin_on_a_terminal_is_a_usage_error() {
     }
     let o = c
         .env("CLAUDE_CONFIG_DIR", w.root.join("claude"))
-        .env("AMONT_AGENT_PLAN_ROOT", w.root.join("repos"))
-        .env_remove("AMONT_AGENT_OFF")
+        .env("GREENPISTE_PLAN_ROOT", w.root.join("repos"))
+        .env_remove("GREENPISTE_OFF")
         .stdin(Stdio::null())
         .output()
         .unwrap();

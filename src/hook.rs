@@ -231,7 +231,7 @@ fn decide(raw: &str) -> Decision {
 /// The environment variable that replaces the clock the activity record and
 /// `work-overlap` read, as epoch seconds. For tests: the hook is a process per
 /// call, so a test cannot pass a clock any other way.
-const ENV_NOW: &str = "AMONT_AGENT_TEST_NOW";
+const ENV_NOW: &str = greenpiste_guard::env_var!("TEST_NOW");
 
 fn clock() -> std::time::SystemTime {
     std::env::var(ENV_NOW)
@@ -326,7 +326,7 @@ fn work_overlap(
         return Decision::Silent;
     }
     let window = greenpiste_guard::gitconfig::duration_or(
-        "amont.agent.work-overlap.window",
+        greenpiste_guard::config_key!("work-overlap.window"),
         crate::activity::DEFAULT_WINDOW,
     );
     let live: Vec<crate::activity::Peer> = candidates
@@ -1713,9 +1713,9 @@ fn run_with_deadline(
     }
 }
 
-/// The `adr-lint` program to run: `AMONT_AGENT_ADR_LINT`, else PATH's.
+/// The `adr-lint` program to run: `GREENPISTE_ADR_LINT`, else PATH's.
 fn adr_lint_program() -> std::ffi::OsString {
-    std::env::var_os("AMONT_AGENT_ADR_LINT")
+    std::env::var_os(greenpiste_guard::env_var!("ADR_LINT"))
         .filter(|program| !program.is_empty())
         .unwrap_or_else(|| std::ffi::OsString::from("adr-lint"))
 }

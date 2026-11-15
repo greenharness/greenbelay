@@ -109,8 +109,8 @@ fn send_inner(payload: &str, path: String, slot: HostSlot) -> Reply {
         .env("PATH", path)
         // The guard must not be silenced by the developer's own environment
         // while its own tests are running.
-        .env_remove("AMONT_AGENT_OFF")
-        // Nor steered by it: a developer's `amont.agent.<rule>.stance` in
+        .env_remove("GREENPISTE_OFF")
+        // Nor steered by it: a developer's `greenpiste.<rule>.stance` in
         // their global git config (implementation-review at deny, say)
         // would otherwise decide what these tests observe.
         .env("GIT_CONFIG_GLOBAL", home().join("no-global-gitconfig"))
@@ -818,7 +818,7 @@ fn a_declined_confirm_records_why_and_status_reads_it_back() {
     let status = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
         .arg("status")
         .env("CLAUDE_CONFIG_DIR", home())
-        .env_remove("AMONT_AGENT_OFF")
+        .env_remove("GREENPISTE_OFF")
         .output()
         .expect("the binary runs");
     let text = String::from_utf8_lossy(&status.stdout);
@@ -998,7 +998,7 @@ fn a_whole_read_past_8_kib_is_advised_and_under_it_is_not() {
     assert!(!small.read("um-2").stdout.contains("read-unbounded-large"));
 }
 
-const LARGE_DENY: &str = "[amont \"agent.read-unbounded-large\"]\n\tstance = deny\n";
+const LARGE_DENY: &str = "[greenpiste \"read-unbounded-large\"]\n\tstance = deny\n";
 
 /// A Read of the fixture's file as `agent` (none: the main conversation),
 /// with `read-unbounded-large` at `deny`.
@@ -1205,7 +1205,7 @@ fn a_reread_says_file_reread_only() {
 #[test]
 fn an_observed_reread_still_suppresses() {
     let f = ReadFixture::with_size("unbounded-observed", 20_000);
-    let cfg = "[amont \"agent.file-reread\"]\n\tstance = observe";
+    let cfg = "[greenpiste \"file-reread\"]\n\tstance = observe";
     let session = "obsrd-01";
     // The first read is only remembered, so the journal below holds what the
     // second one did and nothing else.
@@ -1572,7 +1572,7 @@ fn send_with_global_err(payload: &str, global: &str) -> (Reply, String) {
         .env("GIT_CONFIG_GLOBAL", &cfg)
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .env("SHELL", "/bin/zsh")
-        .env_remove("AMONT_AGENT_OFF")
+        .env_remove("GREENPISTE_OFF")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1675,7 +1675,7 @@ fn lint_suppression_a_new_tsconfig_with_strict_off_is_advised() {
 #[test]
 fn lint_suppression_observed_is_silent_and_journalled_as_watched() {
     let f = ReadFixture::with_content("lsa-obs", "x.py", "def f(a):\n    return g(a)\n");
-    let cfg = "[amont \"agent.lint-suppression-added\"]\n\tstance = observe";
+    let cfg = "[greenpiste \"lint-suppression-added\"]\n\tstance = observe";
     let session = "lsaobs-1";
     let said = f.file_event_with_global("PreToolUse", "Edit", session, ADD_IGNORE, cfg);
     assert_eq!(said.stdout, "", "{}", said.stdout);
@@ -1811,7 +1811,7 @@ impl LspWorld {
             .env("PATH", lsp_path(&self.bin))
             .env("GIT_CONFIG_GLOBAL", &cfg)
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1986,7 +1986,7 @@ fn an_observed_code_read_leaves_the_size_advice_speaking() {
         "lo-1",
         &big,
         "",
-        "[amont \"agent.code-read-not-lsp\"]\n\tstance = observe\n",
+        "[greenpiste \"code-read-not-lsp\"]\n\tstance = observe\n",
     );
     let said = r.reason();
     assert!(said.contains("read-unbounded-large"), "{}", r.stdout);
@@ -2130,7 +2130,7 @@ fn a_shell_symbol_grep_over_code_is_advised_once() {
 }
 
 const DENY_HAIKU: &str =
-    "[amont \"agent.symbol-grep-not-lsp\"]\n\tdenyAgents = relais:relais-worker-haiku-*\n";
+    "[greenpiste \"symbol-grep-not-lsp\"]\n\tdenyAgents = relais:relais-worker-haiku-*\n";
 const HAIKU: &str = "relais:relais-worker-haiku-default";
 const SYMBOL_GREP: &str = r#"{"pattern":"fn agent_type","path":"."}"#;
 
@@ -2252,7 +2252,7 @@ fn a_denied_worker_whose_telling_cannot_be_recorded_is_advised() {
     assert!(rows.iter().any(|r| r.contains("unrecorded")), "{rows:?}");
 }
 
-const DENY: &str = "[amont \"agent.code-read-not-lsp\"]\n\tstance = deny\n";
+const DENY: &str = "[greenpiste \"code-read-not-lsp\"]\n\tstance = deny\n";
 
 /// A whole Read after a documentSymbol on the same file is silent, and the
 /// journal holds the call, then the rule's `lsp-first`.
@@ -2436,7 +2436,7 @@ fn a_denied_code_read_passes_once_lsp_was_asked() {
 
 // --- file-reread: a record per agent, exact windows, certain or uncertain ---
 
-const REREAD_DENY: &str = "[amont \"agent.file-reread\"]\n\tstance = deny\n";
+const REREAD_DENY: &str = "[greenpiste \"file-reread\"]\n\tstance = deny\n";
 
 /// A scratch file, and every payload shape the per-agent read record sees.
 struct Rr {
@@ -2930,7 +2930,7 @@ fn guidance_other_memory_files_are_exempt() {
 #[test]
 fn guidance_a_denying_lint_rule_still_denies() {
     let f = ReadFixture::with_content("agw-deny", "x.py", "def f(a):\n    return g(a)\n");
-    let cfg = "[amont \"agent.lint-suppression-added\"]\n\tstance = deny";
+    let cfg = "[greenpiste \"lint-suppression-added\"]\n\tstance = deny";
     let said = f.file_event_with_global("PreToolUse", "Edit", "agw-sd", ADD_IGNORE, cfg);
     assert_eq!(said.decision().as_deref(), Some("deny"), "{}", said.stdout);
     assert!(
@@ -3305,10 +3305,10 @@ fn send_clocked_with_path(
     let mut child = command
         .arg("hook")
         .env("CLAUDE_CONFIG_DIR", config_dir)
-        .env("AMONT_AGENT_TEST_NOW", now.to_string())
+        .env("GREENPISTE_TEST_NOW", now.to_string())
         .env("GIT_CONFIG_GLOBAL", home().join("no-global-gitconfig"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env_remove("AMONT_AGENT_OFF")
+        .env_remove("GREENPISTE_OFF")
         .env_remove("GREENHARNESS_HOST_SLOT")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -3602,7 +3602,7 @@ fn work_overlap_window_is_read_from_git_config() {
     let window_config = home().join("window.gitconfig");
     std::fs::write(
         &window_config,
-        "[amont \"agent.work-overlap\"]\n\twindow = 90m\n",
+        "[greenpiste \"work-overlap\"]\n\twindow = 90m\n",
     )
     .expect("config");
     let edit = |session: &str, later: u64| {
@@ -3616,10 +3616,10 @@ fn work_overlap_window_is_read_from_git_config() {
         let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
             .arg("hook")
             .env("CLAUDE_CONFIG_DIR", home())
-            .env("AMONT_AGENT_TEST_NOW", (scene.start + later).to_string())
+            .env("GREENPISTE_TEST_NOW", (scene.start + later).to_string())
             .env("GIT_CONFIG_GLOBAL", &window_config)
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -4096,7 +4096,7 @@ fn a_plan_lookup_whose_git_closes_stdout_and_keeps_running_is_cut_at_the_budget(
     );
 }
 
-const DUMP_DENY: &str = "[amont \"agent.whole-file-dump\"]\n\tstance = deny\n";
+const DUMP_DENY: &str = "[greenpiste \"whole-file-dump\"]\n\tstance = deny\n";
 
 /// A Bash call in the fixture's directory as `agent` (none: the main
 /// conversation), with `whole-file-dump` at `deny`.
@@ -4329,8 +4329,8 @@ fn journalled(session: &str, outcome: &str) -> bool {
         .any(|row| row.contains("take_screenshot @main") && row.contains(outcome))
 }
 
-const OBSERVE_STANCE: &str = "[amont \"agent.screenshot-in-main-session\"]\n\tstance = observe";
-const DENY_STANCE: &str = "[amont \"agent.screenshot-in-main-session\"]\n\tstance = deny";
+const OBSERVE_STANCE: &str = "[greenpiste \"screenshot-in-main-session\"]\n\tstance = observe";
+const DENY_STANCE: &str = "[greenpiste \"screenshot-in-main-session\"]\n\tstance = deny";
 
 #[test]
 fn a_main_screenshot_without_a_file_path_is_advised_once() {
@@ -4429,8 +4429,8 @@ const FORKS_PRIMARY_TAIL: &str = " is in the primary checkout, so this change ru
      and leave workspace unset.";
 const FORKS_SECOND: &str = "greenpiste/relais-run-forks: workspace \"fork\" makes a second \
      worktree beside this one. Leave workspace unset; relais edits a linked worktree in place.";
-const FORKS_OBSERVE: &str = "[amont \"agent.relais-run-forks\"]\n\tstance = observe";
-const FORKS_DENY: &str = "[amont \"agent.relais-run-forks\"]\n\tstance = deny";
+const FORKS_OBSERVE: &str = "[greenpiste \"relais-run-forks\"]\n\tstance = observe";
+const FORKS_DENY: &str = "[greenpiste \"relais-run-forks\"]\n\tstance = deny";
 
 fn forks_git(dir: &std::path::Path, args: &[&str]) {
     let out = Command::new("git")
@@ -4731,7 +4731,7 @@ fn relais_run_forks_a_failing_probe_is_silent_and_journalled() {
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .env("PATH", &path)
-        .env_remove("AMONT_AGENT_OFF")
+        .env_remove("GREENPISTE_OFF")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

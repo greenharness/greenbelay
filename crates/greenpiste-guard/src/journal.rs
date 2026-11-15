@@ -347,7 +347,7 @@ pub struct Entry<'a> {
 /// Append one record. Every failure is swallowed: the journal must never be
 /// able to fail the hook, and `the_journal_never_fails_the_hook` pins that.
 /// Set by `doctor`'s own probe on the child it spawns. See [`record`].
-pub const ENV_PROBE: &str = "AMONT_AGENT_PROBE";
+pub const ENV_PROBE: &str = crate::env_var!("PROBE");
 
 pub fn record(entry: &Entry) {
     // `doctor` proves the guard works by feeding the real binary a command it

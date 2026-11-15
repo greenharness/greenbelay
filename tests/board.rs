@@ -118,7 +118,7 @@ impl World {
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .env("CLAUDE_CONFIG_DIR", &self.config)
-            .env("AMONT_AGENT_PLAN_ROOT", &self.root)
+            .env("GREENPISTE_PLAN_ROOT", &self.root)
             .output()
             .expect("runs")
     }
@@ -154,7 +154,7 @@ impl World {
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .env("CLAUDE_CONFIG_DIR", &self.config)
-            .env("AMONT_AGENT_PLAN_ROOT", &self.root)
+            .env("GREENPISTE_PLAN_ROOT", &self.root)
             .output()
             .expect("runs");
         let calls = std::fs::read_to_string(&log).unwrap_or_default();

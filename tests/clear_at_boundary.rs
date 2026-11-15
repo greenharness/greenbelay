@@ -78,7 +78,7 @@ impl World {
         let global = root.join("global");
         std::fs::write(
             &global,
-            "[amont \"agent.clear-at-boundary\"]\n\tstance = deny\n",
+            "[greenpiste \"clear-at-boundary\"]\n\tstance = deny\n",
         )
         .unwrap();
         Command::new("git")
@@ -120,7 +120,7 @@ impl World {
     fn stance(&self, rule: &str, stance: &str) {
         std::fs::write(
             &self.global,
-            format!("[amont \"agent.{rule}\"]\n\tstance = {stance}\n"),
+            format!("[greenpiste \"{rule}\"]\n\tstance = {stance}\n"),
         )
         .unwrap();
     }
@@ -139,7 +139,7 @@ impl World {
             .env("CLAUDE_CONFIG_DIR", &self.claude)
             .env("GIT_CONFIG_GLOBAL", &self.global)
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("AMONT_AGENT_OFF")
+            .env_remove("GREENPISTE_OFF")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

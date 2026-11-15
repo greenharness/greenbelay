@@ -98,7 +98,7 @@ impl PinRecord {
     }
 }
 
-/// The latest pin check for a pushed tree, and whether `AMONT_AGENT_GH` was
+/// The latest pin check for a pushed tree, and whether `GREENPISTE_GH` was
 /// set for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PinRecord {

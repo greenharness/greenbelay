@@ -40,6 +40,48 @@ pub const DATA_DIR: &str = "amont-agent";
 /// renames it.
 pub const RECORD_TOOL: &str = "amont-agent";
 
+/// The git config section every key this tool reads or writes lives under.
+pub const CONFIG_PREFIX: &str = "greenpiste.";
+
+/// The prefix of every environment variable this tool reads.
+pub const ENV_PREFIX: &str = "GREENPISTE_";
+
+/// A git config key as a `&'static str`: `config_key!("stance")` is
+/// `greenpiste.stance`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! config_key {
+    ($name:literal) => {
+        concat!("greenpiste.", $name)
+    };
+}
+
+/// An environment variable as a `&'static str`: `env_var!("OFF")` is
+/// `GREENPISTE_OFF`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! env_var {
+    ($name:literal) => {
+        concat!("GREENPISTE_", $name)
+    };
+}
+
+/// A `git config --get-regexp` pattern for the keys under [`CONFIG_PREFIX`]
+/// whose remainder matches `rest` (a regular expression, possibly empty).
+pub fn config_pattern(rest: &str) -> String {
+    format!("^{}{rest}", CONFIG_PREFIX.replace('.', "\\."))
+}
+
+/// The names the tool had before it was renamed. Read only by the migration
+/// and the pre-migration fallback; removed at the census.
+pub mod old {
+    /// The old git config prefix.
+    pub const CONFIG_PREFIX: &str = "amont.agent.";
+
+    /// The old environment-variable prefix.
+    pub const ENV_PREFIX: &str = "AMONT_AGENT_";
+}
+
 fn strip_exe(name: &str) -> &str {
     let split = name.len().saturating_sub(4);
     match name.get(split..) {
