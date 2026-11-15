@@ -5,6 +5,7 @@
 
 use crate::lock::lock_within;
 use crate::names::{self, old};
+use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::io;
@@ -18,6 +19,11 @@ pub struct Env {
     pub config_dir: PathBuf,
     /// The new-name state directory; its parent holds the old-name sibling.
     pub state_root: PathBuf,
+    /// The environment every git call runs under. `None` (what
+    /// [`Env::from_process`] sets) means git inherits the process
+    /// environment; `Some(list)` means each git command is built with the
+    /// environment cleared, then exactly that list plus `PATH`.
+    pub git_env: Option<Vec<(OsString, OsString)>>,
 }
 
 impl Env {
@@ -26,6 +32,7 @@ impl Env {
         Some(Env {
             config_dir: crate::settings::config_dir()?,
             state_root: crate::settings::state_root()?.join(names::DATA_DIR),
+            git_env: None,
         })
     }
 
@@ -124,7 +131,10 @@ pub fn machine_in(env: &Env, direction: Direction, wait: Wait) -> Result<Outcome
 
 /// The real steps, in forward order.
 pub fn steps() -> Vec<Box<dyn Step>> {
-    vec![Box::new(StateDirectories::new())]
+    vec![
+        Box::new(StateDirectories::new()),
+        Box::new(crate::migrate_config::ConfigKeys::new()),
+    ]
 }
 
 fn exists(path: &Path) -> bool {
@@ -533,6 +543,16 @@ fn rewrite_file(path: &Path, has_header: bool) -> io::Result<()> {
     fs::rename(&temp, path)
 }
 
+/// Tests that hold the migration lock while another spawns git would share
+/// the lock's descriptor through the fork; one at a time avoids that.
+#[cfg(all(test, unix))]
+pub(crate) fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
@@ -542,10 +562,11 @@ mod tests {
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-    struct Scratch(PathBuf);
+    struct Scratch(PathBuf, std::sync::MutexGuard<'static, ()>);
 
     impl Drop for Scratch {
         fn drop(&mut self) {
+            let _serial = &self.1; // the guard outlives the cleanup
             let _ = fs::remove_dir_all(&self.0); // best-effort cleanup of a temp dir
         }
     }
@@ -589,11 +610,22 @@ mod tests {
         let marketplace = state.join(old::DATA_DIR).join("claude-marketplace");
         fs::create_dir_all(&marketplace).unwrap();
         fs::write(marketplace.join("m.json"), "{}").unwrap();
+        let home = root.join("home");
+        fs::create_dir_all(&home).unwrap();
+        let scratch_env =
+            |name: &str, value: PathBuf| (OsString::from(name), value.into_os_string());
         let env = Env {
             config_dir,
             state_root: state.join(names::DATA_DIR),
+            git_env: Some(vec![
+                scratch_env("HOME", home.clone()),
+                scratch_env("XDG_CONFIG_HOME", root.join("xdg")),
+                scratch_env("GIT_CONFIG_GLOBAL", home.join(".gitconfig")),
+                scratch_env("GIT_CONFIG_SYSTEM", root.join("system.gitconfig")),
+                (OsString::from("GIT_CONFIG_NOSYSTEM"), OsString::from("1")),
+            ]),
         };
-        (Scratch(root), env)
+        (Scratch(root, crate::migrate::serial()), env)
     }
 
     fn snapshot(dir: &Path) -> BTreeMap<String, Vec<u8>> {
@@ -662,7 +694,13 @@ mod tests {
         let Outcome::Migrated { steps, elapsed } = zero(&env, Direction::Forward).unwrap() else {
             panic!("not migrated");
         };
-        assert_eq!(steps, vec!["state-directories".to_string()]);
+        assert_eq!(
+            steps,
+            vec![
+                "state-directories".to_string(),
+                "git config keys".to_string()
+            ]
+        );
         assert!(elapsed < Duration::from_secs(60));
         assert_eq!(snapshot(&config_new(&env)), before);
         assert_eq!(snapshot(&env.state_root), state_before);

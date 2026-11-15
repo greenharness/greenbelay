@@ -29,6 +29,7 @@ pub mod land;
 pub mod lock;
 pub mod lsp;
 pub mod migrate;
+pub mod migrate_config;
 pub mod mine;
 pub mod names;
 pub mod notes_names;
