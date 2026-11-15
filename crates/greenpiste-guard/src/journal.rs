@@ -81,6 +81,7 @@ pub fn private(path: &std::path::Path, mode: u32) {
     let now = meta.permissions().mode() & 0o777;
     if now & !mode != 0 {
         let _ = fs::set_permissions(path, fs::Permissions::from_mode(now & mode));
+        // best effort: a mode already stricter than wanted is kept
     }
 }
 
@@ -364,7 +365,7 @@ pub fn record(entry: &Entry) {
     if std::env::var_os(ENV_PROBE).is_some() {
         return;
     }
-    let _ = try_record(entry);
+    let _ = try_record(entry); // a journal that cannot be written never fails the caller
 }
 
 fn try_record(entry: &Entry) -> Option<()> {
@@ -397,6 +398,7 @@ fn append(path: &std::path::Path, max: u64, line: &str) -> Option<()> {
         // The journal kept growing past its cap: said once per write, in the
         // journal itself, where `doctor` and a reader of the file see it.
         let _ = f.write_all(format!("F {} - - rotate-failed - - - {why}\n", now()).as_bytes());
+        // the note is itself best effort
     }
     f.write_all(line.as_bytes()).ok()?;
     Some(())
@@ -461,7 +463,7 @@ fn create_with_header(path: &std::path::Path) -> Option<()> {
         }
         Ok(()) => Ok(()),
     });
-    let _ = fs::remove_file(&staged);
+    let _ = fs::remove_file(&staged); // the staged name is scratch; the link result is what counts
     linked.ok()
 }
 
@@ -487,13 +489,13 @@ fn rotate(path: &std::path::Path, max: u64) -> Result<(), String> {
     let mut moved = Ok(());
     // Re-check under the lock: another writer may have rotated already.
     if fs::metadata(path).map(|m| m.len() > max).unwrap_or(false) {
-        let _ = fs::remove_file(generation(path, GENERATIONS));
+        let _ = fs::remove_file(generation(path, GENERATIONS)); // the oldest generation may not exist yet
         for n in (1..GENERATIONS).rev() {
-            let _ = fs::rename(generation(path, n), generation(path, n + 1));
+            let _ = fs::rename(generation(path, n), generation(path, n + 1)); // a missing generation leaves a gap, not a failure
         }
         moved = fs::rename(path, generation(path, 1)).map_err(|e| e.kind().to_string());
     }
-    let _ = fs::remove_file(&lock);
+    let _ = fs::remove_file(&lock); // a lock file that is already gone is the goal
     moved
         .map(|_| ())
         .map_err(|why| why.replace(char::is_whitespace, "-"))

@@ -10,8 +10,9 @@
 //! that registers neither id is left alone. A file that registers both is a
 //! conflict and nothing is written.
 
-use crate::migrate::{Direction, Env, Step};
+use crate::migrate::{Direction, Env, Step, StepError};
 use crate::names::{self, old};
+use crate::settings::{render, shape, would_reformat};
 use serde_json::{Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -100,46 +101,54 @@ struct Edit {
     line: String,
 }
 
-/// `map` with the key `from` renamed to `to` in place, its value passed
-/// through `fix`; false when `from` is not there.
+/// `root` with the key `from` of `section` renamed to `to` in place, its value
+/// passed through `fix`; `root` unchanged when `from` is not there.
 fn rename_member(
-    root: &mut Map<String, Value>,
+    root: Map<String, Value>,
     section: &str,
     from: &str,
     to: &str,
-    fix: impl Fn(&mut Value),
-) -> bool {
-    let Some(map) = root.get_mut(section).and_then(Value::as_object_mut) else {
-        return false;
-    };
-    if !map.contains_key(from) {
-        return false;
-    }
-    let rebuilt: Map<String, Value> = std::mem::take(map)
-        .into_iter()
-        .map(|(key, mut value)| {
-            if key == from {
-                fix(&mut value);
-                (to.to_string(), value)
-            } else {
-                (key, value)
+    fix: impl Fn(Value) -> Value,
+) -> Map<String, Value> {
+    root.into_iter()
+        .map(|(name, value)| match value {
+            Value::Object(members) if name == section => {
+                let renamed: Map<String, Value> = members
+                    .into_iter()
+                    .map(|(key, member)| {
+                        if key == from {
+                            (to.to_string(), fix(member))
+                        } else {
+                            (key, member)
+                        }
+                    })
+                    .collect();
+                (name, Value::Object(renamed))
             }
+            other => (name, other),
         })
-        .collect();
-    *map = rebuilt;
-    true
+        .collect()
 }
 
-/// Replace the string at `pointer` when it is exactly `from`.
-fn replace_string(value: &mut Value, pointer: &str, from: &Path, to: &Path) {
+/// `value` with the string at `pointer` replaced when it is exactly `from`.
+fn replace_string(mut value: Value, pointer: &str, from: &Path, to: &Path) -> Value {
     if let Some(slot) = value.pointer_mut(pointer) {
         if slot.as_str() == Some(&from.display().to_string()) {
             *slot = Value::String(to.display().to_string());
         }
     }
+    value
 }
 
-fn settings_edit(env: &Env, from: &Side, to: &Side) -> Result<Option<Edit>, String> {
+fn invalid_json(path: &Path, error: &serde_json::Error, fix: &str) -> StepError {
+    StepError::refused(format!(
+        "{} is not valid JSON ({error}); {fix} and run again",
+        path.display()
+    ))
+    .at(path)
+}
+
+fn settings_edit(env: &Env, from: &Side, to: &Side) -> Result<Option<Edit>, StepError> {
     let path = env.config_dir.join(SETTINGS_FILE);
     let Some(raw) = read_file(&path)? else {
         return Ok(None);
@@ -147,44 +156,41 @@ fn settings_edit(env: &Env, from: &Side, to: &Side) -> Result<Option<Edit>, Stri
     if raw.trim().is_empty() {
         return Ok(None);
     }
-    let parsed: Value = serde_json::from_str(&raw).map_err(|e| {
-        format!(
-            "{} is not valid JSON ({e}); fix the file and run again",
-            path.display()
-        )
-    })?;
-    let Value::Object(mut root) = parsed else {
+    let parsed: Value =
+        serde_json::from_str(&raw).map_err(|e| invalid_json(&path, &e, "fix the file"))?;
+    let Value::Object(root) = parsed else {
         return Ok(None);
     };
     match (from.registered(&root), to.registered(&root)) {
         (true, true) => {
-            return Err(format!(
+            return Err(StepError::refused(format!(
             "{} registers the plugin under both {} and {}; remove one registration and run again",
             path.display(),
             from.plugin_id,
             to.plugin_id
         ))
+            .at(&path))
         }
         (false, _) => return Ok(None),
         (true, false) => {}
     }
     let (from_dir, to_dir) = (from.marketplace_dir(), to.marketplace_dir());
-    rename_member(
-        &mut root,
+    let root = rename_member(
+        root,
         "extraKnownMarketplaces",
         from.marketplace,
         to.marketplace,
         |value| replace_string(value, "/source/path", &from_dir, &to_dir),
     );
-    rename_member(
-        &mut root,
+    let root = rename_member(
+        root,
         "enabledPlugins",
         &from.plugin_id,
         &to.plugin_id,
-        |_| {},
+        |value| value,
     );
-    rename_member(
-        &mut root,
+    let root = rename_member(
+        root,
         "pluginConfigs",
         &from.plugin_id,
         &to.plugin_id,
@@ -205,7 +211,7 @@ fn settings_edit(env: &Env, from: &Side, to: &Side) -> Result<Option<Edit>, Stri
 
 /// The placed marketplace file lives under whichever state root exists: the
 /// state step may or may not have moved it yet.
-fn marketplace_edit(from: &Side, to: &Side) -> Result<Option<Edit>, String> {
+fn marketplace_edit(from: &Side, to: &Side) -> Result<Option<Edit>, StepError> {
     let located = [&to.state_dir, &from.state_dir]
         .into_iter()
         .map(|state| state.join(MARKETPLACE_DIR).join(MARKETPLACE_FILE))
@@ -216,12 +222,8 @@ fn marketplace_edit(from: &Side, to: &Side) -> Result<Option<Edit>, String> {
     let Some(raw) = read_file(&path)? else {
         return Ok(None);
     };
-    let mut doc: Value = serde_json::from_str(&raw).map_err(|e| {
-        format!(
-            "{} is not valid JSON ({e}); fix it and run again",
-            path.display()
-        )
-    })?;
+    let mut doc: Value =
+        serde_json::from_str(&raw).map_err(|e| invalid_json(&path, &e, "fix it"))?;
     match doc.get_mut("name") {
         Some(name) if name.as_str() == Some(from.marketplace) => {
             *name = Value::String(to.marketplace.to_string());
@@ -241,72 +243,40 @@ fn marketplace_edit(from: &Side, to: &Side) -> Result<Option<Edit>, String> {
     }))
 }
 
-fn read_file(path: &Path) -> Result<Option<String>, String> {
+fn read_file(path: &Path) -> Result<Option<String>, StepError> {
     match path.symlink_metadata() {
         Err(_) => Ok(None),
         Ok(meta) if meta.is_file() || meta.file_type().is_symlink() => fs::read_to_string(path)
             .map(Some)
-            .map_err(|e| format!("cannot read {}: {e}; fix it and run again", path.display())),
-        Ok(_) => Err(format!(
+            .map_err(|e| StepError::io(format!("cannot read {}", path.display()), e).at(path)),
+        Ok(_) => Err(StepError::refused(format!(
             "{} is not a file; fix it and run again",
             path.display()
-        )),
+        ))
+        .at(path)),
     }
-}
-
-/// Two spaces unless the file says otherwise, and whether it ended in a
-/// newline: the formatting `settings.rs` keeps when it writes the same file.
-fn shape(raw: &str) -> (String, bool) {
-    let indent = raw
-        .lines()
-        .find_map(|line| {
-            let leading: String = line
-                .chars()
-                .take_while(|c| *c == ' ' || *c == '\t')
-                .collect();
-            (!leading.is_empty() && line.trim_start().starts_with('"')).then_some(leading)
-        })
-        .unwrap_or_else(|| "  ".to_string());
-    (indent, raw.ends_with('\n'))
-}
-
-fn render(doc: &Value, indent: &str, trailing_newline: bool) -> String {
-    use serde::Serialize;
-    let mut buf = Vec::new();
-    let formatter = serde_json::ser::PrettyFormatter::with_indent(indent.as_bytes());
-    let mut serializer = serde_json::Serializer::with_formatter(&mut buf, formatter);
-    doc.serialize(&mut serializer)
-        .expect("a Value always serialises");
-    let mut out = String::from_utf8(buf).expect("serde_json emits UTF-8");
-    if trailing_newline {
-        out.push('\n');
-    }
-    out
 }
 
 /// The edited document rendered in the file's own style, or a refusal when
 /// the file's style cannot be reproduced (writing it back would reformat
 /// what the migration was not asked to touch).
-fn render_guarded(path: &Path, raw: &str, edited: &Value) -> Result<String, String> {
+fn render_guarded(path: &Path, raw: &str, edited: &Value) -> Result<String, StepError> {
     let (indent, newline) = shape(raw);
-    let original: Value = serde_json::from_str(raw).map_err(|e| {
-        format!(
-            "{} is not valid JSON ({e}); fix it and run again",
-            path.display()
-        )
-    })?;
-    if render(&original, &indent, newline) != raw {
-        return Err(format!(
+    let original: Value =
+        serde_json::from_str(raw).map_err(|e| invalid_json(path, &e, "fix the file"))?;
+    if would_reformat(raw, &original, &indent, newline) {
+        return Err(StepError::refused(format!(
             "{} uses formatting this program cannot reproduce, so writing it back would \
              reformat parts nobody asked to change; normalise the file's formatting (two-space \
              pretty JSON) and run again",
             path.display()
-        ));
+        ))
+        .at(path));
     }
     Ok(render(edited, &indent, newline))
 }
 
-fn edits(env: &Env, direction: Direction) -> Result<Vec<Edit>, String> {
+fn edits(env: &Env, direction: Direction) -> Result<Vec<Edit>, StepError> {
     let (from, to) = sides(env, direction);
     let mut found = Vec::new();
     found.extend(marketplace_edit(&from, &to)?);
@@ -314,14 +284,11 @@ fn edits(env: &Env, direction: Direction) -> Result<Vec<Edit>, String> {
     Ok(found)
 }
 
-fn apply(env: &Env, direction: Direction) -> Result<String, String> {
+fn apply(env: &Env, direction: Direction) -> Result<String, StepError> {
     let found = edits(env, direction)?;
     for edit in &found {
         crate::atomic::write_atomic(&edit.path, &edit.after).map_err(|e| {
-            format!(
-                "cannot write {}: {e}; fix it and run again",
-                edit.path.display()
-            )
+            StepError::io(format!("cannot write {}", edit.path.display()), e).at(&edit.path)
         })?;
     }
     Ok(match found.len() {
@@ -332,19 +299,19 @@ fn apply(env: &Env, direction: Direction) -> Result<String, String> {
 }
 
 impl Step for PluginRegistration {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "plugin registration"
     }
 
-    fn forward(&self, env: &Env) -> Result<String, String> {
+    fn forward(&self, env: &Env) -> Result<String, StepError> {
         apply(env, Direction::Forward)
     }
 
-    fn reverse(&self, env: &Env) -> Result<String, String> {
+    fn reverse(&self, env: &Env) -> Result<String, StepError> {
         apply(env, Direction::Reverse)
     }
 
-    fn plan(&self, env: &Env, direction: Direction) -> Result<Vec<String>, String> {
+    fn plan(&self, env: &Env, direction: Direction) -> Result<Vec<String>, StepError> {
         Ok(edits(env, direction)?
             .into_iter()
             .map(|edit| edit.line)
@@ -389,7 +356,7 @@ mod tests {
         sides(env, Direction::Forward).1
     }
 
-    fn registration(side: &Side, enabled: bool) -> Value {
+    fn registration(side: &Side, enabled: Value) -> Value {
         json!({
             "model": "opus",
             "extraKnownMarketplaces": {
@@ -429,12 +396,12 @@ mod tests {
     #[test]
     fn forward_then_reverse_equals_the_original() {
         let (_scratch, env) = machine();
-        let original = registration(&old_side(&env), true);
+        let original = registration(&old_side(&env), json!(true));
         let path = write_settings(&env, &original);
         let step = PluginRegistration::new();
         step.forward(&env).unwrap();
         let migrated = read_json(&path);
-        assert_eq!(migrated, registration(&new_side(&env), true));
+        assert_eq!(migrated, registration(&new_side(&env), json!(true)));
         assert!(!migrated.to_string().contains(old::DATA_DIR));
         step.reverse(&env).unwrap();
         assert_eq!(read_json(&path), original);
@@ -443,7 +410,7 @@ mod tests {
     #[test]
     fn a_disabled_entry_stays_disabled_and_options_survive() {
         let (_scratch, env) = machine();
-        let path = write_settings(&env, &registration(&old_side(&env), false));
+        let path = write_settings(&env, &registration(&old_side(&env), json!(false)));
         PluginRegistration::new().forward(&env).unwrap();
         let migrated = read_json(&path);
         let id = new_side(&env).plugin_id;
@@ -473,13 +440,16 @@ mod tests {
     #[test]
     fn both_registrations_are_a_conflict_that_writes_nothing() {
         let (_scratch, env) = machine();
-        let mut doc = registration(&old_side(&env), true);
+        let mut doc = registration(&old_side(&env), json!(true));
         doc["enabledPlugins"][new_side(&env).plugin_id] = json!(true);
         let path = write_settings(&env, &doc);
         let marketplace = write_marketplace(&env, &old_side(&env));
         let (settings_before, market_before) =
             (fs::read(&path).unwrap(), fs::read(&marketplace).unwrap());
-        let message = PluginRegistration::new().forward(&env).unwrap_err();
+        let message = PluginRegistration::new()
+            .forward(&env)
+            .unwrap_err()
+            .to_string();
         assert!(message.contains(&old_side(&env).plugin_id), "{message}");
         assert!(message.contains(&new_side(&env).plugin_id), "{message}");
         assert_eq!(fs::read(&path).unwrap(), settings_before);
@@ -501,7 +471,7 @@ mod tests {
     #[test]
     fn plan_reads_only_and_names_what_would_change() {
         let (_scratch, env) = machine();
-        let settings = write_settings(&env, &registration(&old_side(&env), true));
+        let settings = write_settings(&env, &registration(&old_side(&env), json!(true)));
         let marketplace = write_marketplace(&env, &old_side(&env));
         let before = (
             fs::read(&settings).unwrap(),

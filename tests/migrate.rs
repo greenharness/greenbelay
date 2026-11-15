@@ -155,11 +155,10 @@ impl Machine {
     /// Everything under the config and state roots and the gitconfig's keys;
     /// a symlink is recorded as its target, never followed.
     fn snapshot(&self) -> Snapshot {
-        let mut found = Snapshot::new();
-        for base in [self.claude(), self.state()] {
-            walk(&base, &base, &mut found);
-        }
-        found
+        [self.claude(), self.state()]
+            .iter()
+            .flat_map(|base| walk(base, base))
+            .collect()
     }
 
     fn git_keys(&self) -> Vec<String> {
@@ -180,24 +179,26 @@ impl Machine {
     }
 }
 
-fn walk(base: &Path, dir: &Path, into: &mut Snapshot) {
+fn walk(base: &Path, dir: &Path) -> Snapshot {
     let Ok(entries) = fs::read_dir(dir) else {
-        return;
+        return Snapshot::new();
     };
+    let mut found = Snapshot::new();
     for entry in entries {
         let path = entry.unwrap().path();
         let key = path.strip_prefix(base).unwrap().display().to_string();
         let meta = fs::symlink_metadata(&path).unwrap();
         if meta.file_type().is_symlink() {
             let target = fs::read_link(&path).unwrap();
-            into.insert(key, format!("-> {}", target.display()).into_bytes());
+            found.insert(key, format!("-> {}", target.display()).into_bytes());
         } else if meta.is_dir() {
-            into.insert(format!("{key}/"), Vec::new());
-            walk(base, &path, into);
+            found.insert(format!("{key}/"), Vec::new());
+            found.extend(walk(base, &path));
         } else {
-            into.insert(key, fs::read(&path).unwrap());
+            found.insert(key, fs::read(&path).unwrap());
         }
     }
+    found
 }
 
 /// The snapshot without the migration's own markers and lock.
@@ -247,11 +248,12 @@ fn migrate_moves_everything_and_a_second_run_changes_nothing() {
     let machine = Machine::old_style("forward");
     let first = machine.run(&["migrate"]);
     assert_eq!(first.status.code(), Some(0), "{}", stderr(&first));
-    let said = stdout(&first);
+    assert_eq!(stdout(&first), "", "a run's progress is not its answer");
+    let said = stderr(&first);
     for step in [
-        "state-directories",
-        "git config keys",
-        "plugin registration",
+        "state directories: ",
+        "git config keys: ",
+        "plugin registration: ",
     ] {
         assert!(said.contains(step), "{said}");
     }
@@ -281,7 +283,7 @@ fn migrate_moves_everything_and_a_second_run_changes_nothing() {
     let after_first = machine.snapshot();
     let second = machine.run(&["migrate"]);
     assert_eq!(second.status.code(), Some(0), "{}", stderr(&second));
-    assert_eq!(stdout(&second).trim(), "already migrated");
+    assert_eq!(stderr(&second).trim(), "nothing to do: already migrated");
     assert_eq!(machine.snapshot(), after_first);
 }
 
@@ -293,11 +295,11 @@ fn reverse_restores_the_original_tree_and_keys() {
     assert_eq!(machine.run(&["migrate"]).status.code(), Some(0));
     let reversed = machine.run(&["migrate", "--reverse"]);
     assert_eq!(reversed.status.code(), Some(0), "{}", stderr(&reversed));
-    assert_eq!(stdout(&reversed).lines().last(), Some("reversed"));
+    assert_eq!(stderr(&reversed).lines().last(), Some("reversed"));
     assert_eq!(without_markers(&machine.snapshot()), original);
     assert_eq!(machine.git_keys(), original_keys);
     let again = machine.run(&["migrate", "--reverse"]);
-    assert_eq!(stdout(&again).trim(), "already reversed");
+    assert_eq!(stderr(&again).trim(), "nothing to do: already reversed");
 }
 
 #[test]
@@ -323,7 +325,7 @@ fn dry_run_says_what_would_change_and_changes_nothing() {
         "{forward}"
     );
     assert!(forward.contains("would: git config keys: "), "{forward}");
-    assert!(forward.contains("would: state-directories: "), "{forward}");
+    assert!(forward.contains("would: state directories: "), "{forward}");
 }
 
 #[test]
@@ -507,7 +509,9 @@ fn a_failing_step_is_attempted_once_by_fifty_hooks() {
 
     let other = machine.run(&["rules"]);
     assert!(
-        stderr(&other).contains("migration pending: run greenpiste migrate"),
+        stderr(&other).contains(
+            "greenpiste: migration failed (see greenpiste doctor); run greenpiste migrate"
+        ),
         "{}",
         stderr(&other)
     );
@@ -650,4 +654,76 @@ fn a_failed_step_still_applies_the_old_deny_agents() {
     assert_eq!(fs::read_to_string(&failed).unwrap(), note);
     assert_eq!(fs::metadata(&failed).unwrap().modified().unwrap(), modified);
     assert!(!machine.done_marker().exists());
+}
+
+/// Every way of asking a command to only look must leave an old-style
+/// machine as it was.
+#[test]
+fn dry_run_and_check_never_migrate() {
+    let machine = Machine::old_style("looks-only");
+    let before = machine.snapshot();
+    let keys = machine.git_keys();
+    let settings = fs::read(machine.claude().join("settings.json")).unwrap();
+    for args in [
+        &["plan-apply", "--dry-run"][..],
+        &["plan-apply", "--check"],
+        &["install", "--dry-run"],
+        &["uninstall", "--check"],
+        &["rules", "--check"],
+        &["status", "--help"],
+    ] {
+        machine.run(args);
+        assert_eq!(machine.snapshot(), before, "{args:?}");
+        assert_eq!(machine.git_keys(), keys, "{args:?}");
+        assert!(!machine.done_marker().exists(), "{args:?}");
+    }
+    assert_eq!(
+        fs::read(machine.claude().join("settings.json")).unwrap(),
+        settings
+    );
+}
+
+#[test]
+fn install_migrates_first() {
+    let machine = Machine::old_style("install-migrates");
+    let output = machine.run(&["install"]);
+    assert!(
+        !stderr(&output).contains("nothing was installed"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(machine.done_marker().exists(), "{}", stderr(&output));
+    assert!(machine.claude().join(names::DATA_DIR).is_dir());
+    assert!(machine
+        .git_keys()
+        .iter()
+        .all(|line| !line.starts_with(old::CONFIG_PREFIX)));
+}
+
+#[test]
+fn install_with_the_lock_held_refuses_and_writes_nothing() {
+    let machine = Machine::old_style("install-locked");
+    fs::create_dir_all(machine.claude()).unwrap();
+    let held = greenpiste_guard::lock::lock_within(
+        &machine.claude().join(names::MIGRATE_LOCK_FILE),
+        Duration::ZERO,
+    )
+    .unwrap()
+    .expect("the test takes the lock");
+    let before = machine.snapshot();
+    let output = machine
+        .command()
+        .args(["install", "--write"])
+        .env("GREENPISTE_TEST_MIGRATE_WAIT_MS", "200")
+        .output()
+        .expect("the binary runs");
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("migration lock"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(!machine.done_marker().exists());
+    assert_eq!(machine.snapshot(), before);
+    drop(held);
 }

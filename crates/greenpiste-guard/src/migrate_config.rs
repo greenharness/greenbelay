@@ -3,12 +3,15 @@
 //! it, includes and conditions kept. Per key it copies, verifies the copy by
 //! reading it back, and only then removes the old key, so an interruption
 //! leaves the old keys intact and a re-run finishes without a duplicate.
+//! Before any file is written, every file that holds a key is checked to be
+//! writable and free of a conflicting new key; one that is not stops the step
+//! with nothing changed.
 //!
 //! Git does the reading and the writing (`git config --file`); this module
 //! only decides which files and which keys. Every git call is built from
 //! [`Env`], so a test runs against scratch files and never the real config.
 
-use crate::migrate::{Direction, Env, Step};
+use crate::migrate::{Direction, Env, Step, StepError};
 use crate::names::{self, old};
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -20,9 +23,9 @@ use std::process::{Command, Output};
 const MAX_INCLUDE_DEPTH: usize = 10;
 
 /// Called with the file between a verified copy and the removal of the old key.
-type Between = fn(&Path) -> Result<(), String>;
+type Between = fn(&Path) -> Result<(), StepError>;
 
-fn no_hook(_file: &Path) -> Result<(), String> {
+fn no_hook(_file: &Path) -> Result<(), StepError> {
     Ok(())
 }
 
@@ -38,7 +41,8 @@ impl ConfigKeys {
 
     /// A step that calls `hook` between the verified copy and the removal of
     /// each old key, for a test that interrupts there.
-    pub fn with_hook_between_copy_and_unset(hook: Between) -> ConfigKeys {
+    #[cfg(test)]
+    pub(crate) fn with_hook_between_copy_and_unset(hook: Between) -> ConfigKeys {
         ConfigKeys { between: hook }
     }
 }
@@ -50,52 +54,48 @@ impl Default for ConfigKeys {
 }
 
 impl Step for ConfigKeys {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "git config keys"
     }
 
-    fn forward(&self, env: &Env) -> Result<String, String> {
+    fn forward(&self, env: &Env) -> Result<String, StepError> {
         migrate_machine(env, Rename::FORWARD, self.between)
     }
 
-    fn reverse(&self, env: &Env) -> Result<String, String> {
+    fn reverse(&self, env: &Env) -> Result<String, StepError> {
         migrate_machine(env, Rename::REVERSE, self.between)
     }
 
-    fn plan(&self, env: &Env, direction: Direction) -> Result<Vec<String>, String> {
+    fn plan(&self, env: &Env, direction: Direction) -> Result<Vec<String>, StepError> {
         plan_machine(env, Rename::for_direction(direction))
     }
 }
 
 /// Rename the keys in a repository's own config and worktree config. For a
 /// `greenpiste migrate` run inside a repository; not part of `steps()`.
-pub fn migrate_local(env: &Env, repo: &Path, direction: Direction) -> Result<String, String> {
+pub fn migrate_local(env: &Env, repo: &Path, direction: Direction) -> Result<String, StepError> {
     let rename = Rename::for_direction(direction);
-    let mut errors = Vec::new();
-    let mut moved = 0;
+    let mut files = Vec::new();
     for name in ["config", "config.worktree"] {
         let located = git_command(env)
             .current_dir(repo)
             .args(["rev-parse", "--git-path", name])
             .output()
-            .map_err(|e| format!("cannot run git: {e}"))?;
+            .map_err(|e| StepError::io("cannot run git", e))?;
         if !located.status.success() {
-            return Err(format!(
-                "{} is not a git repository: {}",
-                repo.display(),
-                stderr_text(&located)
-            ));
+            return Err(StepError::git(
+                format!("{} is not a git repository", repo.display()),
+                stderr_text(&located),
+            )
+            .at(repo));
         }
         let text = String::from_utf8_lossy(&located.stdout).trim().to_string();
         let path = repo.join(text);
-        if !path.is_file() {
-            continue;
-        }
-        match migrate_file(env, &path, rename, no_hook) {
-            Ok(count) => moved += count,
-            Err(message) => errors.push(message),
+        if path.is_file() {
+            files.push(path);
         }
     }
+    let (moved, errors) = migrate_files(env, files, rename, no_hook);
     finish(moved, errors)
 }
 
@@ -150,6 +150,7 @@ fn stderr_text(output: &Output) -> String {
 
 /// A `git` command under the Env's explicit environment: with a list, the
 /// process environment is cleared and only that list plus `PATH` remains.
+/// Either way git speaks the C locale, so its output is the same everywhere.
 fn git_command(env: &Env) -> Command {
     let mut command = Command::new("git");
     if let Some(list) = &env.git_env {
@@ -159,6 +160,7 @@ fn git_command(env: &Env) -> Command {
             command.env("PATH", path);
         }
     }
+    command.env("LC_ALL", "C");
     command
 }
 
@@ -173,21 +175,30 @@ fn env_var(env: &Env, name: &str) -> Option<OsString> {
     }
 }
 
+/// Whether each entry of a `git config --list -z` output starts with its origin.
+#[derive(Clone, Copy)]
+enum Listing {
+    WithOrigin,
+    Plain,
+}
+
 /// The entries of a `git config --list -z` output.
-fn parse_entries(stdout: &[u8], with_origin: bool) -> Vec<Entry> {
+fn parse_entries(stdout: &[u8], listing: Listing) -> Vec<Entry> {
     let mut tokens: Vec<&[u8]> = stdout.split(|byte| *byte == 0).collect();
     if tokens.last().is_some_and(|last| last.is_empty()) {
         tokens.pop();
     }
-    let width = if with_origin { 2 } else { 1 };
+    let width = match listing {
+        Listing::WithOrigin => 2,
+        Listing::Plain => 1,
+    };
     tokens
         .chunks(width)
         .filter(|chunk| chunk.len() == width)
         .map(|chunk| {
-            let (origin, pair) = if with_origin {
-                (String::from_utf8_lossy(chunk[0]).into_owned(), chunk[1])
-            } else {
-                (String::new(), chunk[0])
+            let (origin, pair) = match listing {
+                Listing::WithOrigin => (String::from_utf8_lossy(chunk[0]).into_owned(), chunk[1]),
+                Listing::Plain => (String::new(), chunk[0]),
             };
             let text = String::from_utf8_lossy(pair).into_owned();
             match text.split_once('\n') {
@@ -206,50 +217,17 @@ fn parse_entries(stdout: &[u8], with_origin: bool) -> Vec<Entry> {
         .collect()
 }
 
-fn run_git(mut command: Command, what: &str) -> Result<Output, String> {
+fn run_git(mut command: Command, what: &str) -> Result<Output, StepError> {
     command
         .output()
-        .map_err(|e| format!("cannot run git to {what}: {e}"))
+        .map_err(|e| StepError::io(format!("cannot run git to {what}"), e))
 }
 
-/// A list that fails with no message, or on a file that is not there, is an empty list, not a failure.
-fn list_output(output: Output, what: &str) -> Result<Vec<u8>, String> {
-    let absent = stderr_text(&output).contains("No such file or directory");
-    if output.status.success() || stderr_text(&output).is_empty() || absent {
-        Ok(output.stdout)
-    } else {
-        Err(format!("git could not {what}: {}", stderr_text(&output)))
-    }
-}
-
-/// The top-level files of the global and system scopes, and the keys that
-/// come from the command scope (which no file holds).
-fn inventory(env: &Env, rename: Rename) -> Result<(Vec<PathBuf>, Vec<String>), String> {
-    let mut scopes = vec!["--global"];
-    if env_var(env, "GIT_CONFIG_NOSYSTEM").is_none() {
-        scopes.push("--system");
-    }
-    let mut tops: Vec<PathBuf> = Vec::new();
-    for scope in scopes {
-        let mut command = git_command(env);
-        command.args([
-            "config",
-            "--list",
-            scope,
-            "--show-origin",
-            "--no-includes",
-            "-z",
-        ]);
-        let stdout = list_output(run_git(command, "list its config")?, "list its config")?;
-        for entry in parse_entries(&stdout, true) {
-            if let Some(file) = entry.origin.strip_prefix("file:") {
-                let file = PathBuf::from(file);
-                if !tops.contains(&file) {
-                    tops.push(file);
-                }
-            }
-        }
-    }
+/// The top-level files of the system and global scopes, and the keys that
+/// come from the command scope (which no file holds). One unscoped listing
+/// outside any repository answers both; a scope whose file is missing is
+/// simply absent from it.
+fn inventory(env: &Env, rename: Rename) -> Result<(Vec<PathBuf>, Vec<String>), StepError> {
     let mut command = git_command(env);
     command.current_dir(std::env::temp_dir()).args([
         "config",
@@ -258,10 +236,22 @@ fn inventory(env: &Env, rename: Rename) -> Result<(Vec<PathBuf>, Vec<String>), S
         "--no-includes",
         "-z",
     ]);
-    let stdout = list_output(run_git(command, "list its config")?, "list its config")?;
+    let output = run_git(command, "list its config")?;
+    if !output.status.success() {
+        return Err(StepError::git(
+            "git could not list its config",
+            stderr_text(&output),
+        ));
+    }
+    let mut tops: Vec<PathBuf> = Vec::new();
     let mut command_keys = Vec::new();
-    for entry in parse_entries(&stdout, true) {
-        if entry.origin.starts_with("command") && rename.apply(&entry.key).is_some() {
+    for entry in parse_entries(&output.stdout, Listing::WithOrigin) {
+        if let Some(file) = entry.origin.strip_prefix("file:") {
+            let file = PathBuf::from(file);
+            if !tops.contains(&file) {
+                tops.push(file);
+            }
+        } else if entry.origin.starts_with("command") && rename.apply(&entry.key).is_some() {
             command_keys.push(entry.key);
         }
     }
@@ -274,18 +264,18 @@ fn file_command(env: &Env, path: &Path) -> Command {
     command
 }
 
-fn list_file(env: &Env, path: &Path) -> Result<Vec<Entry>, String> {
+fn list_file(env: &Env, path: &Path) -> Result<Vec<Entry>, StepError> {
     let mut command = file_command(env, path);
     command.args(["--list", "--no-includes", "-z"]);
     let output = run_git(command, "read a config file")?;
     if !output.status.success() {
-        return Err(format!(
-            "git could not read {}: {}",
-            path.display(),
-            stderr_text(&output)
-        ));
+        return Err(StepError::git(
+            format!("git could not read {}", path.display()),
+            stderr_text(&output),
+        )
+        .at(path));
     }
-    Ok(parse_entries(&output.stdout, false))
+    Ok(parse_entries(&output.stdout, Listing::Plain))
 }
 
 fn is_include_key(key: &str) -> bool {
@@ -309,88 +299,159 @@ fn resolve_include(env: &Env, including: &Path, value: &str) -> PathBuf {
     }
 }
 
-fn visit(
-    env: &Env,
+/// A walk over the files the top-level files include, whether or not the
+/// condition of an `includeIf` holds here.
+struct IncludeWalk<'env> {
+    env: &'env Env,
+    seen: HashSet<PathBuf>,
+    order: Vec<PathBuf>,
+}
+
+impl<'env> IncludeWalk<'env> {
+    /// The top-level files and everything they include, each once, in the
+    /// order they are found.
+    fn files(env: &'env Env, tops: Vec<PathBuf>) -> Result<Vec<PathBuf>, StepError> {
+        let mut walk = IncludeWalk {
+            env,
+            seen: HashSet::new(),
+            order: Vec::new(),
+        };
+        for top in tops {
+            walk.visit(top, 0)?;
+        }
+        Ok(walk.order)
+    }
+
+    fn visit(&mut self, path: PathBuf, depth: usize) -> Result<(), StepError> {
+        if depth > MAX_INCLUDE_DEPTH {
+            return Ok(());
+        }
+        let Ok(real) = fs::canonicalize(&path) else {
+            return Ok(()); // an include of a file that does not exist is skipped, as git does
+        };
+        if !real.is_file() || !self.seen.insert(real) {
+            return Ok(());
+        }
+        let entries = list_file(self.env, &path)?;
+        self.order.push(path.clone());
+        for entry in &entries {
+            if let (true, Some(value)) = (is_include_key(&entry.key), &entry.value) {
+                let included = resolve_include(self.env, &path, value);
+                self.visit(included, depth + 1)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// One file and the keys it holds to move, each as (old key, new key).
+struct FilePlan {
     path: PathBuf,
-    depth: usize,
-    seen: &mut HashSet<PathBuf>,
-    order: &mut Vec<PathBuf>,
-) -> Result<(), String> {
-    if depth > MAX_INCLUDE_DEPTH {
-        return Ok(());
-    }
-    let Ok(real) = fs::canonicalize(&path) else {
-        return Ok(()); // an include of a file that does not exist is skipped, as git does
-    };
-    if !real.is_file() || !seen.insert(real) {
-        return Ok(());
-    }
-    let entries = list_file(env, &path)?;
-    order.push(path.clone());
-    for entry in &entries {
-        if let (true, Some(value)) = (is_include_key(&entry.key), &entry.value) {
-            visit(
-                env,
-                resolve_include(env, &path, value),
-                depth + 1,
-                seen,
-                order,
-            )?;
+    keys: Vec<(String, String)>,
+}
+
+/// The keys `path` holds to rename; a key with no value cannot be copied.
+fn file_plan(env: &Env, path: &Path, rename: Rename) -> Result<FilePlan, StepError> {
+    let mut keys: Vec<(String, String)> = Vec::new();
+    for entry in list_file(env, path)? {
+        let Some(new_key) = rename.apply(&entry.key) else {
+            continue;
+        };
+        if entry.value.is_none() {
+            return Err(StepError::refused(format!(
+                "{} in {} has no value, which a copy cannot keep; give it one by hand and run again",
+                entry.key,
+                path.display()
+            ))
+            .at(path));
+        }
+        if !keys.iter().any(|(old_key, _)| *old_key == entry.key) {
+            keys.push((entry.key, new_key));
         }
     }
-    Ok(())
+    Ok(FilePlan {
+        path: path.to_path_buf(),
+        keys,
+    })
 }
 
-/// Every file the top-level files include, whether or not the condition of
-/// an `includeIf` holds here.
-fn collect_files(env: &Env, tops: Vec<PathBuf>) -> Result<Vec<PathBuf>, String> {
-    let mut seen = HashSet::new();
-    let mut order = Vec::new();
-    for top in tops {
-        visit(env, top, 0, &mut seen, &mut order)?;
-    }
-    Ok(order)
-}
-
-fn migrate_machine(env: &Env, rename: Rename, between: Between) -> Result<String, String> {
+fn migrate_machine(env: &Env, rename: Rename, between: Between) -> Result<String, StepError> {
     let (tops, command_keys) = inventory(env, rename)?;
-    let files = collect_files(env, tops)?;
-    let mut errors = Vec::new();
-    let mut moved = 0;
-    for file in &files {
-        match migrate_file(env, file, rename, between) {
-            Ok(count) => moved += count,
-            Err(message) => errors.push(message),
-        }
-    }
+    let files = IncludeWalk::files(env, tops)?;
+    let (moved, mut errors) = migrate_files(env, files, rename, between);
     for key in command_keys {
-        errors.push(format!(
+        errors.push(StepError::refused(format!(
             "{key} is set by the command line or GIT_CONFIG_COUNT, which no file holds; \
              remove that setting (the -c option or the GIT_CONFIG_KEY_n variable) and run again"
-        ));
+        )));
     }
     finish(moved, errors)
 }
 
-/// What [`migrate_machine`] would rename, read through `git config --list`
-/// only; no file is opened for writing.
-fn plan_machine(env: &Env, rename: Rename) -> Result<Vec<String>, String> {
+/// Rename the keys of every file in `files`. Every file is checked first
+/// (readable, writable, no conflicting new key); when any check fails nothing
+/// is written and every problem is returned. Returns how many keys moved and
+/// the errors of the writes that failed after the checks.
+fn migrate_files(
+    env: &Env,
+    files: Vec<PathBuf>,
+    rename: Rename,
+    between: Between,
+) -> (usize, Vec<StepError>) {
+    let mut plans = Vec::new();
+    let mut errors = Vec::new();
+    for file in &files {
+        match file_plan(env, file, rename) {
+            Ok(plan) if plan.keys.is_empty() => {}
+            Ok(plan) => plans.push(plan),
+            Err(error) => errors.push(error),
+        }
+    }
+    for plan in &plans {
+        errors.extend(not_writable(plan));
+        errors.extend(conflicts(env, plan));
+    }
+    if !errors.is_empty() {
+        return (0, errors);
+    }
+    let mut moved = 0;
+    for plan in &plans {
+        match rename_keys(env, plan, between) {
+            Ok(count) => moved += count,
+            Err(error) => errors.push(error),
+        }
+    }
+    (moved, errors)
+}
+
+/// What the step would do, read through `git config --list` only; no file is
+/// opened for writing except to test that it could be.
+fn plan_machine(env: &Env, rename: Rename) -> Result<Vec<String>, StepError> {
     let (tops, command_keys) = inventory(env, rename)?;
     let mut lines = Vec::new();
-    for file in collect_files(env, tops)? {
-        let mut seen: Vec<String> = Vec::new();
-        for entry in list_file(env, &file)? {
-            let Some(new_key) = rename.apply(&entry.key) else {
-                continue;
-            };
-            if !seen.contains(&entry.key) {
-                lines.push(format!(
-                    "rename {} to {new_key} in {}",
-                    entry.key,
-                    file.display()
-                ));
-                seen.push(entry.key);
-            }
+    for file in IncludeWalk::files(env, tops)? {
+        let plan = file_plan(env, &file, rename)?;
+        if plan.keys.is_empty() {
+            continue;
+        }
+        if not_writable(&plan).is_some() {
+            lines.push(format!(
+                "refuse: {} is not writable; make it writable for this user (or run the \
+                 migration as its owner) and run again",
+                plan.path.display()
+            ));
+            continue;
+        }
+        let clashes = conflicts(env, &plan);
+        if !clashes.is_empty() {
+            lines.extend(clashes.iter().map(|clash| format!("refuse: {clash}")));
+            continue;
+        }
+        for (old_key, new_key) in &plan.keys {
+            lines.push(format!(
+                "rename {old_key} to {new_key} in {}",
+                plan.path.display()
+            ));
         }
     }
     for key in command_keys {
@@ -409,7 +470,7 @@ pub fn old_keys(env: &Env) -> Vec<(String, PathBuf)> {
     let Ok((tops, _)) = inventory(env, rename) else {
         return Vec::new();
     };
-    let Ok(files) = collect_files(env, tops) else {
+    let Ok(files) = IncludeWalk::files(env, tops) else {
         return Vec::new();
     };
     let mut found: Vec<(String, PathBuf)> = Vec::new();
@@ -429,7 +490,7 @@ pub fn old_keys(env: &Env) -> Vec<(String, PathBuf)> {
     found
 }
 
-fn finish(moved: usize, errors: Vec<String>) -> Result<String, String> {
+fn finish(moved: usize, errors: Vec<StepError>) -> Result<String, StepError> {
     if errors.is_empty() {
         Ok(if moved == 0 {
             String::new()
@@ -437,11 +498,12 @@ fn finish(moved: usize, errors: Vec<String>) -> Result<String, String> {
             format!("renamed {moved} git config key(s)")
         })
     } else {
-        Err(errors.join("; "))
+        let count = errors.len();
+        Err(StepError::several(format!("{count} problems"), errors))
     }
 }
 
-fn get_all(env: &Env, path: &Path, key: &str) -> Result<Vec<String>, String> {
+fn get_all(env: &Env, path: &Path, key: &str) -> Result<Vec<String>, StepError> {
     let mut command = file_command(env, path);
     command.args(["--get-all", "-z", key]);
     let output = run_git(command, "read a config key")?;
@@ -456,15 +518,15 @@ fn get_all(env: &Env, path: &Path, key: &str) -> Result<Vec<String>, String> {
             Ok(values)
         }
         Some(1) => Ok(Vec::new()),
-        _ => Err(format!(
-            "git could not read {key} in {}: {}",
-            path.display(),
-            stderr_text(&output)
-        )),
+        _ => Err(StepError::git(
+            format!("git could not read {key} in {}", path.display()),
+            stderr_text(&output),
+        )
+        .at(path)),
     }
 }
 
-fn write_step(env: &Env, path: &Path, args: &[&str]) -> Result<(), String> {
+fn write_step(env: &Env, path: &Path, args: &[&str]) -> Result<(), StepError> {
     let mut command = file_command(env, path);
     command.args(args);
     let output = run_git(command, "write a config key")?;
@@ -472,53 +534,72 @@ fn write_step(env: &Env, path: &Path, args: &[&str]) -> Result<(), String> {
     if output.status.success() || output.status.code() == Some(5) {
         Ok(())
     } else {
-        Err(format!(
-            "git could not write {}: {}",
-            path.display(),
-            stderr_text(&output)
-        ))
+        Err(StepError::git(
+            format!("git could not write {}", path.display()),
+            stderr_text(&output),
+        )
+        .at(path))
     }
 }
 
-fn ensure_writable(path: &Path, key_count: usize) -> Result<(), String> {
-    let real = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+/// The failure to open the file (or what a symlink at its path points to) for
+/// writing, when there is one. The file is opened for appending and nothing
+/// is written.
+fn not_writable(plan: &FilePlan) -> Option<StepError> {
+    let real = fs::canonicalize(&plan.path).unwrap_or_else(|_| plan.path.clone());
     fs::OpenOptions::new()
         .append(true)
         .open(&real)
-        .map(drop)
-        .map_err(|e| {
-            format!(
-                "{} holds {key_count} key(s) to rename but is not writable ({e}); make it \
-                 writable for this user (or run the migration as its owner) and run again",
-                path.display()
+        .err()
+        .map(|e| {
+            StepError::io(
+                format!(
+                    "{} holds {} key(s) to rename but is not writable",
+                    plan.path.display(),
+                    plan.keys.len()
+                ),
+                e,
             )
+            .at(&plan.path)
         })
 }
 
-/// Rename the keys of one file; returns how many keys it renamed. A file
-/// with none is never opened for writing.
-fn migrate_file(env: &Env, path: &Path, rename: Rename, between: Between) -> Result<usize, String> {
-    let mut keys: Vec<(String, String)> = Vec::new();
-    for entry in list_file(env, path)? {
-        let Some(new_key) = rename.apply(&entry.key) else {
-            continue;
+/// The keys whose new name already holds a value that the old key does not:
+/// a copy would not be the old setting, and nothing says which one the person
+/// meant. The same value (an interrupted copy, a re-run) is no conflict.
+fn conflicts(env: &Env, plan: &FilePlan) -> Vec<StepError> {
+    let mut found = Vec::new();
+    for (old_key, new_key) in &plan.keys {
+        let values = match get_all(env, &plan.path, old_key) {
+            Ok(values) => values,
+            Err(error) => {
+                found.push(error);
+                continue;
+            }
         };
-        if entry.value.is_none() {
-            return Err(format!(
-                "{} in {} has no value, which a copy cannot keep; give it one by hand and run again",
-                entry.key,
-                path.display()
-            ));
-        }
-        if !keys.iter().any(|(old_key, _)| *old_key == entry.key) {
-            keys.push((entry.key, new_key));
+        match get_all(env, &plan.path, new_key) {
+            Ok(present) => {
+                if let Some(other) = present.iter().find(|value| !values.contains(value)) {
+                    found.push(
+                        StepError::refused(format!(
+                            "{new_key} in {} is already set to {other:?}, which differs from \
+                             {old_key}; remove one of the two and run again",
+                            plan.path.display()
+                        ))
+                        .at(&plan.path),
+                    );
+                }
+            }
+            Err(error) => found.push(error),
         }
     }
-    if keys.is_empty() {
-        return Ok(0);
-    }
-    ensure_writable(path, keys.len())?;
-    for (old_key, new_key) in &keys {
+    found
+}
+
+/// Rename the keys of one checked file; returns how many keys it renamed.
+fn rename_keys(env: &Env, plan: &FilePlan, between: Between) -> Result<usize, StepError> {
+    let path = plan.path.as_path();
+    for (old_key, new_key) in &plan.keys {
         let values = get_all(env, path, old_key)?;
         let mut present = get_all(env, path, new_key)?;
         for value in &values {
@@ -529,15 +610,16 @@ fn migrate_file(env: &Env, path: &Path, rename: Rename, between: Between) -> Res
         }
         let copied = get_all(env, path, new_key)?;
         if let Some(missing) = values.iter().find(|value| !copied.contains(value)) {
-            return Err(format!(
+            return Err(StepError::refused(format!(
                 "{new_key} in {} does not hold {missing:?} after the copy; {old_key} is left in place",
                 path.display()
-            ));
+            ))
+            .at(path));
         }
         between(path)?;
         write_step(env, path, &["--unset-all", old_key])?;
     }
-    Ok(keys.len())
+    Ok(plan.keys.len())
 }
 
 #[cfg(all(test, unix))]
@@ -772,8 +854,8 @@ mod tests {
         }
     }
 
-    fn interrupt(_file: &Path) -> Result<(), String> {
-        Err("interrupted".to_string())
+    fn interrupt(_file: &Path) -> Result<(), StepError> {
+        Err(StepError::refused("interrupted"))
     }
 
     #[test]
@@ -784,7 +866,7 @@ mod tests {
         let error = ConfigKeys::with_hook_between_copy_and_unset(interrupt)
             .forward(&env)
             .unwrap_err();
-        assert!(error.contains("interrupted"));
+        assert!(error.to_string().contains("interrupted"));
         let midway = effective(&env, &fx.repo);
         assert!(midway.contains_key(&old_key("enabled")));
         ConfigKeys::new().forward(&env).unwrap();
@@ -814,7 +896,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unwritable_system_file_fails_after_the_rest_is_migrated() {
+    fn an_unwritable_system_file_stops_the_step_with_nothing_changed() {
         let (_scratch, root, mut env) = machine();
         let fx = fixture(&root, &env);
         let system = root.join("system.gitconfig");
@@ -823,10 +905,130 @@ mod tests {
         if let Some(list) = env.git_env.as_mut() {
             list.retain(|(name, _)| name != "GIT_CONFIG_NOSYSTEM");
         }
-        let error = ConfigKeys::new().forward(&env).unwrap_err();
+        let global_before = fs::read(&fx.global).unwrap();
+        let error = ConfigKeys::new().forward(&env).unwrap_err().to_string();
         assert!(error.contains("system.gitconfig") && error.contains("not writable"));
         assert!(holds(&system, "amont"));
-        assert!(!holds(&fx.global, "amont"));
+        assert_eq!(fs::read(&fx.global).unwrap(), global_before);
+        assert!(holds(&fx.active, "amont"));
+    }
+
+    #[test]
+    fn one_read_only_file_leaves_the_writable_one_untouched() {
+        let (_scratch, root, env) = machine();
+        let home = root.join("home");
+        let locked = home.join("locked.gitconfig");
+        fs::write(&locked, "[amont \"agent\"]\n\tlockedkey = 1\n").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o444)).unwrap();
+        fs::write(
+            home.join(".gitconfig"),
+            "[amont \"agent\"]\n\tenabled = true\n[include]\n\tpath = locked.gitconfig\n",
+        )
+        .unwrap();
+        let writable_before = fs::read(home.join(".gitconfig")).unwrap();
+        let error = ConfigKeys::new().forward(&env).unwrap_err().to_string();
+        assert!(
+            error.contains("locked.gitconfig") && error.contains("not writable"),
+            "{error}"
+        );
+        assert_eq!(fs::read(home.join(".gitconfig")).unwrap(), writable_before);
+        assert!(holds(&locked, "lockedkey"));
+    }
+
+    #[test]
+    fn a_different_new_value_is_a_conflict_that_changes_nothing() {
+        let (_scratch, root, env) = machine();
+        let global = root.join("home").join(".gitconfig");
+        fs::write(
+            &global,
+            "[amont \"agent\"]\n\tenabled = true\n\topener = open\n\
+             [greenpiste]\n\tenabled = false\n",
+        )
+        .unwrap();
+        let before = fs::read(&global).unwrap();
+        let error = ConfigKeys::new().forward(&env).unwrap_err().to_string();
+        assert!(
+            error.contains(".gitconfig") && error.contains(&new_key("enabled")),
+            "{error}"
+        );
+        assert_eq!(fs::read(&global).unwrap(), before);
+        let planned = ConfigKeys::new().plan(&env, Direction::Forward).unwrap();
+        assert!(
+            planned.iter().any(|line| line.starts_with("refuse: ")),
+            "{planned:?}"
+        );
+        assert!(
+            planned.iter().all(|line| !line.starts_with("rename ")),
+            "{planned:?}"
+        );
+    }
+
+    #[test]
+    fn the_same_new_value_is_not_a_conflict() {
+        let (_scratch, root, env) = machine();
+        let global = root.join("home").join(".gitconfig");
+        fs::write(
+            &global,
+            "[amont \"agent\"]\n\tenabled = true\n[greenpiste]\n\tenabled = true\n",
+        )
+        .unwrap();
+        ConfigKeys::new().forward(&env).unwrap();
+        assert!(!holds(&global, "amont"));
+        assert_eq!(
+            git_ok(
+                &env,
+                &root,
+                &["config", "--global", "--get-all", &new_key("enabled")]
+            ),
+            "true\n"
+        );
+    }
+
+    #[test]
+    fn the_plan_refuses_a_file_the_run_could_not_write() {
+        let (_scratch, root, env) = machine();
+        let global = root.join("home").join(".gitconfig");
+        fs::write(&global, "[amont \"agent\"]\n\tenabled = true\n").unwrap();
+        fs::set_permissions(&global, fs::Permissions::from_mode(0o444)).unwrap();
+        let planned = ConfigKeys::new().plan(&env, Direction::Forward).unwrap();
+        let expected = format!("refuse: {} is not writable; ", global.display());
+        assert!(
+            planned.iter().any(|line| line.starts_with(&expected)),
+            "{planned:?}"
+        );
+        assert!(
+            planned.iter().all(|line| !line.starts_with("rename ")),
+            "{planned:?}"
+        );
+    }
+
+    #[test]
+    fn several_problems_print_one_per_line() {
+        let (_scratch, root, env) = machine();
+        let home = root.join("home");
+        let other = home.join("other.gitconfig");
+        fs::write(&other, "[amont \"agent\"]\n\tother = 1\n").unwrap();
+        fs::set_permissions(&other, fs::Permissions::from_mode(0o444)).unwrap();
+        fs::write(
+            home.join(".gitconfig"),
+            "[amont \"agent\"]\n\tenabled = true\n[include]\n\tpath = other.gitconfig\n",
+        )
+        .unwrap();
+        fs::set_permissions(home.join(".gitconfig"), fs::Permissions::from_mode(0o444)).unwrap();
+        let text = ConfigKeys::new().forward(&env).unwrap_err().to_string();
+        let indented = text.lines().filter(|line| line.starts_with("  ")).count();
+        assert_eq!(indented, 2, "{text}");
+    }
+
+    #[test]
+    fn git_runs_in_the_c_locale() {
+        let (_scratch, _root, env) = machine();
+        let command = git_command(&env);
+        let locale = command
+            .get_envs()
+            .find(|(name, _)| *name == "LC_ALL")
+            .and_then(|(_, value)| value);
+        assert_eq!(locale, Some(std::ffi::OsStr::new("C")));
     }
 
     #[test]
@@ -851,7 +1053,7 @@ mod tests {
             list.push(("GIT_CONFIG_KEY_0".into(), old_key("fromenv").into()));
             list.push(("GIT_CONFIG_VALUE_0".into(), "1".into()));
         }
-        let error = ConfigKeys::new().forward(&env).unwrap_err();
+        let error = ConfigKeys::new().forward(&env).unwrap_err().to_string();
         assert!(error.contains(&old_key("fromenv")) && error.contains("GIT_CONFIG_COUNT"));
         assert!(!holds(&fx.global, "amont"));
     }
@@ -900,8 +1102,8 @@ mod tests {
         else {
             panic!("not migrated");
         };
-        assert_eq!(steps[0], "state-directories");
-        assert!(steps[1].starts_with("git config keys"));
+        let named: Vec<&str> = steps.iter().map(|report| report.name).collect();
+        assert_eq!(named, vec!["git config keys"]);
         assert!(!holds(&fx.global, "amont"));
     }
 }

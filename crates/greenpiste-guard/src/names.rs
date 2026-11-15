@@ -211,6 +211,12 @@ mod tests {
     }
 
     #[test]
+    fn the_name_macros_expand_to_the_prefixes() {
+        assert_eq!(config_key!("x"), format!("{CONFIG_PREFIX}x"));
+        assert_eq!(env_var!("X"), format!("{ENV_PREFIX}X"));
+    }
+
+    #[test]
     fn old_names_are_the_previous_literals() {
         assert_eq!(old::DATA_DIR, "amont-agent");
         assert_eq!(old::RECORD_TOOL, "amont-agent");

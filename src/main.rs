@@ -351,30 +351,88 @@ fn die_on_sigpipe() {
 #[cfg(not(unix))]
 fn die_on_sigpipe() {}
 
-/// Run the one-time migration before a command, never failing it. `migrate`
-/// and `doctor` report on the migration themselves; a command asked for its
-/// help is only reading. A hook says nothing: its stdout is a decision.
-fn preflight_migration(name: &Sub, args: &[OsString]) {
-    let asks_help = args.iter().any(|a| a == "--help" || a == "-h");
-    if matches!(name, Sub::Migrate | Sub::Doctor) || asks_help {
-        return;
-    }
-    let pending = greenpiste_guard::migrate::preflight();
-    if pending && !matches!(name, Sub::Hook) {
-        eprintln!("{BIN}: migration pending: run {BIN} migrate");
-    }
+/// What a command does about the one-time migration before it runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MigrationMode {
+    /// Reads or reports only: no migration.
+    Skip,
+    /// Try once without waiting; never fail or block the command.
+    Zero,
+    /// Wait up to the cap for the lock; refuse to run when the migration
+    /// cannot finish.
+    Capped(std::time::Duration),
 }
 
 const MIGRATE_WAIT_CAP: std::time::Duration = std::time::Duration::from_secs(30);
 
-fn run_migrate(args: &[OsString]) -> ExitCode {
-    use greenpiste_guard::migrate::{self, Direction, MigrateError, Outcome, Wait};
-    let mut direction = Direction::Forward;
-    let mut dry_run = false;
+/// A test seam: how long `install` waits for the migration lock, in
+/// milliseconds.
+const ENV_MIGRATE_WAIT_MS: &str = greenpiste_guard::env_var!("TEST_MIGRATE_WAIT_MS");
+
+/// The migration mode of a subcommand. `migrate` and `doctor` report on the
+/// migration themselves; a command asked for help or the version, or asked
+/// only to preview or check (`--dry-run`, `--check`), changes nothing; a hook
+/// never waits, since its stdout is a decision; `install` waits and refuses.
+fn migration_mode(name: &Sub, args: &[OsString]) -> MigrationMode {
+    let reads_only = args.iter().any(|arg| {
+        arg == "--help"
+            || arg == "-h"
+            || arg == "--version"
+            || arg == "--dry-run"
+            || arg == "--check"
+    });
+    if matches!(name, Sub::Migrate | Sub::Doctor) || reads_only {
+        return MigrationMode::Skip;
+    }
+    match name {
+        Sub::Install => MigrationMode::Capped(
+            std::env::var(ENV_MIGRATE_WAIT_MS)
+                .ok()
+                .and_then(|text| text.parse().ok())
+                .map_or(MIGRATE_WAIT_CAP, std::time::Duration::from_millis),
+        ),
+        _ => MigrationMode::Zero,
+    }
+}
+
+/// Run the one-time migration before a command. Only a `Capped` command can
+/// be refused; for every other mode the command goes on whatever happens,
+/// and a command that may talk says once that the migration failed.
+fn preflight_migration(name: &Sub, args: &[OsString]) -> Result<(), String> {
+    match migration_mode(name, args) {
+        MigrationMode::Skip => Ok(()),
+        MigrationMode::Zero => {
+            let failed = greenpiste_guard::migrate::preflight();
+            if failed && !matches!(name, Sub::Hook) {
+                eprintln!("{BIN}: migration failed (see {BIN} doctor); run {BIN} migrate");
+            }
+            Ok(())
+        }
+        MigrationMode::Capped(wait) => greenpiste_guard::migrate::settle(wait).map_err(|error| {
+            format!(
+                "{error}\nnothing was installed; fix what it names, then run `{BIN} install` again"
+            )
+        }),
+    }
+}
+
+/// What `greenpiste migrate` was asked to do.
+struct MigrateRequest {
+    direction: greenpiste_guard::migrate::Direction,
+    dry_run: bool,
+}
+
+/// The request in `args`, or the exit code of `--help` or a usage error.
+fn parse_migrate(args: &[OsString]) -> Result<MigrateRequest, ExitCode> {
+    use greenpiste_guard::migrate::Direction;
+    let mut request = MigrateRequest {
+        direction: Direction::Forward,
+        dry_run: false,
+    };
     for arg in args {
         match arg.to_string_lossy().as_ref() {
-            "--reverse" => direction = Direction::Reverse,
-            "--dry-run" => dry_run = true,
+            "--reverse" => request.direction = Direction::Reverse,
+            "--dry-run" => request.dry_run = true,
             "--help" | "-h" => {
                 println!(concat!(
                     "usage: ",
@@ -385,29 +443,33 @@ fn run_migrate(args: &[OsString]) -> ExitCode {
                 println!("Move this machine's state directories, git config keys and plugin");
                 println!("registration to the current names; --reverse moves them back.");
                 println!("  --dry-run  print what would change; write nothing, take no lock");
-                return ExitCode::SUCCESS;
+                return Err(ExitCode::SUCCESS);
             }
             other => {
                 eprintln!("{BIN}: migrate takes --reverse and --dry-run, not {other}");
-                return ExitCode::from(2);
+                return Err(ExitCode::from(2));
             }
         }
     }
+    Ok(request)
+}
+
+fn run_migrate(args: &[OsString]) -> ExitCode {
+    use greenpiste_guard::migrate::{self, MigrateError};
+    let request = match parse_migrate(args) {
+        Ok(request) => request,
+        Err(code) => return code,
+    };
+    let direction = request.direction;
     let Some(env) = migrate::Env::from_process() else {
         eprintln!("{BIN}: {}", MigrateError::NoHome);
         return ExitCode::FAILURE;
     };
-    if dry_run {
+    if request.dry_run {
         return match migrate::machine_plan(&env, direction) {
             Ok(lines) => {
                 if lines.is_empty() {
-                    println!(
-                        "nothing to do: already {}",
-                        match direction {
-                            Direction::Forward => "migrated",
-                            Direction::Reverse => "reversed",
-                        }
-                    );
+                    println!("nothing to do: {}", already(direction));
                 }
                 for line in lines {
                     println!("would: {line}");
@@ -431,37 +493,87 @@ fn run_migrate(args: &[OsString]) -> ExitCode {
         eprintln!("{BIN}: waiting for another migration to finish");
     }
     drop(probe);
-    let outcome = migrate::machine_in(&env, direction, Wait::Capped(MIGRATE_WAIT_CAP));
-    let verdict = match outcome {
-        Ok(Outcome::Migrated { steps, elapsed }) => {
-            for step in &steps {
-                println!("{step}");
-            }
-            format!(
-                "migrated {} steps in {:.1}s",
-                steps.len(),
-                elapsed.as_secs_f64()
-            )
-        }
-        Ok(Outcome::AlreadyDone | Outcome::FailedBefore | Outcome::Busy) => {
-            "already migrated".to_string()
-        }
-        Ok(Outcome::Reversed) => "reversed".to_string(),
-        Ok(Outcome::ReversedAlready) => "already reversed".to_string(),
-        Err(error) => {
-            eprintln!(
-                "{BIN}: {error}\nfix what it names, then run `{BIN} migrate` again (or \
-                 `{BIN} migrate --reverse` to put everything back)"
-            );
-            return ExitCode::FAILURE;
-        }
+    let outcome = migrate::machine_in(&env, direction, migrate::Wait::Capped(MIGRATE_WAIT_CAP));
+    let verdict = match settled_verdict(&env, direction, outcome) {
+        Ok(verdict) => verdict,
+        Err(code) => return code,
     };
     if let Err(error) = migrate_local_repository(&env, direction) {
         eprintln!("{BIN}: {error}");
         return ExitCode::FAILURE;
     }
-    println!("{verdict}");
+    eprintln!("{verdict}");
     ExitCode::SUCCESS
+}
+
+/// What a finished state is called in a "nothing to do" line.
+fn already(direction: greenpiste_guard::migrate::Direction) -> &'static str {
+    match direction {
+        greenpiste_guard::migrate::Direction::Forward => "already migrated",
+        greenpiste_guard::migrate::Direction::Reverse => "already reversed",
+    }
+}
+
+/// The closing line of a run, after its step lines are printed; or the exit
+/// code of a run that did not finish, after its error is printed.
+fn settled_verdict(
+    env: &greenpiste_guard::migrate::Env,
+    direction: greenpiste_guard::migrate::Direction,
+    outcome: Result<greenpiste_guard::migrate::Outcome, greenpiste_guard::migrate::MigrateError>,
+) -> Result<String, ExitCode> {
+    use greenpiste_guard::migrate::{self, Direction, MigrateError, Outcome};
+    match outcome {
+        Ok(Outcome::Migrated { steps, elapsed }) => {
+            for step in &steps {
+                eprintln!("{step}");
+            }
+            Ok(if steps.is_empty() {
+                "nothing to move".to_string()
+            } else {
+                format!(
+                    "migrated {} steps in {:.1}s",
+                    steps.len(),
+                    elapsed.as_secs_f64()
+                )
+            })
+        }
+        Ok(Outcome::AlreadyDone) => Ok(format!("nothing to do: {}", already(Direction::Forward))),
+        Ok(Outcome::ReversedAlready) => {
+            Ok(format!("nothing to do: {}", already(Direction::Reverse)))
+        }
+        Ok(Outcome::Reversed) => Ok("reversed".to_string()),
+        Ok(Outcome::Busy) => {
+            eprintln!(
+                "{BIN}: another process holds the migration lock {}; retry when it finishes",
+                env.config_dir
+                    .join(greenpiste_guard::names::MIGRATE_LOCK_FILE)
+                    .display()
+            );
+            Err(ExitCode::FAILURE)
+        }
+        Ok(Outcome::FailedBefore) => {
+            let note = migrate::failure_note(env).unwrap_or_default();
+            eprintln!(
+                "{BIN}: an earlier migration failed: {}; run `{BIN} migrate` to try again",
+                note.trim().replace('\n', ": ")
+            );
+            Err(ExitCode::FAILURE)
+        }
+        Err(error) => {
+            eprintln!("{BIN}: {error}");
+            match (&error, direction) {
+                (MigrateError::Locked { .. } | MigrateError::Step { .. }, _) => {}
+                (_, Direction::Forward) => eprintln!(
+                    "fix what it names, then run `{BIN} migrate` again (or \
+                     `{BIN} migrate --reverse` to put everything back)"
+                ),
+                (_, Direction::Reverse) => {
+                    eprintln!("fix what it names, then run `{BIN} migrate --reverse` again");
+                }
+            }
+            Err(ExitCode::FAILURE)
+        }
+    }
 }
 
 /// An explicit run inside a git repository also renames that repository's own
@@ -481,7 +593,9 @@ fn migrate_local_repository(
     if !inside {
         return Ok(());
     }
-    greenpiste_guard::migrate_config::migrate_local(env, &here, direction).map(drop)
+    greenpiste_guard::migrate_config::migrate_local(env, &here, direction)
+        .map(drop)
+        .map_err(|error| error.to_string())
 }
 
 fn main() -> ExitCode {
@@ -541,7 +655,10 @@ fn main() -> ExitCode {
         die_on_sigpipe();
     }
     if let Invocation::Sub { name, args } = &invocation {
-        preflight_migration(name, args);
+        if let Err(why) = preflight_migration(name, args) {
+            eprintln!("{BIN}: {why}");
+            return ExitCode::FAILURE;
+        }
     }
     match invocation {
         Invocation::Help => {
@@ -3474,5 +3591,43 @@ fn run_graduate(args: &[OsString], promoting: bool) -> ExitCode {
             eprintln!("{BIN}: could not record the stance: {why}");
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod migration_mode_tests {
+    use super::*;
+
+    fn args(list: &[&str]) -> Vec<OsString> {
+        list.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn each_command_gets_its_migration_mode() {
+        assert_eq!(migration_mode(&Sub::Migrate, &[]), MigrationMode::Skip);
+        assert_eq!(migration_mode(&Sub::Doctor, &[]), MigrationMode::Skip);
+        assert_eq!(migration_mode(&Sub::Hook, &[]), MigrationMode::Zero);
+        assert_eq!(migration_mode(&Sub::Status, &[]), MigrationMode::Zero);
+        assert_eq!(migration_mode(&Sub::Uninstall, &[]), MigrationMode::Zero);
+        for flag in ["--help", "-h", "--version", "--dry-run", "--check"] {
+            assert_eq!(
+                migration_mode(&Sub::PlanApply, &args(&[flag])),
+                MigrationMode::Skip,
+                "{flag}"
+            );
+            assert_eq!(
+                migration_mode(&Sub::Install, &args(&["--write", flag])),
+                MigrationMode::Skip,
+                "{flag}"
+            );
+        }
+    }
+
+    #[test]
+    fn install_waits_for_the_lock() {
+        assert!(matches!(
+            migration_mode(&Sub::Install, &args(&["--write"])),
+            MigrationMode::Capped(_)
+        ));
     }
 }

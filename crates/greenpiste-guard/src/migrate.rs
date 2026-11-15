@@ -57,20 +57,153 @@ pub enum Wait {
 
 /// One move. Both directions are idempotent and resumable.
 pub trait Step {
-    fn name(&self) -> &str;
+    fn name(&self) -> &'static str;
     /// Do the step; the `Ok` text is a note ("" when there is none).
-    fn forward(&self, env: &Env) -> Result<String, String>;
-    fn reverse(&self, env: &Env) -> Result<String, String>;
+    fn forward(&self, env: &Env) -> Result<String, StepError>;
+    fn reverse(&self, env: &Env) -> Result<String, StepError>;
     /// What the step would do in `direction`, one line each, reading only.
-    fn plan(&self, env: &Env, direction: Direction) -> Result<Vec<String>, String>;
+    fn plan(&self, env: &Env, direction: Direction) -> Result<Vec<String>, StepError>;
+}
+
+/// Why a step could not finish: the operation, the path when there is one,
+/// and what went wrong underneath.
+#[derive(Debug)]
+pub struct StepError {
+    operation: String,
+    path: Option<PathBuf>,
+    cause: Cause,
+}
+
+#[derive(Debug)]
+enum Cause {
+    Io(io::Error),
+    Git(GitFailure),
+    /// A condition the step refuses to work around; the operation text is the
+    /// whole message.
+    Refused,
+    /// Several independent failures, reported one per line.
+    Several(Vec<StepError>),
+}
+
+/// A failed git call, with what git said.
+#[derive(Debug)]
+pub struct GitFailure {
+    message: String,
+}
+
+impl fmt::Display for GitFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for GitFailure {}
+
+impl StepError {
+    /// An I/O failure while doing `operation`.
+    pub fn io(operation: impl Into<String>, source: io::Error) -> StepError {
+        StepError {
+            operation: operation.into(),
+            path: None,
+            cause: Cause::Io(source),
+        }
+    }
+
+    /// A git call that failed, with what it said.
+    pub fn git(operation: impl Into<String>, said: impl Into<String>) -> StepError {
+        StepError {
+            operation: operation.into(),
+            path: None,
+            cause: Cause::Git(GitFailure {
+                message: said.into(),
+            }),
+        }
+    }
+
+    /// A refusal: `message` says what is wrong and how to fix it.
+    pub fn refused(message: impl Into<String>) -> StepError {
+        StepError {
+            operation: message.into(),
+            path: None,
+            cause: Cause::Refused,
+        }
+    }
+
+    /// Independent failures of one step: the only one itself, else all of
+    /// them under `operation`, one per line.
+    pub fn several(operation: impl Into<String>, mut errors: Vec<StepError>) -> StepError {
+        if errors.len() == 1 {
+            return errors.remove(0);
+        }
+        StepError {
+            operation: operation.into(),
+            path: None,
+            cause: Cause::Several(errors),
+        }
+    }
+
+    /// The file this failure is about.
+    #[must_use]
+    pub fn at(mut self, path: &Path) -> StepError {
+        self.path = Some(path.to_path_buf());
+        self
+    }
+
+    pub fn operation(&self) -> &str {
+        &self.operation
+    }
+
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+}
+
+impl fmt::Display for StepError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.cause {
+            Cause::Io(source) => write!(f, "{}: {source}; fix it and run again", self.operation),
+            Cause::Git(failure) => write!(f, "{}: {failure}", self.operation),
+            Cause::Refused => f.write_str(&self.operation),
+            Cause::Several(errors) => {
+                write!(f, "{}:", self.operation)?;
+                for error in errors {
+                    write!(f, "\n  {error}")?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl std::error::Error for StepError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self.cause {
+            Cause::Io(source) => Some(source),
+            Cause::Git(failure) => Some(failure),
+            Cause::Refused | Cause::Several(_) => None,
+        }
+    }
+}
+
+/// A step that left something to say: its name and its note.
+#[derive(Debug, PartialEq, Eq)]
+pub struct StepReport {
+    pub name: &'static str,
+    pub note: String,
+}
+
+impl fmt::Display for StepReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.name, self.note)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Outcome {
     AlreadyDone,
-    /// Each step is its name, with its note after a colon when it had one.
+    /// The steps that left a note.
     Migrated {
-        steps: Vec<String>,
+        steps: Vec<StepReport>,
         elapsed: Duration,
     },
     /// The lock is held by another process (hook mode); nothing changed.
@@ -84,9 +217,21 @@ pub enum Outcome {
 #[derive(Debug)]
 pub enum MigrateError {
     NoHome,
-    Locked { path: PathBuf },
-    Io { what: String, source: io::Error },
-    Step { step: String, message: String },
+    Locked {
+        path: PathBuf,
+    },
+    Io {
+        what: String,
+        source: io::Error,
+    },
+    Step {
+        step: &'static str,
+        source: StepError,
+    },
+    /// An earlier run failed and left the failed-marker's text.
+    FailedBefore {
+        note: String,
+    },
 }
 
 impl fmt::Display for MigrateError {
@@ -99,14 +244,30 @@ impl fmt::Display for MigrateError {
                 path.display()
             ),
             MigrateError::Io { what, source } => write!(f, "{what}: {source}"),
-            MigrateError::Step { step, message } => {
-                write!(f, "migration step {step} failed: {message}")
+            MigrateError::Step { step, source } => {
+                write!(f, "migration step {step} failed: {source}")
             }
+            MigrateError::FailedBefore { note } => write!(
+                f,
+                "an earlier migration failed ({}); run `{} migrate`",
+                note.trim().replace('\n', ": "),
+                names::BIN
+            ),
         }
     }
 }
 
-impl std::error::Error for MigrateError {}
+impl std::error::Error for MigrateError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            MigrateError::Io { source, .. } => Some(source),
+            MigrateError::Step { source, .. } => Some(source),
+            MigrateError::NoHome
+            | MigrateError::Locked { .. }
+            | MigrateError::FailedBefore { .. } => None,
+        }
+    }
+}
 
 fn io_error(what: impl Into<String>) -> impl FnOnce(io::Error) -> MigrateError {
     let what = what.into();
@@ -194,9 +355,9 @@ pub fn machine_plan(env: &Env, direction: Direction) -> Result<Vec<String>, Migr
     for step in ordered {
         let planned = step
             .plan(env, direction)
-            .map_err(|message| MigrateError::Step {
-                step: step.name().to_string(),
-                message,
+            .map_err(|source| MigrateError::Step {
+                step: step.name(),
+                source,
             })?;
         lines.extend(
             planned
@@ -216,17 +377,53 @@ pub fn preflight() -> bool {
         return false;
     }
     let attempted = std::panic::catch_unwind(|| {
-        if let Some(env) = Env::from_process() {
-            if nothing_old(&env) {
-                return failure_note(&env).is_some();
-            }
+        let Some(env) = Env::from_process() else {
+            return false;
+        };
+        if nothing_old(&env) {
+            return failure_note(&env).is_some();
         }
-        let _ = machine(Wait::Zero); // a hook is never blocked or refused by the migration
-        Env::from_process()
-            .and_then(|env| failure_note(&env))
-            .is_some()
+        if let Err(error @ MigrateError::Io { .. }) =
+            machine_in(&env, Direction::Forward, Wait::Zero)
+        {
+            // A lock or marker the run could not use leaves no marker of its
+            // own; `doctor` reads this one.
+            let _ = fs::write(
+                env.marker(names::MIGRATE_FAILED_MARKER),
+                format!("migration\n{error}\n"),
+            ); // a hook is never failed or blocked by its own bookkeeping
+        }
+        failure_note(&env).is_some()
     });
     attempted.unwrap_or(false)
+}
+
+/// Settle the migration for a command that must not run on a half-moved
+/// machine: wait up to `wait` for the lock, retry an earlier failure, and
+/// leave a machine the person reversed as it is.
+pub fn settle(wait: Duration) -> Result<(), MigrateError> {
+    if std::env::var_os(crate::journal::ENV_PROBE).is_some() {
+        return Ok(());
+    }
+    let Some(env) = Env::from_process() else {
+        return Ok(());
+    };
+    if nothing_old(&env) && failure_note(&env).is_none() {
+        return Ok(());
+    }
+    if exists(&env.marker(names::MIGRATE_REVERSED_MARKER)) && !done(&env) {
+        return Ok(());
+    }
+    match machine_in(&env, Direction::Forward, Wait::Capped(wait))? {
+        Outcome::Migrated { .. } | Outcome::AlreadyDone | Outcome::ReversedAlready => Ok(()),
+        Outcome::Busy => Err(MigrateError::Locked {
+            path: env.marker(names::MIGRATE_LOCK_FILE),
+        }),
+        Outcome::FailedBefore => Err(MigrateError::FailedBefore {
+            note: failure_note(&env).unwrap_or_default(),
+        }),
+        Outcome::Reversed => Ok(()),
+    }
 }
 
 /// Whether neither old root exists, as a directory or a symlink: a machine
@@ -310,13 +507,16 @@ pub fn run(
             let mut reports = Vec::new();
             for step in steps {
                 match step.forward(env) {
-                    Ok(note) if note.is_empty() => reports.push(step.name().to_string()),
-                    Ok(note) => reports.push(format!("{}: {note}", step.name())),
-                    Err(message) => {
-                        write_marker(&failed, &format!("{}\n{message}\n", step.name()))?;
+                    Ok(note) if note.is_empty() => {}
+                    Ok(note) => reports.push(StepReport {
+                        name: step.name(),
+                        note,
+                    }),
+                    Err(source) => {
+                        write_marker(&failed, &format!("{}\n{source}\n", step.name()))?;
                         return Err(MigrateError::Step {
-                            step: step.name().to_string(),
-                            message,
+                            step: step.name(),
+                            source,
                         });
                     }
                 }
@@ -334,9 +534,9 @@ pub fn run(
                 return Ok(Outcome::ReversedAlready);
             }
             for step in steps.iter().rev() {
-                step.reverse(env).map_err(|message| MigrateError::Step {
-                    step: step.name().to_string(),
-                    message,
+                step.reverse(env).map_err(|source| MigrateError::Step {
+                    step: step.name(),
+                    source,
                 })?;
             }
             write_marker(&reversed, "")?;
@@ -367,20 +567,100 @@ fn is_log_name(name: &std::ffi::OsStr) -> bool {
     name == "journal.log" || name.ends_with(".jsonl")
 }
 
+/// What a log file starts with.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LogShape {
+    /// A header line, then rows (`journal.log`).
+    Journal,
+    /// Rows only (`*.jsonl`).
+    Rows,
+}
+
+impl LogShape {
+    fn of(name: &std::ffi::OsStr) -> LogShape {
+        if name == "journal.log" {
+            LogShape::Journal
+        } else {
+            LogShape::Rows
+        }
+    }
+}
+
+/// The suffix of the temp file a rewrite goes through.
+const TEMP_SUFFIX: &str = ".migrate-tmp";
+
+fn is_temp_name(name: &std::ffi::OsStr) -> bool {
+    name.to_string_lossy().ends_with(TEMP_SUFFIX)
+}
+
+fn temp_path(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(TEMP_SUFFIX);
+    path.with_file_name(name)
+}
+
+#[cfg(unix)]
+fn create_temp(temp: &Path, original: &fs::Permissions) -> io::Result<fs::File> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(original.mode())
+        .open(temp)
+}
+
+#[cfg(not(unix))]
+fn create_temp(temp: &Path, _original: &fs::Permissions) -> io::Result<fs::File> {
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(temp)
+}
+
+fn write_temp(temp: &Path, original: &fs::Permissions, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    let mut file = match create_temp(temp, original) {
+        Ok(file) => file,
+        // A leftover of a crashed run: the name is ours, so it is replaced.
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+            fs::remove_file(temp)?;
+            create_temp(temp, original)?
+        }
+        Err(e) => return Err(e),
+    };
+    file.set_permissions(original.clone())?; // the process umask must not narrow the mode
+    file.write_all(bytes)?;
+    file.sync_all()
+}
+
+/// Replace `path` with `bytes` through a new temp file that has the original's
+/// mode, is synced, and is renamed over it; the temp file is removed on any
+/// error.
+fn replace_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let temp = temp_path(path);
+    let original = fs::metadata(path)?.permissions();
+    let outcome = write_temp(&temp, &original, bytes).and_then(|()| fs::rename(&temp, path));
+    if outcome.is_err() {
+        let _ = fs::remove_file(&temp); // the write's own error is the one to report
+    }
+    outcome
+}
+
 /// Merge the old file's rows ahead of the new file's into `new_file`, through
 /// a temp file renamed over it with the mode of the file it replaces. A
 /// journal keeps the new file's header line once; each file's own first line
 /// is dropped from the rows.
-fn append_merge(old_file: &Path, new_file: &Path, has_header: bool) -> io::Result<()> {
+fn append_merge(old_file: &Path, new_file: &Path, shape: LogShape) -> io::Result<()> {
     let old_bytes = fs::read(old_file)?;
     let new_bytes = fs::read(new_file)?;
     let mut out = Vec::with_capacity(old_bytes.len() + new_bytes.len() + 1);
-    let (old_rows, new_rows, header): (&[u8], &[u8], &[u8]) = if has_header {
-        let (_, old_rest) = split_first_line(&old_bytes);
-        let (new_header, new_rest) = split_first_line(&new_bytes);
-        (old_rest, new_rest, new_header)
-    } else {
-        (&old_bytes, &new_bytes, &[])
+    let (old_rows, new_rows, header): (&[u8], &[u8], &[u8]) = match shape {
+        LogShape::Journal => {
+            let (_, old_rest) = split_first_line(&old_bytes);
+            let (new_header, new_rest) = split_first_line(&new_bytes);
+            (old_rest, new_rest, new_header)
+        }
+        LogShape::Rows => (&old_bytes, &new_bytes, &[]),
     };
     out.extend_from_slice(header);
     if !header.is_empty() && !header.ends_with(b"\n") {
@@ -391,12 +671,7 @@ fn append_merge(old_file: &Path, new_file: &Path, has_header: bool) -> io::Resul
         out.push(b'\n');
     }
     out.extend_from_slice(new_rows);
-    let mut temp_name = new_file.file_name().unwrap_or_default().to_os_string();
-    temp_name.push(".migrate-tmp");
-    let temp = new_file.with_file_name(temp_name);
-    fs::write(&temp, &out)?;
-    fs::set_permissions(&temp, fs::metadata(new_file)?.permissions())?;
-    fs::rename(&temp, new_file)
+    replace_file(new_file, &out)
 }
 
 fn split_first_line(bytes: &[u8]) -> (&[u8], &[u8]) {
@@ -404,10 +679,6 @@ fn split_first_line(bytes: &[u8]) -> (&[u8], &[u8]) {
         Some(end) => bytes.split_at(end + 1),
         None => (bytes, &[]),
     }
-}
-
-fn fix_it(what: &str, source: io::Error) -> String {
-    format!("{what}: {source}; fix it and run again")
 }
 
 impl StateDirectories {
@@ -439,46 +710,68 @@ impl StateDirectories {
         roots
     }
 
-    fn move_forward(&self, old_path: &Path, new_path: &Path) -> Result<String, String> {
+    /// The note says what moved, "" when the old path was already settled.
+    fn move_forward(&self, old_path: &Path, new_path: &Path) -> Result<String, StepError> {
         let old_is_dir = old_path
             .symlink_metadata()
             .ok()
             .is_some_and(|meta| meta.is_dir());
         let new_exists = exists(new_path);
+        let mut did = "";
         if old_is_dir && !new_exists {
             fs::rename(old_path, new_path).map_err(|e| {
-                fix_it(
-                    &format!(
+                StepError::io(
+                    format!(
                         "cannot rename {} to {}",
                         old_path.display(),
                         new_path.display()
                     ),
                     e,
                 )
+                .at(old_path)
             })?;
+            did = "moved";
             (self.after_rename)(old_path);
         } else if !exists(old_path) && !new_exists {
             return Ok(String::new());
         }
-        match old_path.symlink_metadata() {
-            Ok(meta) if meta.file_type().is_symlink() => Ok(String::new()),
+        let linked = match old_path.symlink_metadata() {
+            Ok(meta) if meta.file_type().is_symlink() => String::new(),
             Ok(meta) if meta.is_dir() => {
                 self.absorb(old_path, new_path)?;
-                link(old_path, new_path).map_err(|e| fix_it("cannot link", e))
+                did = "merged";
+                link(old_path, new_path).map_err(|e| link_error(old_path, new_path, e))?
             }
-            Ok(_) => Err(format!(
-                "{} is a file, not a directory; move it away and run again",
-                old_path.display()
-            )),
-            Err(_) => link(old_path, new_path).map_err(|e| fix_it("cannot link", e)),
-        }
+            Ok(_) => {
+                return Err(StepError::refused(format!(
+                    "{} is a file, not a directory; move it away and run again",
+                    old_path.display()
+                ))
+                .at(old_path))
+            }
+            Err(_) => {
+                did = if did.is_empty() { "linked" } else { did };
+                link(old_path, new_path).map_err(|e| link_error(old_path, new_path, e))?
+            }
+        };
+        let moved = if did.is_empty() {
+            String::new()
+        } else {
+            format!("{did} {} to {}", old_path.display(), new_path.display())
+        };
+        Ok(match (moved.is_empty(), linked.is_empty()) {
+            (_, true) => moved,
+            (true, false) => linked,
+            (false, false) => format!("{moved}; {linked}"),
+        })
     }
 
     /// Merge the directory `from` into `into`, then remove it.
-    fn absorb(&self, from: &Path, into: &Path) -> Result<(), String> {
+    fn absorb(&self, from: &Path, into: &Path) -> Result<(), StepError> {
         self.merge(from, into)
-            .map_err(|e| fix_it(&format!("cannot merge {}", from.display()), e))?;
-        fs::remove_dir(from).map_err(|e| fix_it(&format!("cannot remove {}", from.display()), e))
+            .map_err(|e| StepError::io(format!("cannot merge {}", from.display()), e).at(from))?;
+        fs::remove_dir(from)
+            .map_err(|e| StepError::io(format!("cannot remove {}", from.display()), e).at(from))
     }
 
     /// Move every entry of `from` into `into`. Two regular log files
@@ -505,7 +798,7 @@ impl StateDirectories {
                     continue;
                 }
                 if source_meta.is_file() && target_meta.is_file() && is_log_name(&name) {
-                    append_merge(&source, &target, name == "journal.log")?;
+                    append_merge(&source, &target, LogShape::of(&name))?;
                     fs::remove_file(&source)?;
                     continue;
                 }
@@ -528,23 +821,27 @@ impl StateDirectories {
         Ok(())
     }
 
-    fn move_back(&self, old_path: &Path, new_path: &Path) -> Result<(), String> {
+    fn move_back(&self, old_path: &Path, new_path: &Path) -> Result<(), StepError> {
         match old_path.symlink_metadata() {
-            Ok(meta) if meta.file_type().is_symlink() => fs::remove_file(old_path)
-                .map_err(|e| fix_it(&format!("cannot remove {}", old_path.display()), e))?,
+            Ok(meta) if meta.file_type().is_symlink() => {
+                fs::remove_file(old_path).map_err(|e| {
+                    StepError::io(format!("cannot remove {}", old_path.display()), e).at(old_path)
+                })?
+            }
             Ok(meta) if meta.is_dir() && exists(new_path) => self.absorb(old_path, new_path)?,
             _ => {}
         }
         if exists(new_path) && !exists(old_path) {
             fs::rename(new_path, old_path).map_err(|e| {
-                fix_it(
-                    &format!(
+                StepError::io(
+                    format!(
                         "cannot rename {} to {}",
                         new_path.display(),
                         old_path.display()
                     ),
                     e,
                 )
+                .at(new_path)
             })?;
         }
         Ok(())
@@ -555,6 +852,18 @@ impl Default for StateDirectories {
     fn default() -> Self {
         StateDirectories::new()
     }
+}
+
+fn link_error(old_path: &Path, new_path: &Path, source: io::Error) -> StepError {
+    StepError::io(
+        format!(
+            "cannot link {} to {}",
+            old_path.display(),
+            new_path.display()
+        ),
+        source,
+    )
+    .at(old_path)
 }
 
 #[cfg(unix)]
@@ -569,11 +878,11 @@ fn link(_old_path: &Path, _new_path: &Path) -> io::Result<String> {
 }
 
 impl Step for StateDirectories {
-    fn name(&self) -> &str {
-        "state-directories"
+    fn name(&self) -> &'static str {
+        "state directories"
     }
 
-    fn forward(&self, env: &Env) -> Result<String, String> {
+    fn forward(&self, env: &Env) -> Result<String, StepError> {
         let mut notes = Vec::new();
         for (old_path, new_path) in StateDirectories::roots(env) {
             let note = self.move_forward(&old_path, &new_path)?;
@@ -584,7 +893,7 @@ impl Step for StateDirectories {
         Ok(notes.join("; "))
     }
 
-    fn plan(&self, env: &Env, direction: Direction) -> Result<Vec<String>, String> {
+    fn plan(&self, env: &Env, direction: Direction) -> Result<Vec<String>, StepError> {
         let mut lines = Vec::new();
         for (old_path, new_path) in StateDirectories::roots(env) {
             let (old_meta, new_exists) = (old_path.symlink_metadata().ok(), exists(&new_path));
@@ -631,7 +940,7 @@ impl Step for StateDirectories {
         Ok(lines)
     }
 
-    fn reverse(&self, env: &Env) -> Result<String, String> {
+    fn reverse(&self, env: &Env) -> Result<String, StepError> {
         for (old_path, new_path) in StateDirectories::roots(env) {
             self.move_back(&old_path, &new_path)?;
         }
@@ -642,10 +951,11 @@ impl Step for StateDirectories {
             .is_some_and(|meta| meta.is_dir());
         if is_real_dir {
             rewrite_rows_back(&config_old).map_err(|e| {
-                fix_it(
-                    &format!("cannot rewrite the rows under {}", config_old.display()),
+                StepError::io(
+                    format!("cannot rewrite the rows under {}", config_old.display()),
                     e,
                 )
+                .at(&config_old)
             })?;
         }
         Ok(String::new())
@@ -691,12 +1001,10 @@ fn row_back(line: &str) -> Option<String> {
 fn rewrite_rows_back(config_old: &Path) -> io::Result<()> {
     for entry in fs::read_dir(config_old)? {
         let entry = entry?;
-        let is_journal = entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with("journal.log");
-        if is_journal && entry.file_type()?.is_file() {
-            rewrite_file(&entry.path(), true)?;
+        let name = entry.file_name();
+        let is_journal = name.to_string_lossy().starts_with("journal.log");
+        if is_journal && !is_temp_name(&name) && entry.file_type()?.is_file() {
+            rewrite_file(&entry.path(), LogShape::Journal)?;
         }
     }
     let plan_review = config_old.join("plan-review");
@@ -712,16 +1020,19 @@ fn rewrite_jsonl_under(dir: &Path) -> io::Result<()> {
         let kind = entry.file_type()?;
         if kind.is_dir() {
             rewrite_jsonl_under(&entry.path())?;
-        } else if kind.is_file() && entry.path().extension().is_some_and(|ext| ext == "jsonl") {
-            rewrite_file(&entry.path(), false)?;
+        } else if kind.is_file()
+            && !is_temp_name(&entry.file_name())
+            && entry.path().extension().is_some_and(|ext| ext == "jsonl")
+        {
+            rewrite_file(&entry.path(), LogShape::Rows)?;
         }
     }
     Ok(())
 }
 
-/// Rewrite the rows of one file through a temp file renamed over it with the
-/// original mode; a file with nothing to change is not touched.
-fn rewrite_file(path: &Path, has_header: bool) -> io::Result<()> {
+/// Rewrite the rows of one file through [`replace_file`]; a file with nothing
+/// to change is not touched.
+fn rewrite_file(path: &Path, shape: LogShape) -> io::Result<()> {
     let bytes = fs::read(path)?;
     let mut out = Vec::with_capacity(bytes.len());
     let mut changed = false;
@@ -730,7 +1041,7 @@ fn rewrite_file(path: &Path, has_header: bool) -> io::Result<()> {
         let rewritten = std::str::from_utf8(&line[..body_len])
             .ok()
             .and_then(|text| {
-                if has_header && index == 0 && text == names::JOURNAL_HEADER {
+                if shape == LogShape::Journal && index == 0 && text == names::JOURNAL_HEADER {
                     Some(old::JOURNAL_HEADER.to_string())
                 } else {
                     row_back(text)
@@ -748,12 +1059,7 @@ fn rewrite_file(path: &Path, has_header: bool) -> io::Result<()> {
     if !changed {
         return Ok(());
     }
-    let mut temp_name = path.file_name().unwrap_or_default().to_os_string();
-    temp_name.push(".migrate-tmp");
-    let temp = path.with_file_name(temp_name);
-    fs::write(&temp, &out)?;
-    fs::set_permissions(&temp, fs::metadata(path)?.permissions())?;
-    fs::rename(&temp, path)
+    replace_file(path, &out)
 }
 
 /// Tests that hold the migration lock while another spawns git would share
@@ -842,36 +1148,33 @@ mod tests {
     }
 
     fn snapshot(dir: &Path) -> BTreeMap<String, Vec<u8>> {
-        fn walk(base: &Path, dir: &Path, into: &mut BTreeMap<String, Vec<u8>>) {
+        fn walk(base: &Path, dir: &Path) -> BTreeMap<String, Vec<u8>> {
+            let mut found = BTreeMap::new();
             for entry in fs::read_dir(dir).unwrap() {
                 let path = entry.unwrap().path();
                 let key = path.strip_prefix(base).unwrap().display().to_string();
                 if path.is_dir() {
-                    into.insert(format!("{key}/"), Vec::new());
-                    walk(base, &path, into);
+                    found.insert(format!("{key}/"), Vec::new());
+                    found.extend(walk(base, &path));
                 } else {
-                    into.insert(key, fs::read(&path).unwrap());
+                    found.insert(key, fs::read(&path).unwrap());
                 }
             }
+            found
         }
-        let mut found = BTreeMap::new();
-        walk(dir, dir, &mut found);
-        found
+        walk(dir, dir)
     }
 
     fn mtimes(dir: &Path) -> BTreeMap<PathBuf, SystemTime> {
-        fn walk(dir: &Path, into: &mut BTreeMap<PathBuf, SystemTime>) {
-            for entry in fs::read_dir(dir).unwrap() {
-                let path = entry.unwrap().path();
-                let modified = fs::metadata(&path).unwrap().modified().unwrap();
-                into.insert(path.clone(), modified);
-                if path.is_dir() {
-                    walk(&path, into);
-                }
-            }
-        }
         let mut found = BTreeMap::new();
-        walk(dir, &mut found);
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let modified = fs::metadata(&path).unwrap().modified().unwrap();
+            if path.is_dir() {
+                found.extend(mtimes(&path));
+            }
+            found.insert(path, modified);
+        }
         found
     }
 
@@ -907,14 +1210,9 @@ mod tests {
         let Outcome::Migrated { steps, elapsed } = zero(&env, Direction::Forward).unwrap() else {
             panic!("not migrated");
         };
-        assert_eq!(
-            steps,
-            vec![
-                "state-directories".to_string(),
-                "git config keys".to_string(),
-                "plugin registration".to_string()
-            ]
-        );
+        let named: Vec<&str> = steps.iter().map(|report| report.name).collect();
+        assert_eq!(named, vec!["state directories"], "{steps:?}");
+        assert!(steps[0].note.contains("moved"), "{steps:?}");
         assert!(elapsed < Duration::from_secs(60));
         assert_eq!(snapshot(&config_new(&env)), before);
         assert_eq!(snapshot(&env.state_root), state_before);
@@ -1208,21 +1506,24 @@ mod tests {
     }
 
     impl Step for Flaky {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "flaky"
         }
-        fn forward(&self, _env: &Env) -> Result<String, String> {
+        fn forward(&self, _env: &Env) -> Result<String, StepError> {
             self.attempts.set(self.attempts.get() + 1);
             if self.attempts.get() == 1 {
-                Err("disk says no".to_string())
+                Err(StepError::io(
+                    "cannot write the disk",
+                    io::Error::other("disk says no"),
+                ))
             } else {
                 Ok(String::new())
             }
         }
-        fn reverse(&self, _env: &Env) -> Result<String, String> {
+        fn reverse(&self, _env: &Env) -> Result<String, StepError> {
             Ok(String::new())
         }
-        fn plan(&self, _env: &Env, _direction: Direction) -> Result<Vec<String>, String> {
+        fn plan(&self, _env: &Env, _direction: Direction) -> Result<Vec<String>, StepError> {
             Ok(Vec::new())
         }
     }
@@ -1251,5 +1552,86 @@ mod tests {
         assert_eq!(flaky.attempts.get(), 2);
         assert!(failure_note(&env).is_none());
         assert!(exists(&env.config_dir.join(names::MIGRATE_DONE_MARKER)));
+    }
+
+    #[test]
+    fn an_io_failure_keeps_its_source_and_the_repair_text() {
+        let (_scratch, env) = machine_tree();
+        let flaky = Flaky {
+            attempts: Cell::new(0),
+        };
+        let only: [&dyn Step; 1] = [&flaky];
+        let error = run(&env, Direction::Forward, Wait::Zero, &only).unwrap_err();
+        let MigrateError::Step { step, source } = &error else {
+            panic!("{error}");
+        };
+        assert_eq!(*step, "flaky");
+        let cause = std::error::Error::source(source).expect("the I/O error is the source");
+        assert!(cause.to_string().contains("disk says no"));
+        assert!(
+            source.to_string().ends_with("fix it and run again"),
+            "{source}"
+        );
+        assert!(std::error::Error::source(&error).is_some());
+    }
+
+    fn journal_with_new_rows(dir: &Path) -> PathBuf {
+        let journal = dir.join("journal.log");
+        fs::write(&journal, format!("{}\nrow\n", names::JOURNAL_HEADER)).unwrap();
+        journal
+    }
+
+    #[test]
+    fn the_row_rewrite_keeps_the_mode_and_leaves_no_temp_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = scratch_dir("rewrite");
+        let journal = journal_with_new_rows(&scratch.0);
+        fs::set_permissions(&journal, fs::Permissions::from_mode(0o600)).unwrap();
+        rewrite_file(&journal, LogShape::Journal).unwrap();
+        assert_eq!(
+            fs::read_to_string(&journal).unwrap(),
+            format!("{}\nrow\n", old::JOURNAL_HEADER)
+        );
+        assert_eq!(
+            fs::metadata(&journal).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(!temp_path(&journal).exists());
+    }
+
+    #[test]
+    fn a_failing_rewrite_removes_its_temp_file() {
+        let scratch = scratch_dir("rewrite-fails");
+        let target = scratch.0.join("target");
+        fs::create_dir(&target).unwrap();
+        assert!(replace_file(&target, b"rows\n").is_err());
+        assert!(!temp_path(&target).exists());
+    }
+
+    #[test]
+    fn the_row_walk_ignores_a_leftover_temp_file() {
+        let scratch = scratch_dir("leftover");
+        let leftover = scratch.0.join("journal.log.migrate-tmp");
+        let text = format!("{}\nstale\n", names::JOURNAL_HEADER);
+        fs::write(&leftover, &text).unwrap();
+        fs::create_dir(scratch.0.join("plan-review")).unwrap();
+        let ledger_leftover = scratch.0.join("plan-review/o.jsonl.migrate-tmp");
+        let ledger_text = schema_row(names::REVIEW_OUTCOME_SCHEMA, 1);
+        fs::write(&ledger_leftover, &ledger_text).unwrap();
+        rewrite_rows_back(&scratch.0).unwrap();
+        assert_eq!(fs::read_to_string(&leftover).unwrap(), text);
+        assert_eq!(fs::read_to_string(&ledger_leftover).unwrap(), ledger_text);
+    }
+
+    #[test]
+    fn a_stale_temp_file_does_not_block_a_rewrite() {
+        let scratch = scratch_dir("stale");
+        let journal = journal_with_new_rows(&scratch.0);
+        fs::write(temp_path(&journal), "junk").unwrap();
+        rewrite_file(&journal, LogShape::Journal).unwrap();
+        assert!(fs::read_to_string(&journal)
+            .unwrap()
+            .starts_with(old::JOURNAL_HEADER));
+        assert!(!temp_path(&journal).exists());
     }
 }

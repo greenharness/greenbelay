@@ -159,13 +159,10 @@ fn both_prefixes_pattern() -> String {
 }
 
 /// Whether the migration's done-marker exists on this machine, resolved
-/// against the process environment once (a hook pays one stat per read at
-/// most, and only when a new key is absent).
+/// against the process environment at each call (one stat, and it is asked
+/// only when a new key is absent).
 fn migration_done() -> bool {
-    static ENV: OnceLock<Option<crate::migrate::Env>> = OnceLock::new();
-    ENV.get_or_init(crate::migrate::Env::from_process)
-        .as_ref()
-        .is_some_and(crate::migrate::done)
+    crate::migrate::Env::from_process().is_some_and(|env| crate::migrate::done(&env))
 }
 
 /// The key to read in one snapshot: `key` itself when it is present, or

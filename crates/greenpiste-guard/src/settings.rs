@@ -159,7 +159,7 @@ impl Change {
 /// The promise at the top of this module is that we touch nothing else. When we
 /// cannot keep it, the right move is to say so and write nothing, not to keep it
 /// approximately.
-fn would_reformat(raw: &str, doc: &Value, indent: &str, nl: bool) -> bool {
+pub(crate) fn would_reformat(raw: &str, doc: &Value, indent: &str, nl: bool) -> bool {
     if raw.trim().is_empty() {
         return false;
     }
@@ -328,7 +328,7 @@ pub fn is_ours(h: &Value) -> bool {
 /// Two spaces unless the file says otherwise, and whether it ended in a
 /// newline. Preserving both is the difference between a one-line diff and a
 /// diff that looks like we rewrote the file.
-fn shape(raw: &str) -> (String, bool) {
+pub(crate) fn shape(raw: &str) -> (String, bool) {
     let indent = raw
         .lines()
         .find_map(|l| {
@@ -343,7 +343,7 @@ fn shape(raw: &str) -> (String, bool) {
     (indent, raw.ends_with('\n'))
 }
 
-fn render(doc: &Value, indent: &str, trailing_newline: bool) -> String {
+pub(crate) fn render(doc: &Value, indent: &str, trailing_newline: bool) -> String {
     let mut buf = Vec::new();
     let fmt = serde_json::ser::PrettyFormatter::with_indent(indent.as_bytes());
     let mut ser = serde_json::Serializer::with_formatter(&mut buf, fmt);

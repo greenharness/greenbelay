@@ -10,6 +10,28 @@
   second `~/.claude/greenpiste` beside the old root, and `journal.log` and
   `*.jsonl` files found in both roots are appended (old rows first) instead of
   the old history landing in an unread `.from-old-*` file.
+- **The migration is all-or-nothing and conflict-safe for git config keys.**
+  No file is written unless every file holding an old key is writable and
+  none already holds the new key with a different value; the dry-run says
+  `refuse:` for such a file. Row rewrites go through a synced temp file with
+  the original mode, a leftover `*.migrate-tmp` is ignored, and `Busy` and
+  earlier-failure outcomes of `migrate` exit 1 instead of claiming the work
+  is done.
+
+### Changed
+
+- **`greenpiste install` waits for the migration and refuses on a failed
+  one.** It waits up to 30 seconds for the migration lock, and when the
+  migration cannot finish it exits 1 saying what to fix and writes nothing.
+- **`--dry-run` and `--check` never migrate.** A command asked only to
+  preview or check leaves an old-style machine as it found it, as `doctor`,
+  `migrate` and `--help` always did.
+- **The migration's progress goes to standard error.** `greenpiste migrate`
+  prints its step lines, its closing line (`migrated N steps in X.Xs`, or
+  `nothing to move`) and the lock-wait line on stderr; the dry-run's `would:`
+  and `nothing to do` lines stay on stdout. A git-config failure prints one
+  error per line, and a migration that failed under a hook is announced as
+  `migration failed (see greenpiste doctor); run greenpiste migrate`.
 
 ### Added
 
