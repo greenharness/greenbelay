@@ -467,3 +467,119 @@ fn version_and_help_migrate_nothing() {
     }
     assert!(!machine.done_marker().exists());
 }
+
+/// A step that cannot finish must not switch off what the old keys set: the
+/// key sits in a read-only included file, so the config step fails, and the
+/// hook still applies its `denyAgents`.
+#[cfg(unix)]
+#[test]
+fn a_failed_step_still_applies_the_old_deny_agents() {
+    use std::os::unix::fs::PermissionsExt;
+    let machine = Machine::old_style("failed-keeps-old-keys");
+    let included = machine.home().join("included.gitconfig");
+    let status = Command::new("git")
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .args(["config", "--file"])
+        .arg(&included)
+        .arg(format!(
+            "{}symbol-grep-not-lsp.denyAgents",
+            old::CONFIG_PREFIX
+        ))
+        .arg("relais:relais-worker-haiku-*")
+        .status()
+        .unwrap();
+    assert!(status.success());
+    fs::set_permissions(&included, fs::Permissions::from_mode(0o444)).unwrap();
+    let status = Command::new("git")
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .args(["config", "--file"])
+        .arg(machine.gitconfig())
+        .args(["include.path"])
+        .arg(&included)
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    fs::create_dir_all(machine.root.join("src")).unwrap();
+    let init = Command::new("git")
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", machine.gitconfig())
+        .args(["init", "-q", "--template="])
+        .current_dir(&machine.root)
+        .status()
+        .unwrap();
+    assert!(init.success());
+    let bin = machine.root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let stub = bin.join("fleet-lsp");
+    fs::write(&stub, "#!/bin/sh\n").unwrap();
+    fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(
+        machine.claude().join("settings.json"),
+        r#"{"enabledPlugins":{"fleet-lsp@fleet-lsp":true}}"#,
+    )
+    .unwrap();
+    let root = machine.root.join("relais");
+    fs::create_dir_all(root.join("agents")).unwrap();
+    fs::write(
+        root.join("agents/relais-worker-haiku-default.md"),
+        "---\nname: w\n---\n",
+    )
+    .unwrap();
+    fs::create_dir_all(machine.claude().join("plugins")).unwrap();
+    write_json(
+        &machine.claude().join("plugins/installed_plugins.json"),
+        &json!({"plugins": {"relais@relais": [{"installPath": root.display().to_string()}]}}),
+    );
+    let payload = |call: usize| {
+        json!({
+            "hook_event_name": "PreToolUse", "tool_name": "Grep",
+            "cwd": machine.root.display().to_string(), "session_id": format!("sess{call}"),
+            "permission_mode": "default",
+            "agent_id": "w1", "agent_type": "relais:relais-worker-haiku-default",
+            "tool_input": {"pattern": "fn agent_type", "path": "."},
+        })
+        .to_string()
+    };
+    let call = |number: usize| {
+        let mut child = machine
+            .command()
+            .arg("hook")
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload(number).as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    };
+    let failed = machine.claude().join(names::MIGRATE_FAILED_MARKER);
+    let first = call(0);
+    assert!(
+        is_deny(&first),
+        "{} / {} / {:?}",
+        stdout(&first),
+        stderr(&first),
+        fs::read_to_string(&failed)
+    );
+    let note = fs::read_to_string(&failed).expect("the first call attempts and fails");
+    let modified = fs::metadata(&failed).unwrap().modified().unwrap();
+    for number in 1..50 {
+        assert!(is_deny(&call(number)));
+    }
+    assert_eq!(fs::read_to_string(&failed).unwrap(), note);
+    assert_eq!(fs::metadata(&failed).unwrap().modified().unwrap(), modified);
+    assert!(!machine.done_marker().exists());
+}

@@ -147,6 +147,54 @@ pub fn forget() {
     }
 }
 
+/// A `--get-regexp` pattern matching the keys under the new prefix and
+/// under the old one, so one spawn per scope answers both.
+fn both_prefixes_pattern() -> String {
+    let escaped = |prefix: &str| prefix.replace('.', "\\.");
+    format!(
+        "^({}|{})",
+        escaped(crate::names::CONFIG_PREFIX),
+        escaped(crate::names::old::CONFIG_PREFIX)
+    )
+}
+
+/// Whether the migration's done-marker exists on this machine, resolved
+/// against the process environment once (a hook pays one stat per read at
+/// most, and only when a new key is absent).
+fn migration_done() -> bool {
+    static ENV: OnceLock<Option<crate::migrate::Env>> = OnceLock::new();
+    ENV.get_or_init(crate::migrate::Env::from_process)
+        .as_ref()
+        .is_some_and(crate::migrate::done)
+}
+
+/// The key to read in one snapshot: `key` itself when it is present, or
+/// when the migration is done; otherwise its old-name twin when that is
+/// present. `migrated` is asked only when `key` is absent.
+fn effective_key(
+    keys: &[(String, Option<String>)],
+    key: &str,
+    migrated: &dyn Fn() -> bool,
+) -> String {
+    let want = canonical(key);
+    if keys.iter().any(|(k, _)| canonical(k) == want) {
+        return key.to_string();
+    }
+    let Some(rest) = key.strip_prefix(PREFIX) else {
+        return key.to_string();
+    };
+    if migrated() {
+        return key.to_string();
+    }
+    let old_key = format!("{}{rest}", crate::names::old::CONFIG_PREFIX);
+    let old_want = canonical(&old_key);
+    if keys.iter().any(|(k, _)| canonical(k) == old_want) {
+        old_key
+    } else {
+        key.to_string()
+    }
+}
+
 fn snapshot_of(scope: &str) -> Snapshot {
     let Some(out) = git::output(&[
         "config",
@@ -154,7 +202,7 @@ fn snapshot_of(scope: &str) -> Snapshot {
         "--includes",
         "--null",
         "--get-regexp",
-        &crate::names::config_pattern(""),
+        &both_prefixes_pattern(),
     ]) else {
         // Git did not run: every key takes its default, as before.
         return Snapshot::Keys(Vec::new());
@@ -217,32 +265,40 @@ fn canonical(key: &str) -> String {
     }
 }
 
-/// What one scope says about `key`, untyped: the LAST value, as `--get`.
-fn lookup(scope_index: usize, scope: &str, key: &str) -> Value<Option<String>> {
+/// What one scope says about `key`, untyped: the LAST value, as `--get`,
+/// and the key it was found under (the old name, before the migration, when
+/// the new one is absent).
+fn lookup(scope_index: usize, scope: &str, key: &str) -> (String, Value<Option<String>>) {
     let Ok(mut all) = snapshots().lock() else {
-        return Value::Unset;
+        return (key.to_string(), Value::Unset);
     };
     fill(&mut all);
     let snap = all[scope_index].get_or_insert_with(|| snapshot_of(scope));
     match snap {
-        Snapshot::Refused(why) => Value::Bad { why: why.clone() },
+        Snapshot::Refused(why) => (key.to_string(), Value::Bad { why: why.clone() }),
         Snapshot::Keys(keys) => {
-            let want = canonical(key);
-            match keys.iter().rev().find(|(k, _)| canonical(k) == want) {
+            let used = effective_key(keys, key, &migration_done);
+            let want = canonical(&used);
+            let found = match keys.iter().rev().find(|(k, _)| canonical(k) == want) {
                 Some((_, v)) => Value::Set(v.clone()),
                 None => Value::Unset,
-            }
+            };
+            (used, found)
         }
     }
 }
 
 /// Every value `key` has in one snapshot, in file order. A valueless entry
 /// is the empty string. A refused scope is the mistake git reported.
-fn values_in(snap: &Snapshot, key: &str) -> Result<Vec<String>, String> {
+fn values_in(
+    snap: &Snapshot,
+    key: &str,
+    migrated: &dyn Fn() -> bool,
+) -> Result<Vec<String>, String> {
     match snap {
         Snapshot::Refused(why) => Err(why.clone()),
         Snapshot::Keys(keys) => {
-            let want = canonical(key);
+            let want = canonical(&effective_key(keys, key, migrated));
             Ok(keys
                 .iter()
                 .filter(|(k, _)| canonical(k) == want)
@@ -300,7 +356,7 @@ pub fn values(key: &str) -> Vec<String> {
             };
             fill(&mut all);
             let snap = all[index].get_or_insert_with(|| snapshot_of(scope));
-            values_in(snap, key)
+            values_in(snap, key, &migration_done)
         };
         match answer {
             Ok(found) => raw.extend(found),
@@ -320,10 +376,11 @@ pub fn values(key: &str) -> Vec<String> {
 /// that IS set still asks git, so git alone parses the dialect; the common
 /// case — the key is unset — costs no spawn at all.
 fn read_cached(scope_index: usize, scope: &str, key: &str, ty: Option<&str>) -> Value<String> {
-    match lookup(scope_index, scope, key) {
+    let (used, found) = lookup(scope_index, scope, key);
+    match found {
         Value::Unset => Value::Unset,
         Value::Bad { why } => Value::Bad { why },
-        Value::Set(_) if ty.is_some() => ask_git(scope, key, ty),
+        Value::Set(_) if ty.is_some() => ask_git(scope, &used, ty),
         // A valueless key reads as the empty string, as `--get` prints it.
         Value::Set(v) => Value::Set(v.unwrap_or_default()),
     }
@@ -593,12 +650,12 @@ mod tests {
             ("greenpiste.r.denyAgents".into(), None),
         ]);
         assert_eq!(
-            values_in(&keys, "greenpiste.r.denyAgents"),
+            values_in(&keys, "greenpiste.r.denyAgents", &|| false),
             Ok(vec!["a".to_string(), "b*".to_string(), String::new()])
         );
         let refused = Snapshot::Refused("bad config".into());
         assert_eq!(
-            values_in(&refused, "greenpiste.r.denyAgents"),
+            values_in(&refused, "greenpiste.r.denyAgents", &|| false),
             Err("bad config".to_string())
         );
     }
@@ -623,5 +680,34 @@ mod tests {
         );
         assert_eq!(first_line(""), "git could not read the value");
         assert_eq!(first_line("   \n  "), "git could not read the value");
+    }
+
+    fn old_name(rest: &str) -> String {
+        format!("{}{rest}", crate::names::old::CONFIG_PREFIX)
+    }
+
+    fn keys_of(entries: &[(String, &str)]) -> Snapshot {
+        Snapshot::Keys(
+            entries
+                .iter()
+                .map(|(k, v)| (k.clone(), Some(v.to_string())))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn an_old_key_answers_only_while_the_new_one_is_absent_and_unmigrated() {
+        let old_only = keys_of(&[(old_name("r.denyAgents"), "a")]);
+        let key = "greenpiste.r.denyAgents";
+        assert_eq!(
+            values_in(&old_only, key, &|| false),
+            Ok(vec!["a".to_string()])
+        );
+        assert_eq!(values_in(&old_only, key, &|| true), Ok(Vec::new()));
+        let both = keys_of(&[
+            (old_name("r.denyAgents"), "a"),
+            ("greenpiste.r.denyAgents".to_string(), "b"),
+        ]);
+        assert_eq!(values_in(&both, key, &|| false), Ok(vec!["b".to_string()]));
     }
 }

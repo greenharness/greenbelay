@@ -113,6 +113,43 @@ fn io_error(what: impl Into<String>) -> impl FnOnce(io::Error) -> MigrateError {
     move |source| MigrateError::Io { what, source }
 }
 
+/// Whether the migration's done-marker exists.
+pub fn done(env: &Env) -> bool {
+    exists(&env.marker(names::MIGRATE_DONE_MARKER))
+}
+
+/// What the markers say, read-only.
+pub struct MarkerState {
+    /// The done-marker's text (the wall time of the run, in milliseconds).
+    pub done: Option<String>,
+    pub reversed: bool,
+    /// The failed-marker's text.
+    pub failed: Option<String>,
+}
+
+pub fn marker_state(env: &Env) -> MarkerState {
+    MarkerState {
+        done: fs::read_to_string(env.marker(names::MIGRATE_DONE_MARKER))
+            .ok()
+            .map(|text| text.trim().to_string()),
+        reversed: exists(&env.marker(names::MIGRATE_REVERSED_MARKER)),
+        failed: failure_note(env),
+    }
+}
+
+/// The old-name state roots that are real directories (not the symlinks the
+/// migration leaves behind), read-only.
+pub fn old_roots(env: &Env) -> Vec<PathBuf> {
+    StateDirectories::roots(env)
+        .into_iter()
+        .map(|(old_path, _)| old_path)
+        .filter(|path| {
+            path.symlink_metadata()
+                .is_ok_and(|meta| meta.is_dir() && !meta.file_type().is_symlink())
+        })
+        .collect()
+}
+
 /// What the failed-marker says, when one exists.
 pub fn failure_note(env: &Env) -> Option<String> {
     fs::read_to_string(env.marker(names::MIGRATE_FAILED_MARKER)).ok()
@@ -169,6 +206,10 @@ pub fn machine_plan(env: &Env, direction: Direction) -> Result<Vec<String>, Migr
 /// every error is swallowed. Returns whether a failed-marker is waiting, so a
 /// caller that may talk can say the migration is pending.
 pub fn preflight() -> bool {
+    // `doctor` drives the hook as a probe and promises to write nothing.
+    if std::env::var_os(crate::journal::ENV_PROBE).is_some() {
+        return false;
+    }
     let attempted = std::panic::catch_unwind(|| {
         if let Some(env) = Env::from_process() {
             if nothing_old(&env) {

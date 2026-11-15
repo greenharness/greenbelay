@@ -9,6 +9,7 @@
 //! So the reader takes `--global` then `--system`, and these tests hold that
 //! line from outside the binary, against real `git config` files.
 
+use greenpiste_guard::names::{self, old};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -59,6 +60,9 @@ impl Fixture {
         let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
             .arg("status")
             .current_dir(self.repo())
+            .env("HOME", self.dir.join("home"))
+            .env("XDG_STATE_HOME", self.dir.join("state"))
+            .env("XDG_CONFIG_HOME", self.dir.join("xdg-config"))
             .env("CLAUDE_CONFIG_DIR", self.dir.join("claude"))
             .env("GIT_CONFIG_GLOBAL", self.dir.join("global"))
             .env("GIT_CONFIG_SYSTEM", self.dir.join("system"))
@@ -440,6 +444,9 @@ impl Fixture {
         let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
             .arg("hook")
             .current_dir(&repo)
+            .env("HOME", self.dir.join("home"))
+            .env("XDG_STATE_HOME", self.dir.join("state"))
+            .env("XDG_CONFIG_HOME", self.dir.join("xdg-config"))
             .env("CLAUDE_CONFIG_DIR", &claude)
             .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
             .env("GIT_CONFIG_GLOBAL", self.dir.join("global"))
@@ -458,5 +465,67 @@ impl Fixture {
             .expect("payload");
         let out = child.wait_with_output().expect("the hook exits");
         String::from_utf8_lossy(&out.stdout).contains("\"deny\"")
+    }
+}
+
+/// Before the migration's done-marker exists, a hook still answers to the
+/// old `amont.agent.*` keys when the new ones are absent.
+mod before_migration {
+    use super::*;
+
+    const RULE: &str = "git-add-broad";
+
+    fn old_key(rest: &str) -> String {
+        format!("{}{rest}", old::CONFIG_PREFIX)
+    }
+
+    fn new_key(rest: &str) -> String {
+        format!("{}{rest}", names::CONFIG_PREFIX)
+    }
+
+    fn mark_done(f: &Fixture) {
+        let claude = f.dir.join("claude");
+        std::fs::create_dir_all(&claude).expect("claude dir");
+        std::fs::write(claude.join(names::MIGRATE_DONE_MARKER), "1\n").expect("done marker");
+    }
+
+    #[test]
+    fn an_old_key_alone_sets_the_stance() {
+        let f = Fixture::new("old-stance");
+        let default = f.stance_of(RULE);
+        assert_ne!(default, "advise", "the test needs a default that differs");
+        f.set("--global", &old_key("git-add-broad.stance"), "advise");
+        assert_eq!(f.stance_of(RULE), "advise");
+    }
+
+    #[test]
+    fn the_new_key_wins_over_the_old_one() {
+        let f = Fixture::new("new-wins");
+        f.set("--global", &old_key("git-add-broad.stance"), "advise");
+        f.set("--global", &new_key("git-add-broad.stance"), "deny");
+        assert_eq!(f.stance_of(RULE), "deny");
+    }
+
+    #[test]
+    fn once_migrated_an_old_key_is_ignored() {
+        let f = Fixture::new("old-ignored");
+        let default = f.stance_of(RULE);
+        f.set("--global", &old_key("git-add-broad.stance"), "advise");
+        mark_done(&f);
+        assert_eq!(f.stance_of(RULE), default);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_old_multi_valued_deny_agents_is_honoured_until_migrated() {
+        let f = Fixture::new("old-deny-agents");
+        let key = old_key("symbol-grep-not-lsp.denyAgents");
+        f.set("--global", &key, "relais:relais-worker-haiku-*");
+        assert!(f.denies_haiku(), "an old denyAgents was not read");
+        mark_done(&f);
+        assert!(
+            !f.denies_haiku(),
+            "an old denyAgents was read after the migration"
+        );
     }
 }

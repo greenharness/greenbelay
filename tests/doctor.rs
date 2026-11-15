@@ -6,7 +6,9 @@
 //! produce identical evidence. Every test here sets up one of those states and
 //! insists `doctor` distinguishes it.
 
-use std::path::PathBuf;
+use greenpiste_guard::names::{self, old};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 struct Home(PathBuf);
@@ -34,8 +36,12 @@ impl Home {
             .args(args)
             .current_dir(&self.0)
             .env("CLAUDE_CONFIG_DIR", &self.0)
+            .env("HOME", self.0.join("home"))
+            .env("XDG_CONFIG_HOME", self.0.join("xdg-config"))
             // The plugin's state goes beside the scratch config, never to a real XDG state home.
-            .env_remove("XDG_STATE_HOME")
+            .env("XDG_STATE_HOME", self.0.join("state"))
+            .env("GIT_CONFIG_GLOBAL", self.0.join("home").join(".gitconfig"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .env_remove("GREENPISTE_OFF")
             .output()
             .expect("the binary runs");
@@ -851,4 +857,162 @@ fn doctor_reports_the_opener_and_warns_when_its_program_is_missing() {
     );
     let unset = opener_doctor_line(&home_dir, "unset", None);
     assert!(unset.contains("(platform default)"), "{unset}");
+}
+
+/// Everything under `dir`, files by content and links by target.
+fn tree(dir: &Path, into: &mut BTreeMap<String, Vec<u8>>) {
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+        let key = path.display().to_string();
+        if meta.file_type().is_symlink() {
+            into.insert(
+                key,
+                std::fs::read_link(&path)
+                    .unwrap()
+                    .display()
+                    .to_string()
+                    .into_bytes(),
+            );
+        } else if meta.is_dir() {
+            into.insert(format!("{key}/"), Vec::new());
+            tree(&path, into);
+        } else {
+            into.insert(key, std::fs::read(&path).unwrap());
+        }
+    }
+}
+
+impl Home {
+    /// An old-style machine inside the scratch directory: old config root,
+    /// old state root, an old plugin registration and an old git config key.
+    fn old_style(&self) -> &Home {
+        std::fs::create_dir_all(self.0.join(old::DATA_DIR)).unwrap();
+        std::fs::create_dir_all(self.0.join("state").join(old::DATA_DIR)).unwrap();
+        std::fs::create_dir_all(self.0.join("home")).unwrap();
+        let id = format!("clear-relay@{}", old::DATA_DIR);
+        std::fs::write(
+            self.settings(),
+            serde_json::to_string_pretty(&serde_json::json!({"enabledPlugins": {id: true}}))
+                .unwrap()
+                + "\n",
+        )
+        .unwrap();
+        let status = Command::new("git")
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .args(["config", "--file"])
+            .arg(self.0.join("home").join(".gitconfig"))
+            .arg(format!("{}git-add-broad.stance", old::CONFIG_PREFIX))
+            .arg("advise")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        self
+    }
+
+    fn doctor_with_old_variable(&self) -> (i32, String) {
+        let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+            .arg("doctor")
+            .current_dir(&self.0)
+            .env("CLAUDE_CONFIG_DIR", &self.0)
+            .env("HOME", self.0.join("home"))
+            .env("XDG_CONFIG_HOME", self.0.join("xdg-config"))
+            .env("XDG_STATE_HOME", self.0.join("state"))
+            .env("GIT_CONFIG_GLOBAL", self.0.join("home").join(".gitconfig"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env(format!("{}OFF", old::ENV_PREFIX), "secret-value")
+            .env_remove("GREENPISTE_OFF")
+            .output()
+            .expect("the binary runs");
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into_owned()
+                + &String::from_utf8_lossy(&out.stderr),
+        )
+    }
+}
+
+#[test]
+fn doctor_lists_each_thing_the_migration_left_with_its_fix_and_changes_nothing() {
+    let h = Home::new("migration-old");
+    h.old_style();
+    let before = {
+        let mut t = BTreeMap::new();
+        tree(&h.0, &mut t);
+        t
+    };
+    let (_, out) = h.doctor_with_old_variable();
+    let after = {
+        let mut t = BTreeMap::new();
+        tree(&h.0, &mut t);
+        t
+    };
+    assert_eq!(before, after, "doctor wrote to the tree");
+    let fix = "greenpiste migrate";
+    let line_with = |needle: &str| {
+        out.lines()
+            .find(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("no line with {needle:?} in:\n{out}"))
+            .to_string()
+    };
+    for needle in [
+        old::DATA_DIR,
+        &*format!("{}git-add-broad.stance", old::CONFIG_PREFIX),
+        "old plugin registration",
+    ] {
+        let line = line_with(needle);
+        assert!(line.contains(fix), "{line}");
+    }
+    let variable = line_with(&format!("{}OFF", old::ENV_PREFIX));
+    assert!(
+        variable.contains(&format!("{}OFF", names::ENV_PREFIX)),
+        "{variable}"
+    );
+    assert!(!out.contains("secret-value"), "{out}");
+}
+
+#[test]
+fn doctor_reports_the_markers() {
+    let h = Home::new("migration-markers");
+    std::fs::write(
+        h.0.join(names::MIGRATE_FAILED_MARKER),
+        "git config keys\nno way\n",
+    )
+    .unwrap();
+    let (_, out) = h.run(&["doctor"]);
+    assert!(out.contains("migration failed earlier"), "{out}");
+    assert!(out.contains("no way"), "{out}");
+    std::fs::remove_file(h.0.join(names::MIGRATE_FAILED_MARKER)).unwrap();
+    std::fs::write(h.0.join(names::MIGRATE_REVERSED_MARKER), "").unwrap();
+    let (_, out) = h.run(&["doctor"]);
+    assert!(out.contains("migration was reversed"), "{out}");
+}
+
+#[test]
+fn doctor_on_a_migrated_tree_has_nothing_to_report() {
+    let h = Home::new("migration-done");
+    h.old_style();
+    let migrated = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        .arg("migrate")
+        .current_dir(&h.0)
+        .env("CLAUDE_CONFIG_DIR", &h.0)
+        .env("HOME", h.0.join("home"))
+        .env("XDG_CONFIG_HOME", h.0.join("xdg-config"))
+        .env("XDG_STATE_HOME", h.0.join("state"))
+        .env("GIT_CONFIG_GLOBAL", h.0.join("home").join(".gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env_remove("GREENPISTE_OFF")
+        .output()
+        .unwrap();
+    assert!(migrated.status.success(), "{migrated:?}");
+    let (_, out) = h.run(&["doctor"]);
+    let line = out
+        .lines()
+        .find(|l| l.contains("migration"))
+        .unwrap_or_else(|| panic!("no migration line in:\n{out}"));
+    assert!(line.contains("nothing left"), "{line}");
+    assert!(!out.contains("old state directory"), "{out}");
+    assert!(!out.contains("old git config key"), "{out}");
 }

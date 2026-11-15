@@ -28,6 +28,7 @@ use std::process::Command;
 use crate::ui;
 
 use crate::journal;
+use crate::names;
 use crate::rules;
 use crate::settings;
 use crate::stance;
@@ -91,6 +92,7 @@ pub fn run(table: &[rules::Rule], extra: Option<Finding>, found: &Scan) -> Vec<F
     out.push(journal_span());
     out.push(lsp_rules());
     out.extend(shadow_settings(table));
+    out.extend(migration());
     out.extend(extra);
     out
 }
@@ -357,6 +359,81 @@ pub fn integration(found: &Scan) -> Integration {
             missing,
         }
     }
+}
+
+/// What the 5.0 migration has left, read-only: this never migrates, takes
+/// no lock and writes nothing.
+fn migration() -> Vec<Finding> {
+    let variables: Vec<String> = std::env::vars_os()
+        .filter_map(|(name, _)| {
+            let name = name.to_string_lossy().into_owned();
+            name.starts_with(names::old::ENV_PREFIX).then_some(name)
+        })
+        .collect();
+    let env = crate::migrate::Env::from_process();
+    migration_findings(env.as_ref(), &variables)
+}
+
+fn migration_findings(env: Option<&crate::migrate::Env>, variables: &[String]) -> Vec<Finding> {
+    let fix = format!("{} migrate", names::PRODUCT);
+    let mut lines: Vec<String> = Vec::new();
+    if let Some(env) = env {
+        let markers = crate::migrate::marker_state(env);
+        if let Some(note) = markers.failed {
+            lines.push(format!(
+                "migration failed earlier: {}; run {fix}",
+                note.trim().replace('\n', ": ")
+            ));
+        }
+        if markers.reversed {
+            lines.push(format!("migration was reversed; run {fix} to redo it"));
+        }
+        for root in crate::migrate::old_roots(env) {
+            lines.push(format!(
+                "old state directory {} is still a directory; run {fix}",
+                root.display()
+            ));
+        }
+        for (key, file) in crate::migrate_config::old_keys(env) {
+            lines.push(format!(
+                "old git config key {key} in {}; run {fix}",
+                file.display()
+            ));
+        }
+        if let Some(settings) = crate::migrate_plugin::old_registration(env) {
+            lines.push(format!(
+                "old plugin registration in {}; run {fix}",
+                settings.display()
+            ));
+        }
+    }
+    for name in variables {
+        let rest = name.strip_prefix(names::old::ENV_PREFIX).unwrap_or(name);
+        lines.push(format!(
+            "old environment variable {name} is set; set {}{rest} instead",
+            names::ENV_PREFIX
+        ));
+    }
+    let done = env.and_then(|env| crate::migrate::marker_state(env).done);
+    if lines.is_empty() {
+        return vec![Finding::good(match done {
+            Some(wall) => format!("migration: done in {wall} ms, nothing left"),
+            None => "migration: nothing left over".to_string(),
+        })];
+    }
+    let mut out: Vec<Finding> = Vec::new();
+    if let Some(wall) = done {
+        out.push(Finding::good(format!(
+            "migration marker: done in {wall} ms"
+        )));
+    }
+    out.extend(lines.into_iter().map(|line| Finding {
+        ok: false,
+        advisory: true,
+        line,
+        detail: None,
+    }));
+    out
 }
 
 /// Whether no finding is a failure; advisories do not count.

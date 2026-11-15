@@ -12,6 +12,15 @@
   following `include` and `includeIf` whether or not the condition holds).
   Each key is copied, read back, and only then removed, so an interrupted run
   loses nothing and a re-run adds nothing; `--reverse` puts the old keys back.
+- **`doctor` reports what the migration left**, read-only: the markers (done
+  with its wall time, reversed, failed with its text), old state directories,
+  old `amont.agent.*` keys with their file, old environment variables (by
+  name, never value) and an old plugin registration. Each line ends with the
+  command that fixes it.
+- **Until a machine is migrated, a hook still reads the old `amont.agent.*`
+  keys** when the new `greenpiste.*` ones are absent, so a failed migration
+  step does not lose stances or `denyAgents`. The new key wins when both
+  exist, and once the done-marker exists the old keys are never read.
 - **`greenpiste migrate [--reverse] [--dry-run]`** runs the migration by hand:
   it waits up to 30 seconds for the lock, prints a line per step and a last
   line (`migrated N steps in X.Xs`, `already migrated`, `reversed` or `already

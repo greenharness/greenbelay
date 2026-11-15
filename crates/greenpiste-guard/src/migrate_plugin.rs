@@ -80,6 +80,19 @@ fn sides(env: &Env, direction: Direction) -> (Side, Side) {
     }
 }
 
+/// The `settings.json` that still registers the plugin under the old
+/// marketplace id, when there is one. Read-only; a file that is missing or
+/// does not parse reports nothing.
+pub fn old_registration(env: &Env) -> Option<PathBuf> {
+    let path = env.config_dir.join(SETTINGS_FILE);
+    let raw = fs::read_to_string(&path).ok()?;
+    let Value::Object(root) = serde_json::from_str::<Value>(&raw).ok()? else {
+        return None;
+    };
+    let (old_side, _) = sides(env, Direction::Forward);
+    old_side.registered(&root).then_some(path)
+}
+
 /// One file to write, and the line that says so.
 struct Edit {
     path: PathBuf,
