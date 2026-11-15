@@ -1,5 +1,5 @@
 ---
-status: done
+status: done              # live checks open to 2026-12-19 (see Verification)
 branch: feat/plan-id
 repos: [relais, amont-agent, greenharness-skills, grh, decisions]
 adrs: [ADR-0070, ADR-0039]
@@ -210,6 +210,13 @@ Shipped and installed here on 2026-11-15:
 - greenpiste 4.3.0 (#264, #265);
 - skills 0.9.0 (skills#25) and grh 0.6.2 (grh#42);
 - the decisions map (decisions#207).
+
+Records:
+- relais 0.63.0 and greenpiste 4.3.0 were installed via brew, and skills 0.9.0 via grh 0.6.2 and `grh install workflow --yes`, all on 2026-11-15.
+- Phase 6 check: `relais programme check docs/programmes/time-to-done` exited 0 in decisions on 2026-11-15, before decisions#207.
+- The data-names session was told at release (2026-11-15, in a session message). Its rebase carries `plan_id`, `plan.counts` and the new store directories.
+- Tests named by the plan, all passing in the 1,953-test run: `plan_panel_assigns_a_plan_id_once_and_keeps_stdout` (tests/plan_review.rs) and `a_landed_plan_with_a_plan_id_resolves_from_its_own_rows` (tests/plan_time.rs).
+- Deferrals: the deliberate lows are listed under B9 in decisions `docs/programmes/time-to-done/map.md`. They end when that follow-up is built, at the latest before the 2026-12-19 done check.
 
 Live checks:
 - `plan-panel` on a scratch plan wrote `plan-id: p-01M7G5NH…` into its front matter, and a second run left the file byte-identical;
