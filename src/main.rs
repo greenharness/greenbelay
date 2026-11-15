@@ -391,7 +391,9 @@ fn main() -> ExitCode {
     // process: the hook then exits 141 and its decision is lost. Both keep
     // SIGPIPE ignored, so the write fails as an error the caller handles;
     // `board` already treats EPIPE on its own output as a quiet exit.
-    // `suppressions` feeds `git cat-file` the same way.
+    // `suppressions` feeds `git cat-file` the same way. `plan-review` keeps
+    // it ignored so that `plan-review stats … | head` ends on EPIPE with the
+    // command's own exit code, not by the signal (141).
     if !matches!(
         invocation,
         Invocation::Sub {
@@ -499,11 +501,13 @@ fn main() -> ExitCode {
             Sub::PlanReview => {
                 let (said, code) = review_outcomes::run(&args);
                 // `print!` panics on a closed pipe (exit 101); a reader that
-                // stops early (`| head`) is not a failure.
+                // stops early (`| head`) is not a failure of its own, so the
+                // command keeps its own exit code, success or failure.
                 use std::io::Write as _;
-                match std::io::stdout().write_all(said.as_bytes()) {
+                let mut out = std::io::stdout().lock();
+                match out.write_all(said.as_bytes()).and_then(|()| out.flush()) {
                     Ok(()) => code,
-                    Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
+                    Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => code,
                     Err(e) => {
                         eprintln!(
                             "{}: plan-review: cannot write output: {e}",
@@ -2485,14 +2489,18 @@ fn run_plan_panel(args: &[OsString]) -> ExitCode {
     }
     match plan_review::panel(std::path::Path::new(file)) {
         Ok(p) => {
+            if let Some(note) = &p.id_note {
+                eprintln!("{BIN}: plan-panel: {note}");
+            }
             let areas = p.classes.iter().cloned().collect::<Vec<_>>().join(",");
             println!(
-                "repos={} areas={} body={} panel={} seats={}",
+                "repos={} areas={} body={} panel={} seats={} {}",
                 p.repos,
                 if areas.is_empty() { "-" } else { &areas },
                 &p.sha[..12],
                 p.mode,
-                p.source.as_str()
+                p.source.as_str(),
+                p.counts
             );
             if let Some(advice) = &p.advice {
                 eprintln!("{BIN}: plan-panel: {advice}");

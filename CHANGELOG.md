@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Added
+
+- **Every plan gets an id.** `plan-panel` writes `plan-id: p-<ULID>` into
+  the plan's front matter when it has none, so the next plan written to a
+  reused `~/.claude/plans` file is a plan of its own. The front matter is
+  outside `body_sha`, so no review goes stale. When the person approves
+  ExitPlanMode (PostToolUse), the id is retired, and the next `plan-panel`
+  on another body gives the file a new one; a rejection keeps it.
+  - Ledger rows carry `plan_id`; `round` and `first_round_sha` count within
+    it, in ledger order. Rows of a plan with no id keep the per-path rule.
+  - The panel/hook baseline accepts an older body (by path or by title)
+    only for the same `plan_id`, so a new plan in a reused file gets a full
+    panel from both `plan-panel` and the ExitPlanMode hook.
+  - `stats --time` keys a landed plan with `plan-id:` to its own rows.
+  - New stores: `plan-review/approved/<id>.json`
+    (`greenpiste-plan-approval-v1`, written before the ledger lock) and
+    `plan-review/ids/<body_sha>.json` (`greenpiste-plan-id-v1`).
+- **`plan-panel` counts the plan.** Its first line ends with one token,
+  `counts=repos:…,phases:…,prs:…,releases:…,person:…,words:…,merge-candidates:…`;
+  agent lines still start on line 2. Rows store it in `plan.counts`.
+
+### Fixed
+
+- `stats --time`: a span with `done` before `start` counts each interval
+  once; stops, questions, PRs and releases count for a plan only inside
+  its span; exclusion labels are separated by commas.
+- `plan-review` output keeps the command's exit code on a closed pipe, and
+  is flushed.
+
 ## v4.2.0
 
 ### Added

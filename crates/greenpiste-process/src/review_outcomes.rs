@@ -8,7 +8,9 @@
 //! plan file keeps changing and the ledger holds only the sha.
 
 use greenpiste_guard::names::BIN;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::plan_id::PlanId;
 use std::ffi::OsString;
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -498,6 +500,14 @@ fn hook_note(outcome: &str, session: &str, excerpt: &str) {
 pub fn on_plan_answered(ev: &greenpiste_guard::payload::PlanAnswered) {
     let Some(plan) = &ev.plan_file else { return };
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // An approval retires the plan's id, so the next plan written to this
+        // file gets its own. It is written first, to its own file and without
+        // the ledger lock, so the lock's `skipped` path below never loses it.
+        // A failure is reported on stderr only: the hook's exit and stdout
+        // stay as they were.
+        if ev.approved {
+            record_approval(plan);
+        }
         let store = prepare_store()?;
         let held = match lock_within(&store.join(LOCK_FILE), HOOK_LOCK_BUDGET) {
             Ok(l) => l,
@@ -523,6 +533,33 @@ pub fn on_plan_answered(ev: &greenpiste_guard::payload::PlanAnswered) {
         Ok(Ok(())) => {}
         Ok(Err(why)) => hook_note("error", &ev.session, &why),
         Err(_) => hook_note("error", &ev.session, "record panicked"),
+    }
+}
+
+/// Records the person's approval of the plan file's id (see
+/// [`crate::plan_id`]). Failures go to stderr, never to the hook's result.
+fn record_approval(plan: &Path) {
+    use std::io::Write as _;
+    let said = |what: String| {
+        let _ = writeln!(std::io::stderr(), "{BIN}: plan-review: {what}");
+    };
+    let text = match std::fs::read_to_string(plan) {
+        Ok(text) => text,
+        Err(e) => {
+            said(format!(
+                "could not record approval: cannot read {}: {e}",
+                plan.display()
+            ));
+            return;
+        }
+    };
+    let Some(id) = crate::plan_id::read(&text) else {
+        return;
+    };
+    if let Err(e) = crate::plan_id::approve(&id, &crate::plan_text::body_sha(&text)) {
+        said(format!(
+            "could not record approval of {id}: {e}. The next plan in this file will reuse the id; delete the plan-id: line to start a new one."
+        ));
     }
 }
 
@@ -567,18 +604,29 @@ pub fn read_rows(path: &Path) -> std::io::Result<Vec<serde_json::Value>> {
         .collect())
 }
 
-type Recorded = (BTreeSet<(String, String)>, Option<String>);
+/// What the ledger already holds, for [`record_locked`].
+struct Recorded {
+    /// The (review agent id, body sha) pairs on record.
+    reviewed: BTreeSet<(String, String)>,
+    /// The round-1 body an earlier call recorded for the plan path, among
+    /// the rows of a plan with no `plan_id`.
+    first_on_path: Option<String>,
+    /// Per `plan_id`, the bodies on record in ledger order (round 1 first).
+    by_id: BTreeMap<PlanId, Vec<String>>,
+}
 
 /// What the ledger already holds: the (review agent id, body sha) pairs on
 /// record, and the round-1 body an earlier call recorded for `plan`, if any.
 /// A torn line (a crash mid-append) is skipped, not fatal.
 fn recorded(path: &Path, plan: &str) -> std::io::Result<Recorded> {
     let rows = read_rows(path)?;
+    let is_review =
+        |v: &&serde_json::Value| v.get("schema").and_then(|s| s.as_str()) == Some(SCHEMA);
     // Only review rows: a merge row (`plan-apply`) has an `agent_id` too, and
     // must not make a reviewer look recorded.
-    let ids = rows
+    let reviewed = rows
         .iter()
-        .filter(|v| v.get("schema").and_then(|s| s.as_str()) == Some(SCHEMA))
+        .filter(is_review)
         .filter_map(|v| {
             Some((
                 v.get("agent_id")?.as_str()?.to_string(),
@@ -586,11 +634,54 @@ fn recorded(path: &Path, plan: &str) -> std::io::Result<Recorded> {
             ))
         })
         .collect();
-    let first = rows
+    let first_on_path = rows
         .iter()
         .filter(|v| v.get("plan_path").and_then(|p| p.as_str()) == Some(plan))
+        .filter(|v| v.get("plan_id").is_none_or(|p| p.is_null()))
         .find_map(|v| v.get("first_round_sha")?.as_str().map(str::to_string));
-    Ok((ids, first))
+    let mut by_id: BTreeMap<PlanId, Vec<String>> = BTreeMap::new();
+    for v in rows.iter().filter(is_review) {
+        let (Some(id), Some(sha)) = (
+            v.get("plan_id")
+                .and_then(|p| p.as_str())
+                .and_then(|p| PlanId::try_from(p).ok()),
+            v.get("body_sha").and_then(|b| b.as_str()),
+        ) else {
+            continue;
+        };
+        let list = by_id.entry(id).or_default();
+        if !list.iter().any(|b| b == sha) {
+            list.push(sha.to_string());
+        }
+    }
+    Ok(Recorded {
+        reviewed,
+        first_on_path,
+        by_id,
+    })
+}
+
+/// Where a body sits: its plan, its round within it, and that plan's
+/// round-1 body.
+#[derive(Clone)]
+struct Placement {
+    plan_id: Option<PlanId>,
+    round: usize,
+    first: String,
+}
+
+/// The saved body of `plan_id`'s round 1, when the ledger has one.
+pub(crate) fn round1_body(plan_id: &PlanId) -> Option<String> {
+    let store = greenpiste_guard::journal::dir()?.join("plan-review");
+    let rows = read_rows(&store.join("outcomes.jsonl")).ok()?;
+    let sha = rows
+        .iter()
+        .filter(|v| v.get("schema").and_then(|s| s.as_str()) == Some(SCHEMA))
+        .find(|v| v.get("plan_id").and_then(|p| p.as_str()) == Some(plan_id.as_str()))?
+        .get("first_round_sha")?
+        .as_str()?
+        .to_string();
+    std::fs::read_to_string(store.join("bodies").join(format!("{sha}.md"))).ok()
 }
 
 /// The plan-review store under the journal directory, with its `bodies`
@@ -662,15 +753,57 @@ fn record_locked(
     };
     let bodies = store.join("bodies");
     let ledger = store.join("outcomes.jsonl");
-    let (mut seen, first_on_record) =
-        recorded(&ledger, &real).map_err(io(&format!("cannot read {}", ledger.display())))?;
-    // Round 1 is the first body the LEDGER saw for this plan, so a review
-    // that spans sessions keeps one round-1 body to diff against.
-    // holds-until: `round` is still counted within this transcript; a plan
-    // reviewed across sessions gets a second round 1 until rounds are
-    // numbered from the ledger too.
+    let Recorded {
+        reviewed: mut seen,
+        first_on_path,
+        mut by_id,
+    } = recorded(&ledger, &real).map_err(io(&format!("cannot read {}", ledger.display())))?;
     let before = seen.clone();
-    let first_round_sha = first_on_record.unwrap_or_else(|| shas[0].to_string());
+    // A body with no plan id (written before 4.3.0) keeps the per-path rule:
+    // round 1 is the first body the LEDGER saw for this path, so a review
+    // that spans sessions keeps one round-1 body to diff against.
+    // holds-until: for these rows `round` is still counted within this
+    // transcript; such a plan reviewed across sessions gets a second round 1.
+    // A body with an id is placed within its plan, below.
+    let first_round_sha = first_on_path.unwrap_or_else(|| shas[0].to_string());
+    // A body's plan: the id `plan-panel` mapped it to; on a map miss, the
+    // file's own live `plan-id:`, only when the file still holds that body.
+    let file_id = crate::plan_id::live(&text);
+    let id_of = |sha: &str| {
+        crate::plan_id::id_for_body(sha)
+            .or_else(|| (sha == plan_sha).then(|| file_id.clone()).flatten())
+    };
+    // Per body: its plan id, and its round and round-1 body within that plan
+    // (the ledger's bodies of the id first, then this transcript's, in order).
+    let mut placed: BTreeMap<String, Placement> = BTreeMap::new();
+    for sha in &shas {
+        let placement = match id_of(sha) {
+            Some(id) => {
+                let list = by_id.entry(id.clone()).or_default();
+                if !list.iter().any(|b| b == sha) {
+                    list.push(sha.to_string());
+                }
+                Placement {
+                    round: list.iter().position(|b| b == sha).map_or(1, |i| i + 1),
+                    first: list[0].clone(),
+                    plan_id: Some(id),
+                }
+            }
+            None => Placement {
+                plan_id: None,
+                round: round_of(sha),
+                first: first_round_sha.clone(),
+            },
+        };
+        placed.insert(sha.to_string(), placement);
+    }
+    let place = |sha: &str| {
+        placed.get(sha).cloned().unwrap_or(Placement {
+            plan_id: None,
+            round: round_of(sha),
+            first: first_round_sha.clone(),
+        })
+    };
 
     // A row describes the body its reviewer read: the current file when it
     // is that body, else the copy an earlier call saved. A body that was
@@ -710,12 +843,19 @@ fn record_locked(
             "seat_classes": seated.as_ref().map(|s| json_list(&s.classes)),
             "repos": meta.as_ref().map(|m| json_list(&m.repos)).unwrap_or_else(|_| serde_json::json!([])),
             "body_lines": crate::plan_text::canonical(body).lines().count(),
+            // The `plan-panel` counts of this body, without its round-1
+            // words (a row's own body is what it describes).
+            "counts": meta.as_ref().ok().map(|m| plan_review::counts(body, &m.repos, None).to_json()),
         })
     };
 
     let at = now();
     let mut buffer = String::new();
-    let mut written: BTreeSet<usize> = BTreeSet::new();
+    // (round, body) of every row this call writes: a round counts within
+    // its plan id, so it no longer indexes the transcript's bodies.
+    let mut written: BTreeSet<(usize, String)> = BTreeSet::new();
+    // The row written last: the round `said` names.
+    let mut last_written: Option<(usize, String)> = None;
     let mut written_roles: BTreeSet<&str> = BTreeSet::new();
     let mut count = 0;
     // The findings on stdin are this call's merge: they belong to the
@@ -728,7 +868,7 @@ fn record_locked(
                 .as_ref()
                 .is_some_and(|id| !seen.contains(&(id.clone(), l.sha.clone())))
         })
-        .map(|l| round_of(&l.sha))
+        .map(|l| place(&l.sha).round)
         .max();
     for l in &found {
         let Some(id) = l.done.agent_id.as_ref() else {
@@ -737,7 +877,11 @@ fn record_locked(
         if !seen.insert((id.clone(), l.sha.clone())) {
             continue;
         }
-        let round = round_of(&l.sha);
+        let Placement {
+            plan_id,
+            round,
+            first,
+        } = place(&l.sha);
         let attach = Some(round) == attach_round;
         let mine: Vec<&serde_json::Value> = findings
             .iter()
@@ -764,7 +908,8 @@ fn record_locked(
             "seconds": l.done.duration_ms.map(|ms| ms as f64 / 1000.0),
             "round": round,
             "body_sha": l.sha,
-            "first_round_sha": first_round_sha,
+            "first_round_sha": first,
+            "plan_id": plan_id.as_ref().map(|id| id.as_str()),
             "plan_path": real,
             "plan": features(&l.sha),
             "verdict": verdict(&l.done.result),
@@ -777,7 +922,8 @@ fn record_locked(
         }
         buffer.push_str(&row.to_string());
         buffer.push('\n');
-        written.insert(round);
+        written.insert((round, l.sha.clone()));
+        last_written = Some((round, l.sha.clone()));
         if attach {
             written_roles.insert(l.role.as_str());
         }
@@ -834,8 +980,8 @@ fn record_locked(
         }
     }
 
-    for &round in &written {
-        let sha = shas[round - 1];
+    for (round, sha) in &written {
+        let (round, sha) = (*round, sha.as_str());
         if plan_sha != sha {
             eprintln!("body of round {round} not saved: the plan changed since it was reviewed");
             continue;
@@ -862,9 +1008,9 @@ fn record_locked(
         missing = true;
     }
 
-    let (round, sha) = match written.iter().next_back() {
-        Some(&r) => (r, shas[r - 1]),
-        None => (top, shas[top - 1]),
+    let (round, sha) = match &last_written {
+        Some((r, s)) => (*r, s.as_str()),
+        None => (place(shas[top - 1]).round, shas[top - 1]),
     };
     let mut said = if count > 0 {
         format!("wrote {count} rows (round {round}, plan {})\n", &sha[..12])
