@@ -24,6 +24,9 @@ usage: ",
        ",
     greenpiste_guard::bin!(),
     " plan-review stats [--json] [--model <id>]
+       ",
+    greenpiste_guard::bin!(),
+    " plan-review stats --time [--since <YYYY-MM-DD>] [--json]
 
 Append one row per completed plan-review reviewer of the plan to
 ~/.claude/greenpiste/plan-review/outcomes.jsonl, skipping agents already
@@ -54,9 +57,30 @@ reviews that predate finding parsing, seats whose verdict has no parsed
 finding, and plans whose hook record was skipped. --json prints one array;
 --model keeps one model.
 
+stats --time: each landed plan's time to done (ADR-0070). A plan is a
+docs/plans/*.md file with `branch:` in its front matter, in a repository under
+the plan root. Its start is the first panel round of its reviewed body (found
+by the machine comment's body-sha); done is the commit that sets `status:
+done`. Transcript entries are attributed by the worktree branch their cwd is
+on. One row per plan: elapsed, blocked (gates, tests, agents and relais calls
+the session waited on, overlaps counted once), person (gaps over 10 minutes
+ended by the person), stops and word growth since round 1; unfinished plans,
+the unattributed time and the exclusions follow, then a summary. Plans the
+ledger does not know are marked unreviewed and stay out of the medians.
+--since keeps the plans done on or after that day, and every unfinished one.
+--json prints one object with `schema`, `plans`, `unfinished`,
+`unattributed`, `exclusions` and `summary` (per plan also prs, releases,
+questions, resource hours and the sessions [{id, from, to}]). It reads only
+the transcripts, this ledger and git. Progress goes to stderr when it is a
+terminal and --json is off.
+
 Exit 0 when the ledger is up to date, 1 when a reviewer has no agent id, no
 transcript names the plan or the ledger cannot be written, 2 on a usage error
-(including malformed findings).
+(including malformed findings). stats --time exits 0 on a report (also with
+no plans), 1 when the plan root, the ledger or the transcripts cannot be read
+(one stderr line: `greenpiste: <what>: <path>: <reason>. Run: <command>`), 2 on
+a usage error: an unknown flag, a malformed --since, --model with --time, or
+--since without --time.
 "
 );
 
@@ -1304,6 +1328,15 @@ fn run_stats(args: &[String]) -> (String, ExitCode) {
         eprint!("{BIN}: {why}\n\n{USAGE}");
         (String::new(), ExitCode::from(2))
     };
+    if args.iter().any(|a| a == "--time") {
+        return crate::plan_time::run(args);
+    }
+    if args
+        .iter()
+        .any(|a| a == "--since" || a.starts_with("--since="))
+    {
+        return usage("--since applies only with --time");
+    }
     let (mut json, mut model) = (false, None::<String>);
     let mut it = args.iter();
     while let Some(a) = it.next() {

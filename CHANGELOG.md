@@ -58,6 +58,27 @@
   and the other `AMONT_AGENT_*` variables, and every `amont.agent.*` key, are
   no longer read; 5.0.0 moves this machine's keys once (`greenpiste migrate`).
 
+## v4.2.0
+
+### Added
+
+- `plan-review stats --time [--since <date>] [--json]`: each landed plan's
+  time to done (ADR-0070). It reports elapsed hours from the first panel round
+  to `status: done`, blocked hours (gates, tests, agents and relais calls the
+  session waited on, counted once), hours waiting on the person, stops and word
+  growth since round 1. Time is attributed by the worktree branch the
+  transcript's `cwd` is on. `--json` carries `schema: 1` and each plan's
+  sessions, for retro-weekly's join with relais run hours. Reads only the
+  transcripts, the plan-review ledger and git.
+  Unattributed time is split into time on no plan by design and attribution
+  failures (`unmapped_share`).
+
+### Fixed
+
+- `plan-review` into a closed pipe (`… | head`) exits 0: it keeps SIGPIPE
+  ignored, as `hook`, `board` and `suppressions` do, and ends quietly on
+  EPIPE instead of by the signal (141) or a panic.
+
 ## v4.1.0
 
 ### Added

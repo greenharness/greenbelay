@@ -23,6 +23,7 @@ pub mod plan_apply;
 pub mod plan_phases;
 pub mod plan_review;
 pub mod plan_text;
+pub mod plan_time;
 pub mod plan_words;
 pub mod plans;
 pub mod preview;
