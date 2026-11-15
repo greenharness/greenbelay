@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v4.2.0
+
 ### Added
 
 - `plan-review stats --time [--since <date>] [--json]`: each landed plan's
