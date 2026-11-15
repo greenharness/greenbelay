@@ -47,7 +47,7 @@ const DONE_CHECK_MIN: usize = 4;
 /// started earlier and finished inside it.
 const LOOKBACK: f64 = 30.0 * 86_400.0;
 /// Text column width for the plan name.
-const NAME_W: usize = 28;
+const NAME_W: usize = 38;
 
 #[derive(Debug, Default)]
 struct Options {
@@ -86,6 +86,11 @@ fn day_secs(v: &str) -> Result<f64, String> {
 /// Seconds since the epoch of an RFC 3339 timestamp (`2026-11-15T08:01:02.5Z`),
 /// UTC only, which is what the transcripts write. `None` for anything else.
 pub(crate) fn epoch(ts: &str) -> Option<f64> {
+    // Byte offsets below are only char boundaries in ASCII; a transcript is
+    // untrusted input.
+    if !ts.is_ascii() {
+        return None;
+    }
     let day = civil::day_of(ts)?;
     let b = ts.as_bytes();
     if b.len() < 19 || b[10] != b'T' || b[13] != b':' || b[16] != b':' {
@@ -133,6 +138,7 @@ struct Exclusions {
     no_branch: u64,
     not_active_or_done: u64,
     no_round1_body: u64,
+    shared_first_round: u64,
     no_cwd: u64,
     git_failed: u64,
     transcripts_unreadable: u64,
@@ -149,7 +155,7 @@ pub fn run(args: &[String]) -> (String, ExitCode) {
     };
     let Some(root) = crate::plan_review::root() else {
         eprintln!(
-            "{BIN}: no plan root: -: nothing names where the repositories are. Run: {}",
+            "{BIN}: no plan root: nothing names where the repositories are. Run: {}",
             crate::plan_review::ROOT_REMEDY
         );
         return (String::new(), ExitCode::from(1));
@@ -168,7 +174,7 @@ pub fn run(args: &[String]) -> (String, ExitCode) {
     let Some(projects) = greenpiste_guard::settings::config_dir().map(|d| d.join("projects"))
     else {
         eprintln!(
-            "{BIN}: no home directory: -: the transcripts cannot be located. Run: echo $HOME"
+            "{BIN}: no home directory: the transcripts cannot be located. Set HOME (or CLAUDE_CONFIG_DIR) and run again."
         );
         return (String::new(), ExitCode::from(1));
     };
@@ -193,7 +199,11 @@ pub fn run(args: &[String]) -> (String, ExitCode) {
         }
     };
     let side = side_files(&projects);
-    let report = measure(&opts, &repos, plans, &transcripts, &side, &mut ex);
+    // The clock is read here, once, so the measure is a function of its inputs.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64());
+    let report = measure(&opts, &repos, plans, &transcripts, &side, now, &mut ex);
     let out = if opts.json {
         report.json(&ex)
     } else {
@@ -459,7 +469,7 @@ fn split_shared_starts(plans: &mut [Plan], ex: &mut Exclusions) {
             let p = &mut plans[idx[w]];
             p.start = p.start.max(prev).min(p.landed);
             if p.words.take().is_some() {
-                ex.no_round1_body += 1;
+                ex.shared_first_round += 1;
             }
             p.phases = None;
         }
@@ -568,8 +578,6 @@ fn side_files(projects: &Path) -> Vec<(PathBuf, f64)> {
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out
 }
-
-// ---------------------------------------------------------------- commands
 
 /// A shell command split into its simple commands, each as words, with the
 /// directory each one runs in (`cd` and `-C` followed). Quotes are dropped;
@@ -773,8 +781,6 @@ fn is_release(cmd: &str) -> bool {
     })
 }
 
-// ------------------------------------------------------------ worktree map
-
 /// Where each worktree path pointed, over time.
 #[derive(Default)]
 struct WorktreeMap {
@@ -805,10 +811,10 @@ impl WorktreeMap {
     fn at(&self, dir: &Path, t: f64) -> Option<(String, String)> {
         let holder = self.holder(dir)?;
         if let Some(ev) = self.events.get(holder) {
-            let last = ev.iter().rev().find(|e| e.0 <= t);
-            if let Some((_, repo, branch)) = last {
-                return branch.clone().map(|b| (repo.clone(), b));
-            }
+            // Before the first recorded event the path held something else:
+            // today's branch says nothing about then.
+            let (_, repo, branch) = ev.iter().rev().find(|e| e.0 <= t)?;
+            return branch.clone().map(|b| (repo.clone(), b));
         }
         self.live.get(holder).cloned()
     }
@@ -828,7 +834,7 @@ impl WorktreeMap {
 
 /// `git worktree list --porcelain` of every repository: the worktrees that
 /// exist now.
-fn live_worktrees(repos: &[PathBuf]) -> HashMap<PathBuf, (String, String)> {
+fn live_worktrees(repos: &[PathBuf], git_failed: &mut u64) -> HashMap<PathBuf, (String, String)> {
     let mut out = HashMap::new();
     for r in repos {
         let name = r
@@ -837,6 +843,12 @@ fn live_worktrees(repos: &[PathBuf]) -> HashMap<PathBuf, (String, String)> {
             .unwrap_or_default();
         let Some(list) = greenpiste_guard::git::stdout_in(r, &["worktree", "list", "--porcelain"])
         else {
+            eprintln!(
+                "{BIN}: git failed: {}: its worktrees cannot be listed. Run: git -C {} worktree list",
+                r.display(),
+                r.display()
+            );
+            *git_failed += 1;
             continue;
         };
         let mut path = None;
@@ -855,12 +867,13 @@ fn live_worktrees(repos: &[PathBuf]) -> HashMap<PathBuf, (String, String)> {
     out
 }
 
-// -------------------------------------------------------------- transcripts
-
 /// One transcript entry, reduced to what the measure needs.
 #[derive(Debug, Clone, Default)]
 struct Entry {
     t: f64,
+    /// The entry's own id: a resumed or forked session repeats earlier
+    /// entries, which count once.
+    uuid: Option<String>,
     cwd: Option<PathBuf>,
     kind: Kind,
 }
@@ -890,7 +903,8 @@ fn entries_matching(path: &Path, needle: Option<&str>) -> std::io::Result<Vec<En
     let f = std::fs::File::open(path)?;
     let mut out = Vec::new();
     for line in std::io::BufReader::new(f).lines() {
-        let Ok(line) = line else { continue };
+        // A read error repeats on every call: stop reading this file.
+        let Ok(line) = line else { break };
         if !line.contains("\"timestamp\"") || needle.is_some_and(|n| !line.contains(n)) {
             continue;
         }
@@ -901,6 +915,7 @@ fn entries_matching(path: &Path, needle: Option<&str>) -> std::io::Result<Vec<En
             continue;
         };
         let cwd = v.get("cwd").and_then(Value::as_str).map(PathBuf::from);
+        let uuid = v.get("uuid").and_then(Value::as_str).map(str::to_string);
         let content = v.pointer("/message/content");
         let kind = match v.get("type").and_then(Value::as_str) {
             Some("queue-operation") => Kind::Notice,
@@ -967,7 +982,7 @@ fn entries_matching(path: &Path, needle: Option<&str>) -> std::io::Result<Vec<En
             },
             _ => Kind::Other,
         };
-        out.push(Entry { t, cwd, kind });
+        out.push(Entry { t, uuid, cwd, kind });
     }
     Ok(out)
 }
@@ -978,8 +993,6 @@ struct Session {
     entries: Vec<Entry>,
     adds: Vec<(f64, String, String)>, // (time, repo, branch)
 }
-
-// ------------------------------------------------------------------ measure
 
 struct Report {
     finished: Vec<(Plan, Tally)>,
@@ -1096,11 +1109,9 @@ fn measure(
     plans: Vec<Plan>,
     transcripts: &[(PathBuf, f64)],
     side: &[(PathBuf, f64)],
+    now: f64,
     ex: &mut Exclusions,
 ) -> Report {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |d| d.as_secs_f64());
     // The plans in the window: done in it, or not done at all.
     let plans: Vec<Plan> = plans
         .into_iter()
@@ -1124,19 +1135,21 @@ fn measure(
 
     // Pass 1: read every session once; collect the worktree events.
     let mut map = WorktreeMap {
-        live: live_worktrees(repos),
+        live: live_worktrees(repos, &mut ex.git_failed),
         ..Default::default()
     };
     let mut sessions = Vec::new();
     let mut pending_switch: Vec<(f64, PathBuf, String)> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for (k, (path, _)) in files.iter().enumerate() {
         if progress {
             eprint!("\rtranscripts {}/{}", k + 1, files.len());
         }
-        let Ok(es) = entries(path) else {
+        let Ok(mut es) = entries(path) else {
             ex.transcripts_unreadable += 1;
             continue;
         };
+        es.retain(|e| e.uuid.as_ref().is_none_or(|u| seen.insert(u.clone())));
         let id = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
@@ -1195,7 +1208,6 @@ fn measure(
             .copied()
             .filter(|&i| plans[i].start <= t)
             .max_by(|&a, &b| plans[a].start.total_cmp(&plans[b].start))
-            .or_else(|| idx.first().copied())
     };
     let mut tallies: Vec<Tally> = vec![Tally::default(); plans.len()];
     let mut unattributed = Tally::default();
@@ -1319,6 +1331,18 @@ fn measure(
         }
     }
 
+    // A plan owns time inside its own span only: release and observe work in
+    // its worktree after `done`, or an entry before its start, goes to the
+    // unattributed row (and never makes blocked exceed elapsed).
+    for (p, t) in plans.iter().zip(tallies.iter_mut()) {
+        let end = p.done.unwrap_or(now);
+        let (inside, outside) = clip(std::mem::take(&mut t.blocked), p.start, end);
+        t.blocked = inside;
+        unattributed.blocked.extend(outside);
+        let (inside, outside) = clip(std::mem::take(&mut t.person), p.start, end);
+        t.person = inside;
+        unattributed.person.extend(outside);
+    }
     let mut finished = Vec::new();
     let mut unfinished = Vec::new();
     for (p, t) in plans.into_iter().zip(tallies) {
@@ -1339,14 +1363,33 @@ fn measure(
     }
 }
 
+/// Time intervals, `(from, to)` in epoch seconds.
+type Spans = Vec<(f64, f64)>;
+
+/// Each interval cut to `[a, b]`: the parts inside, and the parts outside.
+fn clip(xs: Spans, a: f64, b: f64) -> (Spans, Spans) {
+    let (mut inside, mut outside) = (Vec::new(), Vec::new());
+    for (s, e) in xs {
+        if s < a {
+            outside.push((s, e.min(a)));
+        }
+        if e > b {
+            outside.push((s.max(b), e));
+        }
+        let (cs, ce) = (s.max(a), e.min(b));
+        if cs < ce {
+            inside.push((cs, ce));
+        }
+    }
+    (inside, outside)
+}
+
 fn target<'a>(tallies: &'a mut [Tally], un: &'a mut Tally, who: Option<usize>) -> &'a mut Tally {
     match who {
         Some(i) => &mut tallies[i],
         None => un,
     }
 }
-
-// ------------------------------------------------------------------- output
 
 fn h(secs: f64) -> f64 {
     // `+ 0.0` turns a rounded -0.0 into 0.0, which JSON prints as `-0.0`.
@@ -1541,7 +1584,19 @@ impl Report {
             .map(|o| {
                 o.iter()
                     .filter(|(_, v)| v.as_u64() != Some(0))
-                    .map(|(k, v)| format!("{k}={v}"))
+                    .map(|(k, v)| {
+                        let label = match k.as_str() {
+                            "no_branch" => "no branch:",
+                            "not_active_or_done" => "neither active nor done:",
+                            "no_round1_body" => "no round-1 body:",
+                            "shared_first_round" => "reused plan file:",
+                            "calls_without_cwd" => "calls without cwd:",
+                            "repos_git_failed" => "git failed:",
+                            "transcripts_unreadable" => "unreadable transcripts:",
+                            other => other,
+                        };
+                        format!("{label} {v}")
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -1566,7 +1621,7 @@ impl Report {
         let f = |x: Option<f64>, unit: &str| x.map_or("-".to_string(), |v| format!("{v:.2}{unit}"));
         let pct = |x: Option<f64>| x.map_or("-".to_string(), |v| format!("{:.0}%", v * 100.0));
         out.push_str(&format!(
-            "\nsummary: {} finished, {} reviewed, {} unreviewed, {} with a round-1 body{}\n  median elapsed {}, blocked {}, person {}\n  word growth {}, grew past ×{GROWTH_BAR}: {}\n  share of blocked: unattributed {}, unmapped {}\n  greenpiste {}\n",
+            "\nsummary: {} finished, {} reviewed, {} unreviewed, {} with a round-1 body{}\n  median elapsed {}, blocked {}, person {}\n  word growth {}, grew past ×{GROWTH_BAR}: {}\n  share of blocked: unattributed {}, unmapped (no worktree known) {}\n  greenpiste {}\n",
             s.finished,
             s.reviewed,
             s.unreviewed,
@@ -1590,6 +1645,7 @@ fn exclusions_json(ex: &Exclusions) -> Value {
         "no_branch": ex.no_branch,
         "not_active_or_done": ex.not_active_or_done,
         "no_round1_body": ex.no_round1_body,
+        "shared_first_round": ex.shared_first_round,
         "calls_without_cwd": ex.no_cwd,
         "repos_git_failed": ex.git_failed,
         "transcripts_unreadable": ex.transcripts_unreadable,
@@ -1605,6 +1661,9 @@ mod tests {
         assert_eq!(epoch("1970-01-02T00:00:01Z"), Some(86_401.0));
         assert_eq!(epoch("1970-01-01T01:00:00.500Z"), Some(3600.5));
         assert_eq!(epoch("nope"), None);
+        // A multibyte character at a sliced offset is no timestamp, never a panic.
+        assert_eq!(epoch("2026-11-15T0é:00:00Z"), None);
+        assert_eq!(epoch("2026-11-15T00:0é:00Z"), None);
     }
 
     #[test]

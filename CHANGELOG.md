@@ -17,8 +17,9 @@
 
 ### Fixed
 
-- `plan-review` output where the write fails instead of raising SIGPIPE
-  (Windows) with a closed pipe exits 0, not with a panic.
+- `plan-review` into a closed pipe (`… | head`) exits 0: it keeps SIGPIPE
+  ignored, as `hook`, `board` and `suppressions` do, and ends quietly on
+  EPIPE instead of by the signal (141) or a panic.
 
 ## v4.1.0
 

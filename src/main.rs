@@ -395,7 +395,7 @@ fn main() -> ExitCode {
     if !matches!(
         invocation,
         Invocation::Sub {
-            name: Sub::Hook | Sub::Board | Sub::Suppressions,
+            name: Sub::Hook | Sub::Board | Sub::Suppressions | Sub::PlanReview,
             ..
         }
     ) {

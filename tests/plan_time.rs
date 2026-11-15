@@ -34,7 +34,7 @@ impl Fx {
             "greenpiste-plan-time-{name}-{}",
             std::process::id()
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&dir); // absent on a first run: nothing to clear
         for d in [
             "home",
             "claude/amont-agent/plan-review/bodies",
@@ -441,6 +441,66 @@ fn a_worktree_added_by_a_subagent_is_mapped() {
     );
 }
 
+/// Work in a plan's worktree after its `status: done` commit (release,
+/// observe) is not the plan's time: blocked never exceeds elapsed.
+#[test]
+fn time_after_done_is_not_the_plans() {
+    let fx = fixture("afterdone");
+    let app = fx.app().display().to_string();
+    let x2 = fx.wt("app-wt-x2");
+    fx.transcript(
+        "s6",
+        &[
+            call(
+                T + 5050,
+                &app,
+                "k0",
+                "Bash",
+                "git worktree add -q -b feat/x ../app-wt-x2 origin/main",
+            ),
+            call(T + 5100, &x2, "k1", "Bash", "cargo test"),
+            result(T + 5200, &x2, "k1"),
+        ],
+    );
+    let out = fx.run(&["--time", "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let x = by_branch(&v, "plans", "feat/x");
+    assert_eq!(x["resource_h"], 0.34, "the post-done gate is not x's: {x}");
+    assert_eq!(
+        v["unattributed"]["resource_h"], 0.06,
+        "it is unattributed: {v}"
+    );
+}
+
+/// A resumed or forked session repeats earlier entries in its own file:
+/// each entry counts once, by its `uuid`.
+#[test]
+fn a_repeated_entry_counts_once() {
+    let fx = fixture("dedupe");
+    let x = fx.wt("app-wt-x");
+    let mut stop = call(T + 300, &x, "m0", "ExitPlanMode", "");
+    stop["uuid"] = json!("u-shared");
+    fx.transcript("s7", &[stop.clone()]);
+    fx.transcript("s8", &[stop]);
+    let out = fx.run(&["--time", "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let px = by_branch(&v, "plans", "feat/x");
+    assert_eq!(
+        px["stops"], 2,
+        "the fixture's one stop plus this one, once: {px}"
+    );
+}
+
 #[test]
 fn time_text_fits_80_columns_and_since_filters() {
     let fx = fixture("text");
@@ -480,7 +540,7 @@ fn time_usage_errors_exit_2() {
 }
 
 #[test]
-fn a_closed_pipe_never_panics() {
+fn a_closed_pipe_exits_zero() {
     let fx = fixture("pipe");
     let mut child = fx
         .command()
@@ -490,9 +550,9 @@ fn a_closed_pipe_never_panics() {
         .spawn()
         .unwrap();
     drop(child.stdout.take());
-    // On unix `main` restores SIGPIPE's default, so the process ends by the
-    // signal (no code), like any filter; where the write fails instead
-    // (Windows) it is exit 0. Never a panic: that is exit 101.
+    // `plan-review` keeps SIGPIPE ignored, so the write fails as EPIPE and
+    // `main` treats it as the end of the reader: exit 0, never a signal
+    // (141) or a panic (101).
     let code = child.wait().unwrap().code();
-    assert!(matches!(code, None | Some(0)), "{code:?}");
+    assert_eq!(code, Some(0));
 }
