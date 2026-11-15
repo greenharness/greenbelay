@@ -243,6 +243,14 @@ fn is_symlink(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
 }
 
+/// On unix the old config root is left as a symlink to the new one; off unix no
+/// link is made (see `link` in the migration), so there is nothing to check.
+fn assert_old_root_links(machine: &Machine) {
+    if cfg!(unix) {
+        assert!(is_symlink(&machine.claude().join(old::DATA_DIR)));
+    }
+}
+
 #[test]
 fn migrate_moves_everything_and_a_second_run_changes_nothing() {
     let machine = Machine::old_style("forward");
@@ -261,7 +269,7 @@ fn migrate_moves_everything_and_a_second_run_changes_nothing() {
     assert!(last.starts_with("migrated 3 steps in "), "{said}");
 
     assert!(machine.claude().join(names::DATA_DIR).is_dir());
-    assert!(is_symlink(&machine.claude().join(old::DATA_DIR)));
+    assert_old_root_links(&machine);
     assert!(machine.state().join(names::DATA_DIR).is_dir());
     assert!(is_symlink(&machine.state().join(old::DATA_DIR)));
     let settings = fs::read_to_string(machine.claude().join("settings.json")).unwrap();
@@ -396,7 +404,7 @@ fn a_hook_migrates_once_and_still_decides() {
         settings_before
     );
     assert_eq!(machine.git_keys(), keys_before);
-    assert!(is_symlink(&machine.claude().join(old::DATA_DIR)));
+    assert_old_root_links(&machine);
 }
 
 /// The journal's lines in `dir`, header included.
@@ -474,9 +482,10 @@ fn a_hook_on_a_migrated_machine_writes_into_the_new_root() {
     assert!(is_deny(&machine.hook(DENIED)));
     let after = journal_lines(&machine.claude().join(names::DATA_DIR)).len();
     assert!(after > before);
-    assert!(is_symlink(&machine.claude().join(old::DATA_DIR)));
+    assert_old_root_links(&machine);
 }
 
+#[cfg(unix)] // Windows takes no file lock (holds-until: lock.rs gains one there)
 #[test]
 fn a_hook_with_the_lock_held_decides_and_moves_nothing() {
     let machine = Machine::old_style("locked");
@@ -525,7 +534,7 @@ fn a_failing_step_is_attempted_once_by_fifty_hooks() {
     let lines = journal_lines(&machine.claude().join(names::DATA_DIR));
     assert_eq!(lines[1], "row one", "{lines:?}");
     assert!(lines.len() > 50, "{lines:?}");
-    assert!(is_symlink(&machine.claude().join(old::DATA_DIR)));
+    assert_old_root_links(&machine);
 
     let other = machine.run(&["rules"]);
     assert!(
@@ -720,6 +729,7 @@ fn install_migrates_first() {
         .all(|line| !line.starts_with(old::CONFIG_PREFIX)));
 }
 
+#[cfg(unix)] // Windows takes no file lock (holds-until: lock.rs gains one there)
 #[test]
 fn install_with_the_lock_held_refuses_and_writes_nothing() {
     let machine = Machine::old_style("install-locked");

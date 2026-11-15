@@ -908,6 +908,16 @@ impl Default for StateDirectories {
     }
 }
 
+/// What a plan line says about the link the move leaves behind: nothing off
+/// unix, where no link is made (the step's `link` says so in its note).
+fn link_note(old: &std::path::Display<'_>) -> String {
+    if cfg!(unix) {
+        format!(" and leave a symlink at {old}")
+    } else {
+        String::new()
+    }
+}
+
 fn link_error(old_path: &Path, new_path: &Path, source: io::Error) -> StepError {
     StepError::io(
         format!(
@@ -956,17 +966,15 @@ impl Step for StateDirectories {
                 Direction::Forward => match old_meta {
                     Some(meta) if meta.file_type().is_symlink() => {}
                     Some(meta) if meta.is_dir() && new_exists => {
-                        lines.push(format!(
-                            "merge {old} into {new} and leave a symlink at {old}"
-                        ));
+                        lines.push(format!("merge {old} into {new}{}", link_note(&old)));
                     }
                     Some(meta) if meta.is_dir() => {
-                        lines.push(format!(
-                            "rename {old} to {new} and leave a symlink at {old}"
-                        ));
+                        lines.push(format!("rename {old} to {new}{}", link_note(&old)));
                     }
                     Some(_) => lines.push(format!("refuse: {old} is a file, not a directory")),
-                    None if new_exists => lines.push(format!("leave a symlink at {old} to {new}")),
+                    None if new_exists && cfg!(unix) => {
+                        lines.push(format!("leave a symlink at {old} to {new}"));
+                    }
                     None => {}
                 },
                 Direction::Reverse => {
