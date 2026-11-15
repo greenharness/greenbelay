@@ -247,7 +247,7 @@ dotfile or grh allowance tells an agent to use the old ones.
   `amont-agent/plugin/clear-relay/hooks/register.test.ts`,
   `amont-agent/install/install.sh`, `amont-agent/install/install.ps1`,
   `amont-agent/tests/migrate.rs` (new).
-- [ ] Phase 4 — release 5.0.0 and migrate this machine:
+- [x] Phase 4 — release 5.0.0 and migrate this machine:
   `amont-agent/CHANGELOG.md`, `amont-agent/docs/configuration.md`,
   `amont-agent/docs/install.md`, `amont-agent/Cargo.toml`,
   `amont-agent/greenharness.toml`; released, installed here, first
@@ -315,6 +315,32 @@ dotfile or grh allowance tells an agent to use the old ones.
   registration moved in 430 ms, and `migrate --reverse` put all 30 keys back
   with identical values (compared against a copy taken first). Not run on a
   real `kill -9`. `scripts/leak-hunt.sh` reports 40 of 40 test files clean.
+
+### Phase 4, observed on this machine (2026-11-15)
+
+- 5.0.0 released: the run concluded `success` (14 assets, crates.io
+  greenpiste and greenpiste-guard 5.0.0, the tap, "the published release
+  installs", "brew can install what was published").
+- `brew upgrade` installed 5.0.0; the reversed-marker (left by an earlier
+  `--reverse`) kept hooks from migrating, so `greenpiste migrate` was run by
+  hand: 3 steps in 3.8 s. 30 `greenpiste.*` keys with values identical to the
+  backup, 0 `amont.agent.*`; `~/.claude/amont-agent` and
+  `~/.local/state/amont-agent` are symlinks; settings.json names
+  `clear-relay@greenpiste`; `doctor`: migration done, no failing finding;
+  `relais native review-outcome --dry-run` reads the moved ledger (1,187 rows).
+- The migration merged a stray `~/.claude/greenpiste` (116 rows written
+  by a 5.x process before the install) with the real history: appended, one
+  header, rotated normally (the oldest rotation aged out).
+- Claude Code's own plugin registry was NOT migrated: it still held the
+  `amont-agent` marketplace and `clear-relay@amont-agent`, so the plugin was
+  disabled after the migration until `claude plugin marketplace add
+  ~/.local/state/greenpiste/claude-marketplace` and `claude plugin install
+  clear-relay@greenpiste` were run (and the old entries removed). Follow-up
+  for 5.0.1: `migrate` prints that command, and `doctor` names a registry still
+  holding the old id.
+- `scripts/leak-hunt.sh` covers `tests/*.rs` only; a crate's own unit tests that
+  write the journal under the real config directory are not covered (the stray
+  root above). Follow-up: run the crates' `--lib` tests under the canary too.
 
 ### Kept as they are (review lows, 2026-11-15)
 
