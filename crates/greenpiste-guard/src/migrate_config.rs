@@ -11,11 +11,12 @@
 //! only decides which files and which keys. Every git call is built from
 //! [`Env`], so a test runs against scratch files and never the real config.
 
-use crate::migrate::{Direction, Env, Step, StepError};
+use crate::migrate::{Direction, Env, Step, StepError, REFUSAL_PREFIX};
 use crate::names::{self, old};
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -183,7 +184,9 @@ enum Listing {
 }
 
 /// The entries of a `git config --list -z` output.
-fn parse_entries(stdout: &[u8], listing: Listing) -> Vec<Entry> {
+/// A value that is not UTF-8 is refused, naming the key and the file `file`
+/// (the listing's own origin when the entry carries one), never altered.
+fn parse_entries(stdout: &[u8], listing: Listing, file: &Path) -> Result<Vec<Entry>, StepError> {
     let mut tokens: Vec<&[u8]> = stdout.split(|byte| *byte == 0).collect();
     if tokens.last().is_some_and(|last| last.is_empty()) {
         tokens.pop();
@@ -192,29 +195,46 @@ fn parse_entries(stdout: &[u8], listing: Listing) -> Vec<Entry> {
         Listing::WithOrigin => 2,
         Listing::Plain => 1,
     };
-    tokens
-        .chunks(width)
-        .filter(|chunk| chunk.len() == width)
-        .map(|chunk| {
-            let (origin, pair) = match listing {
-                Listing::WithOrigin => (String::from_utf8_lossy(chunk[0]).into_owned(), chunk[1]),
-                Listing::Plain => (String::new(), chunk[0]),
-            };
-            let text = String::from_utf8_lossy(pair).into_owned();
-            match text.split_once('\n') {
-                Some((key, value)) => Entry {
-                    origin,
-                    key: key.to_string(),
-                    value: Some(value.to_string()),
-                },
-                None => Entry {
-                    origin,
-                    key: text,
-                    value: None,
-                },
-            }
-        })
-        .collect()
+    let mut entries = Vec::new();
+    for chunk in tokens.chunks(width).filter(|chunk| chunk.len() == width) {
+        let (origin, pair) = match listing {
+            Listing::WithOrigin => (utf8_or_refuse(chunk[0], "a config origin", file)?, chunk[1]),
+            Listing::Plain => (String::new(), chunk[0]),
+        };
+        let at = if origin.is_empty() {
+            file.to_path_buf()
+        } else {
+            PathBuf::from(origin.strip_prefix("file:").unwrap_or(&origin))
+        };
+        let text = utf8_or_refuse(pair, "a config entry", &at)?;
+        entries.push(match text.split_once('\n') {
+            Some((key, value)) => Entry {
+                origin,
+                key: key.to_string(),
+                value: Some(value.to_string()),
+            },
+            None => Entry {
+                origin,
+                key: text,
+                value: None,
+            },
+        });
+    }
+    Ok(entries)
+}
+
+/// `bytes` as text, or a refusal naming the key (as far as it reads) and the
+/// file.
+fn utf8_or_refuse(bytes: &[u8], what: &str, file: &Path) -> Result<String, StepError> {
+    String::from_utf8(bytes.to_vec()).map_err(|_| {
+        let shown = String::from_utf8_lossy(bytes);
+        let key = shown.split('\n').next().unwrap_or_default();
+        StepError::refused(format!(
+            "{what} (key {key}) in {} is not valid UTF-8; fix or remove it and run again",
+            file.display()
+        ))
+        .at(file)
+    })
 }
 
 fn run_git(mut command: Command, what: &str) -> Result<Output, StepError> {
@@ -245,7 +265,7 @@ fn inventory(env: &Env, rename: Rename) -> Result<(Vec<PathBuf>, Vec<String>), S
     }
     let mut tops: Vec<PathBuf> = Vec::new();
     let mut command_keys = Vec::new();
-    for entry in parse_entries(&output.stdout, Listing::WithOrigin) {
+    for entry in parse_entries(&output.stdout, Listing::WithOrigin, Path::new("git config"))? {
         if let Some(file) = entry.origin.strip_prefix("file:") {
             let file = PathBuf::from(file);
             if !tops.contains(&file) {
@@ -275,7 +295,7 @@ fn list_file(env: &Env, path: &Path) -> Result<Vec<Entry>, StepError> {
         )
         .at(path));
     }
-    Ok(parse_entries(&output.stdout, Listing::Plain))
+    parse_entries(&output.stdout, Listing::Plain, path)
 }
 
 fn is_include_key(key: &str) -> bool {
@@ -326,8 +346,17 @@ impl<'env> IncludeWalk<'env> {
         if depth > MAX_INCLUDE_DEPTH {
             return Ok(());
         }
-        let Ok(real) = fs::canonicalize(&path) else {
-            return Ok(()); // an include of a file that does not exist is skipped, as git does
+        let real = match fs::canonicalize(&path) {
+            Ok(real) => real,
+            // an include of a file that does not exist is skipped, as git does
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => {
+                return Err(StepError::io(
+                    format!("cannot resolve config file {}", path.display()),
+                    e,
+                )
+                .at(&path))
+            }
         };
         if !real.is_file() || !self.seen.insert(real) {
             return Ok(());
@@ -436,7 +465,7 @@ fn plan_machine(env: &Env, rename: Rename) -> Result<Vec<String>, StepError> {
         }
         if not_writable(&plan).is_some() {
             lines.push(format!(
-                "refuse: {} is not writable; make it writable for this user (or run the \
+                "{REFUSAL_PREFIX}{} is not writable; make it writable for this user (or run the \
                  migration as its owner) and run again",
                 plan.path.display()
             ));
@@ -444,7 +473,11 @@ fn plan_machine(env: &Env, rename: Rename) -> Result<Vec<String>, StepError> {
         }
         let clashes = conflicts(env, &plan);
         if !clashes.is_empty() {
-            lines.extend(clashes.iter().map(|clash| format!("refuse: {clash}")));
+            lines.extend(
+                clashes
+                    .iter()
+                    .map(|clash| format!("{REFUSAL_PREFIX}{clash}")),
+            );
             continue;
         }
         for (old_key, new_key) in &plan.keys {
@@ -456,7 +489,7 @@ fn plan_machine(env: &Env, rename: Rename) -> Result<Vec<String>, StepError> {
     }
     for key in command_keys {
         lines.push(format!(
-            "refuse: {key} is set by the command line or GIT_CONFIG_COUNT, which no file holds"
+            "{REFUSAL_PREFIX}{key} is set by the command line or GIT_CONFIG_COUNT, which no file holds"
         ));
     }
     Ok(lines)
@@ -502,13 +535,21 @@ fn get_all(env: &Env, path: &Path, key: &str) -> Result<Vec<String>, StepError> 
     let output = run_git(command, "read a config key")?;
     match output.status.code() {
         Some(0) => {
-            let mut values: Vec<String> = output
-                .stdout
-                .split(|byte| *byte == 0)
-                .map(|value| String::from_utf8_lossy(value).into_owned())
-                .collect();
-            values.pop();
-            Ok(values)
+            let mut chunks: Vec<&[u8]> = output.stdout.split(|byte| *byte == 0).collect();
+            chunks.pop();
+            chunks
+                .into_iter()
+                .map(|value| {
+                    String::from_utf8(value.to_vec()).map_err(|_| {
+                        StepError::refused(format!(
+                            "{key} in {} holds a value that is not valid UTF-8; fix or \
+                             remove it and run again",
+                            path.display()
+                        ))
+                        .at(path)
+                    })
+                })
+                .collect()
         }
         Some(1) => Ok(Vec::new()),
         _ => Err(StepError::git(
@@ -993,6 +1034,62 @@ mod tests {
             planned.iter().all(|line| !line.starts_with("rename ")),
             "{planned:?}"
         );
+    }
+
+    #[test]
+    fn the_plan_marks_a_refusal_for_a_dry_run() {
+        use crate::migrate::{machine_plan, PlanLine};
+        let (_scratch, root, env) = machine();
+        let global = root.join("home").join(".gitconfig");
+        fs::write(&global, "[amont \"agent\"]\n\tenabled = true\n").unwrap();
+        fs::set_permissions(&global, fs::Permissions::from_mode(0o444)).unwrap();
+        let lines = machine_plan(&env, Direction::Forward).unwrap();
+        assert!(
+            lines.iter().any(|line| matches!(
+                line,
+                PlanLine::Refusal { step: "git config keys", reason }
+                    if reason.contains("is not writable")
+            )),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn a_non_utf8_value_is_refused_not_altered() {
+        let (_scratch, root, env) = machine();
+        let global = root.join("home").join(".gitconfig");
+        let mut text = b"[amont \"agent\"]\n\tenabled = ".to_vec();
+        text.extend_from_slice(&[0xff, 0xfe, b'\n']);
+        fs::write(&global, &text).unwrap();
+        let error = ConfigKeys::new().forward(&env).unwrap_err().to_string();
+        assert!(
+            error.contains("UTF-8") && error.contains(".gitconfig"),
+            "{error}"
+        );
+        assert_eq!(fs::read(&global).unwrap(), text);
+    }
+
+    #[test]
+    fn an_include_that_cannot_be_read_is_an_error_naming_it() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_scratch, root, env) = machine();
+        let home = root.join("home");
+        let locked = home.join("locked");
+        fs::create_dir_all(&locked).unwrap();
+        fs::write(locked.join("inc.gitconfig"), "[user]\n\tname = x\n").unwrap();
+        fs::write(
+            home.join(".gitconfig"),
+            format!(
+                "[include]\n\tpath = {}\n",
+                locked.join("inc.gitconfig").display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        let result = ConfigKeys::new().plan(&env, Direction::Forward);
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("inc.gitconfig"), "{error}");
     }
 
     #[test]

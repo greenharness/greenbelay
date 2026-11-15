@@ -471,8 +471,19 @@ fn run_migrate(args: &[OsString]) -> ExitCode {
                 if lines.is_empty() {
                     println!("nothing to do: {}", already(direction));
                 }
+                let mut refused = false;
                 for line in lines {
-                    println!("would: {line}");
+                    match line {
+                        migrate::PlanLine::Action(text) => println!("would: {text}"),
+                        migrate::PlanLine::Refusal { step, reason } => {
+                            refused = true;
+                            println!("would refuse: {step}: {reason}");
+                        }
+                    }
+                }
+                if refused {
+                    eprintln!("migrate would stop: fix what is named above first");
+                    return ExitCode::FAILURE;
                 }
                 ExitCode::SUCCESS
             }
@@ -554,7 +565,7 @@ fn settled_verdict(
         Ok(Outcome::FailedBefore) => {
             let note = migrate::failure_note(env).unwrap_or_default();
             eprintln!(
-                "{BIN}: an earlier migration failed: {}; run `{BIN} migrate` to try again",
+                "{BIN}: an earlier migration failed: {}; run {BIN} migrate to try again",
                 note.trim().replace('\n', ": ")
             );
             Err(ExitCode::FAILURE)
@@ -564,11 +575,11 @@ fn settled_verdict(
             match (&error, direction) {
                 (MigrateError::Locked { .. } | MigrateError::Step { .. }, _) => {}
                 (_, Direction::Forward) => eprintln!(
-                    "fix what it names, then run `{BIN} migrate` again (or \
-                     `{BIN} migrate --reverse` to put everything back)"
+                    "fix what it names, then run {BIN} migrate again (or \
+                     run {BIN} migrate --reverse to put everything back)"
                 ),
                 (_, Direction::Reverse) => {
-                    eprintln!("fix what it names, then run `{BIN} migrate --reverse` again");
+                    eprintln!("fix what it names, then run {BIN} migrate --reverse again");
                 }
             }
             Err(ExitCode::FAILURE)

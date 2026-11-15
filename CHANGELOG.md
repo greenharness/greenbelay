@@ -26,6 +26,12 @@
 
 ### Changed
 
+- **`migrate --dry-run` exits 1 when the real run would refuse**, printing
+  `would refuse: <step>: <reason>` for each; it exits 0 when nothing would stop it.
+- **The migration's log merge appends and is safe to run again.** A journal or
+  ledger that exists under both names gets the old rows appended to the new
+  file in one write, so a row a hook writes at the same moment is never lost, and
+  a second run (after a kill) adds nothing.
 - **`greenpiste install` waits for the migration and refuses on a failed
   one.** It waits up to 30 seconds for the migration lock, and when the
   migration cannot finish it exits 1 saying what to fix and writes nothing.

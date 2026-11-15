@@ -249,7 +249,7 @@ impl fmt::Display for MigrateError {
             }
             MigrateError::FailedBefore { note } => write!(
                 f,
-                "an earlier migration failed ({}); run `{} migrate`",
+                "an earlier migration failed ({}); run {} migrate",
                 note.trim().replace('\n', ": "),
                 names::BIN
             ),
@@ -281,7 +281,7 @@ pub fn done(env: &Env) -> bool {
 
 /// Whether the done-marker exists in `config_dir`.
 pub fn done_in(config_dir: &Path) -> bool {
-    exists(&config_dir.join(names::MIGRATE_DONE_MARKER))
+    crate::settings::migration_done_in(config_dir)
 }
 
 /// What the markers say, read-only.
@@ -335,7 +335,7 @@ pub fn machine_in(env: &Env, direction: Direction, wait: Wait) -> Result<Outcome
 }
 
 /// The real steps, in forward order.
-pub fn steps() -> Vec<Box<dyn Step>> {
+pub(crate) fn steps() -> Vec<Box<dyn Step>> {
     vec![
         Box::new(StateDirectories::new()),
         Box::new(crate::migrate_config::ConfigKeys::new()),
@@ -345,13 +345,13 @@ pub fn steps() -> Vec<Box<dyn Step>> {
 
 /// What the real steps would do in `direction`, each line prefixed with its
 /// step's name; reads only and takes no lock.
-pub fn machine_plan(env: &Env, direction: Direction) -> Result<Vec<String>, MigrateError> {
+pub fn machine_plan(env: &Env, direction: Direction) -> Result<Vec<PlanLine>, MigrateError> {
     let mut lines = Vec::new();
     let owned = steps();
-    let ordered: Vec<&Box<dyn Step>> = match direction {
-        Direction::Forward => owned.iter().collect(),
-        Direction::Reverse => owned.iter().rev().collect(),
-    };
+    let mut ordered: Vec<&dyn Step> = owned.iter().map(|step| step.as_ref()).collect();
+    if direction == Direction::Reverse {
+        ordered.reverse();
+    }
     for step in ordered {
         let planned = step
             .plan(env, direction)
@@ -362,10 +362,28 @@ pub fn machine_plan(env: &Env, direction: Direction) -> Result<Vec<String>, Migr
         lines.extend(
             planned
                 .into_iter()
-                .map(|line| format!("{}: {line}", step.name())),
+                .map(|line| match line.strip_prefix(REFUSAL_PREFIX) {
+                    Some(reason) => PlanLine::Refusal {
+                        step: step.name(),
+                        reason: reason.to_string(),
+                    },
+                    None => PlanLine::Action(format!("{}: {line}", step.name())),
+                }),
         );
     }
     Ok(lines)
+}
+
+/// The start of a plan line that says the real run would refuse.
+pub const REFUSAL_PREFIX: &str = "refuse: ";
+
+/// One line of a dry run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlanLine {
+    /// A change the run would make, already prefixed with its step's name.
+    Action(String),
+    /// A condition under which the real run would stop.
+    Refusal { step: &'static str, reason: String },
 }
 
 /// Run the migration for a command that must never fail: every outcome and
@@ -453,7 +471,7 @@ fn write_marker(path: &Path, text: &str) -> Result<(), MigrateError> {
     fs::write(path, text).map_err(io_error(format!("cannot write {}", path.display())))
 }
 
-pub fn run(
+pub(crate) fn run(
     env: &Env,
     direction: Direction,
     wait: Wait,
@@ -646,32 +664,46 @@ fn replace_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
     outcome
 }
 
-/// Merge the old file's rows ahead of the new file's into `new_file`, through
-/// a temp file renamed over it with the mode of the file it replaces. A
-/// journal keeps the new file's header line once; each file's own first line
-/// is dropped from the rows.
+/// Append the old file's rows (its header line dropped for a journal) to the
+/// end of `new_file`, which is opened for appending and never replaced, so a
+/// row another process appends at the same moment is kept and the new file's
+/// own header stays the only one. The rows go in one `write_all`. The old
+/// order (old rows first) is given up on purpose: a rename-over merge cannot
+/// keep a concurrent writer's row.
+///
+/// Safe to run again after a kill between this append and the removal of the
+/// old file: when the new file already holds the old rows as one contiguous
+/// block after its header, nothing is appended.
 fn append_merge(old_file: &Path, new_file: &Path, shape: LogShape) -> io::Result<()> {
+    use std::io::Write;
     let old_bytes = fs::read(old_file)?;
-    let new_bytes = fs::read(new_file)?;
-    let mut out = Vec::with_capacity(old_bytes.len() + new_bytes.len() + 1);
-    let (old_rows, new_rows, header): (&[u8], &[u8], &[u8]) = match shape {
-        LogShape::Journal => {
-            let (_, old_rest) = split_first_line(&old_bytes);
-            let (new_header, new_rest) = split_first_line(&new_bytes);
-            (old_rest, new_rest, new_header)
-        }
-        LogShape::Rows => (&old_bytes, &new_bytes, &[]),
+    let old_rows: &[u8] = match shape {
+        LogShape::Journal => split_first_line(&old_bytes).1,
+        LogShape::Rows => &old_bytes,
     };
-    out.extend_from_slice(header);
-    if !header.is_empty() && !header.ends_with(b"\n") {
+    if old_rows.is_empty() {
+        return Ok(());
+    }
+    let mut block = old_rows.to_vec();
+    if !block.ends_with(b"\n") {
+        block.push(b'\n');
+    }
+    let new_bytes = fs::read(new_file)?;
+    let new_rows: &[u8] = match shape {
+        LogShape::Journal => split_first_line(&new_bytes).1,
+        LogShape::Rows => &new_bytes,
+    };
+    if new_rows.windows(block.len()).any(|window| window == block) {
+        return Ok(());
+    }
+    let mut out = Vec::with_capacity(block.len() + 1);
+    if !new_bytes.is_empty() && !new_bytes.ends_with(b"\n") {
         out.push(b'\n');
     }
-    out.extend_from_slice(old_rows);
-    if !old_rows.is_empty() && !old_rows.ends_with(b"\n") {
-        out.push(b'\n');
-    }
-    out.extend_from_slice(new_rows);
-    replace_file(new_file, &out)
+    out.extend_from_slice(&block);
+    let mut file = fs::OpenOptions::new().append(true).open(new_file)?;
+    file.write_all(&out)?;
+    file.sync_all()
 }
 
 fn split_first_line(bytes: &[u8]) -> (&[u8], &[u8]) {
@@ -776,7 +808,7 @@ impl StateDirectories {
 
     /// Move every entry of `from` into `into`. Two regular log files
     /// (`journal.log`, `*.jsonl`) at the same name are appended (old rows
-    /// first); two directories are merged recursively; any other entry that
+    /// after the new file's); two directories are merged recursively; any other entry that
     /// exists in both stays as the one in `into`, and the other lands beside
     /// it.
     fn merge(&self, from: &Path, into: &Path) -> io::Result<()> {
@@ -1394,7 +1426,7 @@ mod tests {
     }
 
     #[test]
-    fn colliding_logs_are_appended_old_rows_first() {
+    fn colliding_logs_get_the_old_rows_appended() {
         use std::os::unix::fs::PermissionsExt;
         let scratch = scratch_dir("logs");
         let (from, into) = (scratch.0.join("from"), scratch.0.join("into"));
@@ -1408,7 +1440,7 @@ mod tests {
         StateDirectories::new().absorb(&from, &into).unwrap();
         assert_eq!(
             fs::read_to_string(into.join("journal.log")).unwrap(),
-            "new-header\nold1\nold2\nnew1\n"
+            "new-header\nnew1\nold1\nold2\n"
         );
         assert_eq!(
             fs::metadata(into.join("journal.log"))
@@ -1420,7 +1452,7 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(into.join("plan-review/o.jsonl")).unwrap(),
-            "a\nb\nc\n"
+            "c\na\nb\n"
         );
         assert!(!from.exists());
         let leftovers = fs::read_dir(&into)
@@ -1434,6 +1466,61 @@ mod tests {
             })
             .count();
         assert_eq!(leftovers, 0);
+    }
+
+    fn log_pair(tag: &str) -> (Scratch, PathBuf, PathBuf) {
+        let scratch = scratch_dir(tag);
+        let old_file = scratch.0.join("old.log");
+        let new_file = scratch.0.join("new.log");
+        fs::write(&old_file, "old-header\nold1\nold2\n").unwrap();
+        fs::write(&new_file, "new-header\nnew1\n").unwrap();
+        (scratch, old_file, new_file)
+    }
+
+    #[test]
+    fn a_second_merge_of_the_same_old_file_adds_nothing() {
+        let (_scratch, old_file, new_file) = log_pair("again");
+        append_merge(&old_file, &new_file, LogShape::Journal).unwrap();
+        append_merge(&old_file, &new_file, LogShape::Journal).unwrap();
+        assert_eq!(
+            fs::read_to_string(&new_file).unwrap(),
+            "new-header\nnew1\nold1\nold2\n"
+        );
+    }
+
+    #[test]
+    fn a_merge_killed_before_the_old_file_is_removed_runs_again_once() {
+        let (scratch, old_file, new_file) = log_pair("killed");
+        append_merge(&old_file, &new_file, LogShape::Journal).unwrap();
+        let into = scratch.0.join("into");
+        let from = scratch.0.join("from");
+        fs::create_dir_all(&into).unwrap();
+        fs::create_dir_all(&from).unwrap();
+        fs::rename(&new_file, into.join("journal.log")).unwrap();
+        fs::rename(&old_file, from.join("journal.log")).unwrap();
+        StateDirectories::new().absorb(&from, &into).unwrap();
+        assert_eq!(
+            fs::read_to_string(into.join("journal.log")).unwrap(),
+            "new-header\nnew1\nold1\nold2\n"
+        );
+    }
+
+    #[test]
+    fn rows_another_writer_appended_between_merges_survive() {
+        use std::io::Write;
+        let (_scratch, old_file, new_file) = log_pair("writer");
+        append_merge(&old_file, &new_file, LogShape::Journal).unwrap();
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&new_file)
+            .unwrap()
+            .write_all(b"hook1\n")
+            .unwrap();
+        append_merge(&old_file, &new_file, LogShape::Journal).unwrap();
+        assert_eq!(
+            fs::read_to_string(&new_file).unwrap(),
+            "new-header\nnew1\nold1\nold2\nhook1\n"
+        );
     }
 
     #[test]

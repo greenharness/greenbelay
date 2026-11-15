@@ -57,9 +57,17 @@ pub fn data_dir() -> Option<PathBuf> {
     Some(data_dir_in(&config_dir()?))
 }
 
+/// Whether the migration's done-marker exists in `config_dir`.
+pub fn migration_done_in(config_dir: &Path) -> bool {
+    config_dir
+        .join(crate::names::MIGRATE_DONE_MARKER)
+        .symlink_metadata()
+        .is_ok()
+}
+
 pub(crate) fn data_dir_in(config: &Path) -> PathBuf {
     let new_root = config.join(crate::names::DATA_DIR);
-    if new_root.is_dir() || crate::migrate::done_in(config) {
+    if new_root.is_dir() || migration_done_in(config) {
         return new_root;
     }
     let old_root = config.join(crate::names::old::DATA_DIR);

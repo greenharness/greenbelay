@@ -328,6 +328,26 @@ fn dry_run_says_what_would_change_and_changes_nothing() {
     assert!(forward.contains("would: state directories: "), "{forward}");
 }
 
+#[cfg(unix)]
+#[test]
+fn dry_run_exits_1_when_the_real_run_would_refuse() {
+    use std::os::unix::fs::PermissionsExt;
+    let machine = Machine::old_style("dry-run-refuses");
+    fs::set_permissions(machine.gitconfig(), fs::Permissions::from_mode(0o444)).unwrap();
+    let output = machine.run(&["migrate", "--dry-run"]);
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains("would refuse: git config keys: "),
+        "{}",
+        stdout(&output)
+    );
+    assert!(
+        stderr(&output).contains("migrate would stop: fix what is named above first"),
+        "{}",
+        stderr(&output)
+    );
+}
+
 #[test]
 fn dry_run_on_a_machine_with_nothing_to_do_says_so() {
     let machine = Machine::old_style("dry-run-nothing");
