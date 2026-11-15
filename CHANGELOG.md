@@ -4,6 +4,13 @@
 
 ### Added
 
+- **The installers read `GREENPISTE_BIN_DIR` and `GREENPISTE_VERSION`.** The
+  old `AMONT_AGENT_BIN_DIR` and `AMONT_AGENT_VERSION` still work while the new
+  name is unset, with one warning naming the new one.
+- **The clear-relay plugin's default log directory follows greenpiste's state
+  root** (`$XDG_STATE_HOME/greenpiste`, else a `state` directory beside a
+  relocated Claude config, else `~/.local/state/greenpiste`), with tests that set
+  the environment by name.
 - **greenpiste 5.0.0 migrates this machine's state directories once, under a
   lock, and never blocks a hook.** The move is reversible with `greenpiste
   migrate --reverse` (the command arrives in a later change).

@@ -17,8 +17,6 @@ REPO="greenharness/greenpiste"
 # `$HOME/.local/bin` by default. `greenpiste install` writes the ABSOLUTE
 # path of this binary into settings.json, so the directory matters only for
 # whether you can type the command yourself.
-BIN_DIR="${AMONT_AGENT_BIN_DIR:-$HOME/.local/bin}"
-VERSION="${AMONT_AGENT_VERSION:-latest}"
 
 RED='\033[31m'; GREEN='\033[32m'; YELLOW='\033[33m'; OFF='\033[0m'
 if [ -n "${NO_COLOR:-}" ] || [ ! -t 1 ]; then RED=''; GREEN=''; YELLOW=''; OFF=''; fi
@@ -27,6 +25,22 @@ say()  { printf '  %s\n' "$1"; }
 ok()   { printf "  ${GREEN}✓${OFF} %s\n" "$1"; }
 warn() { printf "  ${YELLOW}!${OFF} %s\n" "$1"; }
 die()  { printf "  ${RED}✗${OFF} %s\n" "$1" >&2; exit 1; }
+
+# The settings are GREENPISTE_BIN_DIR and GREENPISTE_VERSION. Their old names,
+# AMONT_AGENT_BIN_DIR and AMONT_AGENT_VERSION, still work while the new one is
+# unset, with one warning naming the new one.
+BIN_DIR="${GREENPISTE_BIN_DIR:-}"
+if [ -z "$BIN_DIR" ] && [ -n "${AMONT_AGENT_BIN_DIR:-}" ]; then
+    BIN_DIR="$AMONT_AGENT_BIN_DIR"
+    warn "AMONT_AGENT_BIN_DIR is the old name: set GREENPISTE_BIN_DIR instead"
+fi
+BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
+VERSION="${GREENPISTE_VERSION:-}"
+if [ -z "$VERSION" ] && [ -n "${AMONT_AGENT_VERSION:-}" ]; then
+    VERSION="$AMONT_AGENT_VERSION"
+    warn "AMONT_AGENT_VERSION is the old name: set GREENPISTE_VERSION instead"
+fi
+VERSION="${VERSION:-latest}"
 
 need() { command -v "$1" > /dev/null 2>&1 || die "$1 is required and was not found"; }
 
@@ -89,7 +103,7 @@ resolve_version() {
     # handing you a tarball full of HTML.
     tag=$(fetch "https://api.github.com/repos/$REPO/releases/latest" \
         | sed -n 's/.*"tag_name" *: *"\([^"]*\)".*/\1/p' | head -n 1)
-    [ -n "$tag" ] || die "could not determine the latest release (rate limited? set AMONT_AGENT_VERSION=vX.Y.Z)"
+    [ -n "$tag" ] || die "could not determine the latest release (rate limited? set GREENPISTE_VERSION=vX.Y.Z)"
     echo "${tag#v}"
 }
 

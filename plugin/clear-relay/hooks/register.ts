@@ -95,11 +95,21 @@ function describe(failure: RelayFailure): string {
   }
 }
 
+// The directory greenpiste keeps its state in when `stateDir` is not set, the
+// way its settings::state_root() finds it: the XDG state home, else a `state`
+// directory beside a relocated Claude config, else ~/.local/state.
+async function defaultStateDir($: Engine): Promise<string> {
+  const xdg = (await $.env.get('XDG_STATE_HOME')) ?? ''
+  if (xdg !== '') return `${xdg}/greenpiste`
+
+  const config = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? ''
+  if (config !== '') return `${config}/state/greenpiste`
+
+  return `${(await $.env.get('HOME')) ?? ''}/.local/state/greenpiste`
+}
+
 async function logFile($: Engine, relayer: Relayer, sessionId: string): Promise<string> {
-  const base =
-    relayer.stateDir !== ''
-      ? relayer.stateDir
-      : `${(await $.env.get('HOME')) ?? ''}/.local/state/greenpiste`
+  const base = relayer.stateDir !== '' ? relayer.stateDir : await defaultStateDir($)
 
   return `${base}/clear-relay/${sessionId}.jsonl`
 }

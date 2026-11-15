@@ -13,7 +13,7 @@
     "stateDir": {
       "type": "string",
       "title": "State directory",
-      "description": "Where the relay's log goes, under clear-relay/<session>.jsonl. Empty uses ~/.local/state/greenpiste.",
+      "description": "Where the relay's log goes, under clear-relay/<session>.jsonl. Empty uses $XDG_STATE_HOME/greenpiste, else ~/.local/state/greenpiste.",
       "default": ""
     }
   }

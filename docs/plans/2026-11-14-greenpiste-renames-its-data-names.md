@@ -239,7 +239,7 @@ dotfile or grh allowance tells an agent to use the old ones.
   `amont-agent/src/hook.rs`, `amont-agent/src/plugin_install.rs`,
   `amont-agent/tests/names.rs`, `amont-agent/tests/plugin_install.rs` (line 9 `clear-relay@amont-agent`), and the rest of the env and config call
   sites (`rg -l 'AMONT_AGENT_|amont\.agent\.' crates src`).
-- [ ] Phase 3 — migration and the plugin:
+- [x] Phase 3 — migration and the plugin:
   `amont-agent/crates/greenpiste-guard/src/migrate.rs` (new),
   `amont-agent/src/main.rs` (`migrate`, `migrate --reverse`),
   `amont-agent/plugin/clear-relay/hooks/register.ts`,
