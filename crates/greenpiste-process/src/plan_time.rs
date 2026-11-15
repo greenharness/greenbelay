@@ -243,7 +243,7 @@ struct Ledger {
     /// (after, before) of every plan-apply merge row.
     merges: Vec<(String, String)>,
     /// plan id → its first-round sha, from the rows that carry a `plan_id`.
-    by_id: HashMap<String, String>,
+    by_id: HashMap<crate::plan_id::PlanId, String>,
 }
 
 impl Ledger {
@@ -264,7 +264,9 @@ impl Ledger {
                 continue;
             };
             let first = s(r, "first_round_sha").unwrap_or_else(|| body.clone());
-            if let Some(id) = s(r, "plan_id") {
+            if let Some(id) =
+                s(r, "plan_id").and_then(|p| crate::plan_id::PlanId::try_from(p.as_str()).ok())
+            {
                 l.by_id.entry(id).or_insert_with(|| first.clone());
             }
             let at = r.get("recorded_at").and_then(Value::as_u64).unwrap_or(0);
@@ -1278,16 +1280,16 @@ fn measure(
                     let in_span = who
                         .filter(|&i| e.t >= plans[i].start && e.t <= plans[i].done.unwrap_or(now));
                     for (id, name, cmd, bg) in cs {
-                        let t = target(&mut tallies, &mut unattributed, in_span);
+                        let tally = target(&mut tallies, &mut unattributed, in_span);
                         match name.as_str() {
-                            "AskUserQuestion" => t.questions += 1,
-                            "ExitPlanMode" => t.stops += 1,
+                            "AskUserQuestion" => tally.questions += 1,
+                            "ExitPlanMode" => tally.stops += 1,
                             "Bash" => {
                                 if is_pr(cmd) {
-                                    t.prs += 1;
+                                    tally.prs += 1;
                                 }
                                 if is_release(cmd) {
-                                    t.releases += 1;
+                                    tally.releases += 1;
                                 }
                             }
                             _ => {}
@@ -1622,9 +1624,13 @@ impl Report {
         } else {
             out.push_str("exclusions:\n");
             let mut line = String::from(" ");
-            let n = counts.len();
+            let label_count = counts.len();
             for (k, c) in counts.into_iter().enumerate() {
-                let c = if k + 1 < n { format!("{c},") } else { c };
+                let c = if k + 1 < label_count {
+                    format!("{c},")
+                } else {
+                    c
+                };
                 if line.len() + c.len() + 1 > 78 {
                     out.push_str(&line);
                     out.push('\n');

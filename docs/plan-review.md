@@ -112,9 +112,9 @@ needed since the plan's last accepted body. `panel=current` lists none. A
 baseline stored before 3.22.0 reads in today's class names (`large` as
 `contract`, `ui` with `screen`), so a plan it covered stays current.
 
-`counts=` ends line 1 as one token with no spaces, so a reader that splits
-the line on spaces still finds every other key, and agent lines still start
-on line 2:
+`counts=` ends line 1 as one comma-separated token with no spaces, so a
+reader that splits line 1 on spaces still finds every other `key=value`,
+and agent lines still start on line 2:
 
 - `repos`: the machine comment's list;
 - `phases`: the phases under `## Phases`;
@@ -133,8 +133,10 @@ on line 2:
 
 `plan-panel` gives the plan file a `plan-id: p-<26-char ULID>` front-matter
 line when it has none, before it prints anything. The front matter is
-outside the body sha, so no review goes stale. The write takes the ledger
-lock, re-reads the file and refuses one changed since it was read
+outside the body sha, so no review goes stale. The write resolves a symlinked
+plan file first, takes the ledger lock (waiting up to 5 s: `ledger busy;
+nothing written. Run again: greenpiste plan-panel <path>`, exit 1), re-reads
+the file and refuses one changed since it was read
 (`plan changed under plan-panel; nothing written. Re-read <path>, then run:
 greenpiste plan-panel <path>`), then renames a temp file into place; a file
 it cannot write prints `cannot write plan-id: <path>: <error>`. Both exit 1
@@ -146,7 +148,10 @@ hook writes `plan-review/approved/<id>.json`
 "approved_at"}`), before it takes the ledger lock and without it. The next
 `plan-panel` on another body replaces the retired id
 (`replaced plan-id p-… (approved) with p-…` on stderr); a rejection retires
-nothing, so a revised plan stays one plan.
+nothing, so a revised plan stays one plan. A file's id is *live* until it
+was approved with another body: the ExitPlanMode hook and `record` read the
+id through that rule, so a plan edited over an approved one never inherits
+its id, even when `plan-panel` did not run in between.
 
 Each body `plan-panel` sees is mapped to its id in
 `plan-review/ids/<body_sha>.json` (`greenpiste-plan-id-v1`). `record` reads

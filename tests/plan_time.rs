@@ -537,12 +537,15 @@ fn a_landed_plan_with_a_plan_id_resolves_from_its_own_rows() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
-    let w = by_branch(&v, "plans", "feat/w");
-    assert_eq!(w["reviewed"], true, "{w}");
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let plan_w = by_branch(&report, "plans", "feat/w");
+    assert_eq!(plan_w["reviewed"], true, "{plan_w}");
     // T + 4000 → T + 6000 = 2000 s.
-    assert_eq!(w["elapsed_h"], 0.56, "{w}");
-    assert!(!w["words"].is_null(), "its round-1 body is its own: {w}");
+    assert_eq!(plan_w["elapsed_h"], 0.56, "{plan_w}");
+    assert!(
+        !plan_w["words"].is_null(),
+        "its round-1 body is its own: {plan_w}"
+    );
 }
 
 #[test]
@@ -583,20 +586,34 @@ fn time_usage_errors_exit_2() {
     }
 }
 
+/// A stdout whose read end is closed before the child starts, so its first
+/// write fails with EPIPE.
+#[cfg(unix)]
+fn closed_stdout() -> Stdio {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    extern "C" {
+        fn pipe(fds: *mut i32) -> i32;
+        fn close(fd: i32) -> i32;
+    }
+    let mut fds = [0i32; 2];
+    assert_eq!(unsafe { pipe(fds.as_mut_ptr()) }, 0);
+    assert_eq!(unsafe { close(fds[0]) }, 0);
+    Stdio::from(unsafe { OwnedFd::from_raw_fd(fds[1]) })
+}
+
+#[cfg(unix)]
 #[test]
-fn a_closed_pipe_exits_zero() {
+fn a_closed_stdout_exits_zero() {
     let fx = fixture("pipe");
-    let mut child = fx
+    // `plan-review` keeps SIGPIPE ignored, so the write fails as EPIPE and
+    // `main` treats it as the end of the reader: the command's own exit
+    // code (0 here), never a signal (141) or a panic (101).
+    let status = fx
         .command()
         .arg("--time")
-        .stdout(Stdio::piped())
+        .stdout(closed_stdout())
         .stderr(Stdio::null())
-        .spawn()
+        .status()
         .unwrap();
-    drop(child.stdout.take());
-    // `plan-review` keeps SIGPIPE ignored, so the write fails as EPIPE and
-    // `main` treats it as the end of the reader: exit 0, never a signal
-    // (141) or a panic (101).
-    let code = child.wait().unwrap().code();
-    assert_eq!(code, Some(0));
+    assert_eq!(status.code(), Some(0), "{status:?}");
 }
