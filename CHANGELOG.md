@@ -4,6 +4,11 @@
 
 ### Added
 
+- **The documentation and the CI install tests use the new names, and
+  `docs/migrate.md` describes the migration.** The guides name the
+  `GREENPISTE_*` variables, `greenpiste.*` keys and `~/.claude/greenpiste`;
+  the release workflow's install tests set `GREENPISTE_BIN_DIR` and
+  `GREENPISTE_VERSION`.
 - **The installers read `GREENPISTE_BIN_DIR` and `GREENPISTE_VERSION`.** The
   old `AMONT_AGENT_BIN_DIR` and `AMONT_AGENT_VERSION` still work while the new
   name is unset, with one warning naming the new one.

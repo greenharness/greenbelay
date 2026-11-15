@@ -7,7 +7,7 @@ another session can tell whether somebody else is working in the same place.
 ## The activity file
 
 One file per session, `<journal dir>/sessions/<full session id>.activity`
-(the journal dir is `<config dir>/amont-agent`, `~/.claude/amont-agent` by
+(the journal dir is `<config dir>/greenpiste`, `~/.claude/greenpiste` by
 default). Each line is
 
 ```text
@@ -75,7 +75,7 @@ untrimmed file), are each journalled once per session and then ignored.
 Advise, ceiling advise. On a session's first Edit, MultiEdit, Write or
 NotebookEdit in a repository, it advises once when another session's latest
 line names the same repository and that session is live. The window is 2 h
-and is set with `git config --global amont.agent.work-overlap.window`
+and is set with `git config --global greenpiste.work-overlap.window`
 (`90m`, `3h`, `2d`; a bare number is seconds). The message names the other
 session, its worktree, its branch, the title of the active plan its branch
 added (the first active file under `docs/plans` that the worktree's `HEAD`
@@ -105,7 +105,7 @@ activity files through the same reader as `work-overlap` and never writes
 them.
 
 Repositories: those named with `--repo` (resolved like plan-review `repos=`
-names: `git config amont.agent.plan-review.<name>.path`, else
+names: `git config greenpiste.plan-review.<name>.path`, else
 `<plan root>/<name>`), else the working directory's repository, else every git
 repository directly under the plan root.
 

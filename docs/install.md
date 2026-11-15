@@ -46,9 +46,13 @@ greenpiste doctor
 ```
 
 `cargo install greenpiste` places no `amont-agent` copy. The `amont-agent`
-crates stay at 3.35.0. Every name the tool reads and writes (the
-`~/.claude/amont-agent/` directory, `amont.agent.*` git config keys,
-`AMONT_AGENT_*` variables) is unchanged in this release.
+crates stay at 3.35.0. Release 5.0.0 also renames the names the tool reads
+and writes (the `~/.claude/greenpiste/` directory, `greenpiste.*` git config
+keys, `GREENPISTE_*` variables) and moves this machine's data once; see
+[migrating to the new data names](migrate.md).
+
+The installers read `GREENPISTE_BIN_DIR` and `GREENPISTE_VERSION`; the old
+`AMONT_AGENT_BIN_DIR` and `AMONT_AGENT_VERSION` still work, with a warning.
 
 ## Why there is no npm package
 
@@ -138,8 +142,8 @@ An agents directory or plugin manifest that cannot be read counts as installed.
 ## Turning it off
 
 ```sh
-AMONT_AGENT_OFF=1                                # this shell only
-git config --global amont.agent.enabled false    # everywhere
+GREENPISTE_OFF=1                                # this shell only
+git config --global greenpiste.enabled false    # everywhere
 greenpiste uninstall --write                    # remove the settings entries
 ```
 

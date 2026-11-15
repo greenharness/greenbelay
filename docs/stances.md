@@ -27,14 +27,14 @@ said nothing. The second is the rate the habit corrects on its own, and an
 Takes effect on the next command; nothing to restart.
 
 ```sh
-git config --global amont.agent.pipe-to-tail.stance observe
-git config --global amont.agent.stance observe          # every rule
+git config --global greenpiste.pipe-to-tail.stance observe
+git config --global greenpiste.stance observe          # every rule
 ```
 
 The ladder, most specific first:
 
 ```
-rule.default_stance  <  amont.agent.stance  <  amont.agent.<id>.stance
+rule.default_stance  <  greenpiste.stance  <  greenpiste.<id>.stance
 ```
 
 then capped at the rule's own ceiling, and clamped to `observe` if the guard
@@ -49,13 +49,13 @@ estimate — "this loop may make hundreds of requests" — is capped at
 analysis does not have.
 
 The cap is applied after every configured key, so neither
-`amont.agent.stance deny` nor the rule's own key can pass it, and
+`greenpiste.stance deny` nor the rule's own key can pass it, and
 `graduate --to deny` refuses a capped rule with the reason. `greenpiste
 rules` prints each rule's ceiling beside its stance.
 
 ## Raising a stance for named agents
 
-`amont.agent.<id>.denyAgents` lifts one rule from `advise` to `deny` for the
+`greenpiste.<id>.denyAgents` lifts one rule from `advise` to `deny` for the
 subagent types it lists, and leaves every other agent, the main conversation
 included, at the configured stance. It never raises `observe` (a switched-off
 guard, a shadow session, a rule set to observe), and the rule's ceiling still
@@ -94,6 +94,6 @@ a process standing in one can write. A file your global config `include`s or
 and this reader asks. `graduate` and `demote` write `--global`
 for the same reason.
 
-One consequence worth stating plainly: `git config amont.agent.<rule>.stance`
+One consequence worth stating plainly: `git config greenpiste.<rule>.stance`
 run inside a repository writes `--local` by default, and this tool will not
 read it. Pass `--global`, which is what every example here does.

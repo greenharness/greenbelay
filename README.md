@@ -46,7 +46,7 @@ greenpiste doctor           # installed, runnable, firing? plan root in use
 ```
 
 `install --write` also places the `clear-relay` Claude Code plugin under
-`<state dir>/amont-agent/claude-marketplace/` and enables it in the same
+`<state dir>/greenpiste/claude-marketplace/` and enables it in the same
 `settings.json`; `uninstall --write` removes it again.
 
 ## It measures before it blocks
@@ -71,8 +71,8 @@ and no repository can change a stance — stances live in your `--global` git
 config only:
 
 ```sh
-git config --global amont.agent.pipe-to-tail.stance observe   # one rule
-AMONT_AGENT_OFF=1                                             # this shell
+git config --global greenpiste.pipe-to-tail.stance observe   # one rule
+GREENPISTE_OFF=1                                             # this shell
 ```
 
 ## Runs alone

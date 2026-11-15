@@ -89,7 +89,7 @@ touches the world, and the world has moved since those commands ran. That number
 accumulates forward, in the journal:
 
 ```console
-$ grep push-landed ~/.claude/amont-agent/journal.log
+$ grep push-landed ~/.claude/greenpiste/journal.log
 ```
 
 `held` is a push that landed, `broken` one that did not, `unverified` one this

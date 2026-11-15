@@ -67,5 +67,5 @@ Golden fixtures for the heuristic live in `tests/fixtures/excerpt/`, pinned by
 ## Tests
 
 `cargo test --features test-hooks --test quiet`. The `test-hooks` feature adds
-failure injection (`AMONT_AGENT_TEST_LOG_FAIL_AFTER=<bytes>` and a few
+failure injection (`GREENPISTE_TEST_LOG_FAIL_AFTER=<bytes>` and a few
 reporting variables) that a normal build does not contain.

@@ -2,16 +2,20 @@
 
 Every key is plain `git config`, readable and removable without this tool.
 
+The keys live under `greenpiste.`. Keys written as `amont.agent.*` by an
+earlier release are migrated by `greenpiste migrate`; see
+[migrate](migrate.md). Environment variables start with `GREENPISTE_`.
+
 ## The kill switches
 
 | key | default | effect |
 |---|---|---|
-| `$AMONT_AGENT_OFF` | unset | any value switches the guard off for that shell |
-| `amont.agent.enabled` | `true` | switches it off everywhere |
+| `$GREENPISTE_OFF` | unset | any value switches the guard off for that shell |
+| `greenpiste.enabled` | `true` | switches it off everywhere |
 
 The environment variable is checked **first, before any rule runs**, because
 reading a git config key costs a process and the variable costs nothing.
-`amont.agent.enabled` is consulted only once something has already fired.
+`greenpiste.enabled` is consulted only once something has already fired.
 
 Both take git's own boolean dialect — `true`/`false`, `yes`/`no`, `on`/`off`,
 `1`/`0`, case-insensitively — because git parses them, not us. A value git
@@ -21,9 +25,9 @@ refuses warns once and falls back to the default rather than failing.
 
 | key | takes |
 |---|---|
-| `amont.agent.stance` | `observe` \| `advise` \| `deny` — every rule |
-| `amont.agent.<rule>.stance` | the same, for one rule |
-| `amont.agent.<rule>.denyAgents` | repeatable: an agent type (`relais:relais-worker-haiku-default`) or a prefix ending in `*` (`relais:relais-worker-haiku-*`) |
+| `greenpiste.stance` | `observe` \| `advise` \| `deny` — every rule |
+| `greenpiste.<rule>.stance` | the same, for one rule |
+| `greenpiste.<rule>.denyAgents` | repeatable: an agent type (`relais:relais-worker-haiku-default`) or a prefix ending in `*` (`relais:relais-worker-haiku-*`) |
 
 Most specific wins. See [stances](stances.md).
 
@@ -39,18 +43,18 @@ the refusal cannot be recorded, the rule advises instead of refusing every retry
 
 ```sh
 # add the value once (idempotent), and take it back out (exit 5 means it was already absent)
-git config --global --get-all amont.agent.symbol-grep-not-lsp.denyAgents | grep -qxF 'relais:relais-worker-haiku-*' \
-  || git config --global --add amont.agent.symbol-grep-not-lsp.denyAgents 'relais:relais-worker-haiku-*'
-git config --global --fixed-value --unset-all amont.agent.symbol-grep-not-lsp.denyAgents 'relais:relais-worker-haiku-*'
+git config --global --get-all greenpiste.symbol-grep-not-lsp.denyAgents | grep -qxF 'relais:relais-worker-haiku-*' \
+  || git config --global --add greenpiste.symbol-grep-not-lsp.denyAgents 'relais:relais-worker-haiku-*'
+git config --global --fixed-value --unset-all greenpiste.symbol-grep-not-lsp.denyAgents 'relais:relais-worker-haiku-*'
 ```
 
 ## The session notice
 
 | key | default | effect |
 |---|---|---|
-| `amont.agent.fetch` | `true` | may a session opening touch the network at all |
-| `amont.agent.agentsMdNotice` | `true` | may it mention a stale amont guidance block |
-| `amont.agent.opener` | platform opener | the command `greenpiste open` and `preview register --open` use to show a page: a template, split like shell words, `{}` replaced by the page inside each word (appended when absent), run with no shell. Unset: `open`, `xdg-open` or `rundll32 url.dll,FileProtocolHandler {}` |
+| `greenpiste.fetch` | `true` | may a session opening touch the network at all |
+| `greenpiste.agentsMdNotice` | `true` | may it mention a stale amont guidance block |
+| `greenpiste.opener` | platform opener | the command `greenpiste open` and `preview register --open` use to show a page: a template, split like shell words, `{}` replaced by the page inside each word (appended when absent), run with no shell. Unset: `open`, `xdg-open` or `rundll32 url.dll,FileProtocolHandler {}` |
 | `checkout.defaultRemote` | — | git's own key; which remote is *the* remote |
 
 ### Showing a page: `greenpiste open`
@@ -62,13 +66,13 @@ with no stdin or stdout and its error output kept in a temporary file; it is
 waited for up to 2 s. Exit 0, or still running at 2 s (a browser that became
 the process), counts as launched and it is never killed. Success prints
 nothing; a failure prints one line naming the page, the opener's error output
-and `amont.agent.opener`, and exits 1. A usage error exits 2.
+and `greenpiste.opener`, and exits 1. A usage error exits 2.
 
 The platform default can hand a page to an automation instance of the
 browser, so name the command that reaches your own:
 
 ```sh
-git config --global amont.agent.opener '"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" {}'
+git config --global greenpiste.opener '"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" {}'
 ```
 
 `preview register --open` uses the same opener and prints its JSON after the

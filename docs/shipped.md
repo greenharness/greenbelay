@@ -7,7 +7,7 @@ for the head of a GitHub squash.
 ## What it reads
 
 For each repository in the plan's front matter `repos:` list (resolved as
-`plan-panel` resolves them: git config `amont.agent.plan-review.<name>.path`,
+`plan-panel` resolves them: git config `greenpiste.plan-review.<name>.path`,
 else `<plan root>/<name>`, the plan root resolving exactly as plan review's
 does, working-directory fallback included: see
 [plan-review.md](plan-review.md)), it looks for `docs/plans/<the plan's file
@@ -94,10 +94,10 @@ amont  #338  9f1c2ab  v1.55.2  review reviewed · preview not-required · plan 0
 else on stdout. Exit 0 on success, 2 on a usage error (a missing or unknown
 argument, an unreadable plan), 1 when no repository could be read or the
 answer could not be written (a reader that closed the pipe is not an error). Payload
-files older than 30 days under `<config dir>/amont-agent/provenance/<repo>/`
+files older than 30 days under `<config dir>/greenpiste/provenance/<repo>/`
 are noted on stderr and never deleted.
 
 ## Budget
 
 One `gh pr view` per GitHub squash PR, and none for a merge commit or a
-non-GitHub origin. `AMONT_AGENT_GH` names another program in place of `gh`.
+non-GitHub origin. `GREENPISTE_GH` names another program in place of `gh`.
