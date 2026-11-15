@@ -316,6 +316,21 @@ dotfile or grh allowance tells an agent to use the old ones.
   with identical values (compared against a copy taken first). Not run on a
   real `kill -9`. `scripts/leak-hunt.sh` reports 40 of 40 test files clean.
 
+### Kept as they are (review lows, 2026-11-15)
+
+- `Step::plan` returns strings and a refusal is marked by one shared prefix
+  constant with tests; a typed `PlanLine` at the trait boundary waits for the census.
+- The migrate ↔ migrate_config/migrate_plugin module cycle and the lock-wait line
+  printed from `main` stay until the census deletes the area.
+- Ten tests need file permissions to be enforced (a mode 000 or 444 file or
+  directory) and fail when run as root; CI runs unprivileged.
+- Rotated `journal.log.N` collisions keep a `.from-old-*` side copy, unread by
+  `status`; reaching that needs a hook to rotate a journal inside the
+  rename-to-symlink window.
+- The log merge appends the old rows after the new file's rows, so a merged
+  journal is not in time order; every reader filters rows by their timestamp.
+- `migrate` takes no `--` or `-n`; the command has no operands.
+
 ## Rollback
 
 - Phase 4: `greenpiste migrate --reverse` (rows and headers written by 5.0 since migration are rewritten to the old schema, or listed as lost before 4.0.1 runs), then `brew` back to 4.0.1 (a tap

@@ -672,8 +672,12 @@ fn replace_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// keep a concurrent writer's row.
 ///
 /// Safe to run again after a kill between this append and the removal of the
-/// old file: when the new file already holds the old rows as one contiguous
-/// block after its header, nothing is appended.
+/// old file: when the new file already holds the old rows as whole rows (the
+/// block starts at a line boundary), nothing is appended. The limit is a
+/// duplicate, never a loss: a kill in the middle of the write leaves part of
+/// the rows appended, and the re-run appends them whole.
+// holds-until: a log row is never a byte-for-byte copy of the old file's rows
+// (rows carry a timestamp); a copy at the tail would skip the append.
 fn append_merge(old_file: &Path, new_file: &Path, shape: LogShape) -> io::Result<()> {
     use std::io::Write;
     let old_bytes = fs::read(old_file)?;
@@ -693,7 +697,7 @@ fn append_merge(old_file: &Path, new_file: &Path, shape: LogShape) -> io::Result
         LogShape::Journal => split_first_line(&new_bytes).1,
         LogShape::Rows => &new_bytes,
     };
-    if new_rows.windows(block.len()).any(|window| window == block) {
+    if holds_whole_rows(new_rows, &block) {
         return Ok(());
     }
     let mut out = Vec::with_capacity(block.len() + 1);
@@ -704,6 +708,24 @@ fn append_merge(old_file: &Path, new_file: &Path, shape: LogShape) -> io::Result
     let mut file = fs::OpenOptions::new().append(true).open(new_file)?;
     file.write_all(&out)?;
     file.sync_all()
+}
+
+/// Whether `rows` holds `block` starting at a line boundary, so a short old
+/// row that is only the tail of a longer new row is never taken for rows that
+/// were already merged. It compares at each row start only, which is cheap on
+/// a journal (rotated at 256 KB) and on a ledger.
+fn holds_whole_rows(rows: &[u8], block: &[u8]) -> bool {
+    let mut start = 0;
+    while start < rows.len() {
+        if rows[start..].starts_with(block) {
+            return true;
+        }
+        match rows[start..].iter().position(|byte| *byte == b'\n') {
+            Some(end) => start += end + 1,
+            None => return false,
+        }
+    }
+    false
 }
 
 fn split_first_line(bytes: &[u8]) -> (&[u8], &[u8]) {
@@ -1475,6 +1497,25 @@ mod tests {
         fs::write(&old_file, "old-header\nold1\nold2\n").unwrap();
         fs::write(&new_file, "new-header\nnew1\n").unwrap();
         (scratch, old_file, new_file)
+    }
+
+    #[test]
+    fn an_old_row_that_is_only_the_tail_of_a_new_row_is_still_appended() {
+        let (_scratch, old_file, new_file) = log_pair("tail");
+        fs::write(&old_file, "old-header\n1}\n").unwrap();
+        fs::write(&new_file, "new-header\n{\"n\":1}\n").unwrap();
+        append_merge(&old_file, &new_file, LogShape::Journal).unwrap();
+        assert_eq!(
+            fs::read_to_string(&new_file).unwrap(),
+            "new-header\n{\"n\":1}\n1}\n",
+            "a fragment at the end of a longer row is not a merged row"
+        );
+        // and a whole-row repeat at the tail is recognised
+        append_merge(&old_file, &new_file, LogShape::Journal).unwrap();
+        assert_eq!(
+            fs::read_to_string(&new_file).unwrap(),
+            "new-header\n{\"n\":1}\n1}\n"
+        );
     }
 
     #[test]

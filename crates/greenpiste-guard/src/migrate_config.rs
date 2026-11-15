@@ -348,8 +348,16 @@ impl<'env> IncludeWalk<'env> {
         }
         let real = match fs::canonicalize(&path) {
             Ok(real) => real,
-            // an include of a file that does not exist is skipped, as git does
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+            // an include of a file that does not exist, or whose path runs
+            // through a regular file, is skipped, as git does
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+                ) =>
+            {
+                return Ok(())
+            }
             Err(e) => {
                 return Err(StepError::io(
                     format!("cannot resolve config file {}", path.display()),
@@ -1067,6 +1075,25 @@ mod tests {
             "{error}"
         );
         assert_eq!(fs::read(&global).unwrap(), text);
+    }
+
+    #[test]
+    fn an_include_through_a_regular_file_is_skipped_as_git_does() {
+        let (_scratch, root, env) = machine();
+        let home = root.join("home");
+        let plain = home.join("plain");
+        fs::write(&plain, "not a directory\n").unwrap();
+        fs::write(
+            home.join(".gitconfig"),
+            format!(
+                "[include]\n\tpath = {}\n",
+                plain.join("inc.gitconfig").display()
+            ),
+        )
+        .unwrap();
+        ConfigKeys::new()
+            .plan(&env, Direction::Forward)
+            .expect("an include behind a regular file is skipped, not an error");
     }
 
     #[test]
