@@ -794,7 +794,7 @@ mod tests {
     #[test]
     fn a_journal_under_either_header_is_read() {
         let dir = std::env::temp_dir().join(format!("greenpiste-headers-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir); // a missing scratch dir is the normal case
         fs::create_dir_all(&dir).expect("scratch dir");
         let now = 2_000_000u64;
         for header in [
@@ -810,7 +810,7 @@ mod tests {
             let seen = tally_at(&path, 100_000, now);
             assert_eq!(seen["pipe-to-tail"].denied, 2, "{header}");
         }
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup; a leftover temp dir is harmless
     }
 
     /// The implementation review's lines count under the buckets the soak

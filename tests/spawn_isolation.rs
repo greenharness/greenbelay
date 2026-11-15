@@ -7,24 +7,10 @@ use std::path::Path;
 
 /// Files that start the binary and genuinely cannot name the variables: the
 /// file name and the reason.
-const ALLOW: &[(&str, &str)] = &[
-    (
-        "preview.rs",
-        "isolates system git config with GIT_CONFIG_SYSTEM=/dev/null",
-    ),
-    (
-        "stance_scope.rs",
-        "isolates system git config with GIT_CONFIG_SYSTEM",
-    ),
-    (
-        "board.rs",
-        "isolates system git config with GIT_CONFIG_SYSTEM=/dev/null",
-    ),
-    (
-        "names.rs",
-        "only quotes the binary's variable name in a string; it spawns nothing",
-    ),
-];
+const ALLOW: &[(&str, &str)] = &[(
+    "names.rs",
+    "only quotes the binary's variable name in a string; it spawns nothing",
+)];
 
 const REQUIRED: [&str; 4] = [
     "CLAUDE_CONFIG_DIR",
@@ -41,7 +27,13 @@ fn missing_isolation(source: &str) -> Vec<&'static str> {
     }
     REQUIRED
         .into_iter()
-        .filter(|variable| !source.contains(variable))
+        .filter(|variable| {
+            // `GIT_CONFIG_SYSTEM` (pointed at /dev/null) isolates the system
+            // scope as well as `GIT_CONFIG_NOSYSTEM` does.
+            let stands_in =
+                *variable == "GIT_CONFIG_NOSYSTEM" && source.contains("GIT_CONFIG_SYSTEM");
+            !source.contains(variable) && !stands_in
+        })
         .collect()
 }
 
@@ -84,4 +76,9 @@ fn the_checker_flags_a_source_that_starts_the_binary_without_the_variables() {
         vec!["XDG_STATE_HOME", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"]
     );
     assert!(missing_isolation("fn unrelated() {}").is_empty());
+    let system = format!("{partial} XDG_STATE_HOME GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM");
+    assert!(
+        missing_isolation(&system).is_empty(),
+        "GIT_CONFIG_SYSTEM stands in for NOSYSTEM"
+    );
 }

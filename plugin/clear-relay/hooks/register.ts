@@ -106,7 +106,8 @@ async function defaultStateDir($: Engine): Promise<string | undefined> {
   const config = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? ''
   if (config !== '') return `${config}/state/greenpiste`
 
-  const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE')) ?? ''
+  const nonEmpty = (value: string | undefined) => (value === '' ? undefined : value)
+  const home = nonEmpty(await $.env.get('HOME')) ?? nonEmpty(await $.env.get('USERPROFILE')) ?? ''
   return home !== '' ? `${home}/.local/state/greenpiste` : undefined
 }
 

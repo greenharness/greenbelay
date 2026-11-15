@@ -323,3 +323,11 @@ test('no stateDir and no home at all: no log, no path at the root, and the relay
   expect(logPaths(world)).toEqual([])
   expect(world.toasts[0]).toMatch(/^clear within 10 s/)
 })
+
+test('no stateDir: an empty HOME falls through to USERPROFILE', { options: {} }, async ($, on) => {
+  const world = stage($, on)
+  world.env.set('HOME', '')
+  world.env.set('USERPROFILE', '/users/person')
+  await answer($, LINE)
+  expect(logPaths(world)).toEqual(['/users/person/.local/state/greenpiste/clear-relay/s1.jsonl'])
+})

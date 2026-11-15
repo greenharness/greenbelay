@@ -261,7 +261,9 @@ dotfile or grh allowance tells an agent to use the old ones.
   `grh/scripts/e2e.sh`, `grh/catalog.toml` (skills pin), `grh/manifests/greenpiste.toml`
   (5.0.0 pin); skills and grh released.
 - [ ] Phase 6 — record: `decisions/docs/programmes/gate-guardrails/map.md`
-  (3b-2 done; the census list gains every old read this plan keeps).
+  (3b-2 done; the census list gains every old read this plan keeps, and what the
+  migration leaves behind: the four marker files and the lock file in the Claude
+  config directory, and the symlinks at the old state roots).
 
 ## Verification
 
@@ -298,6 +300,22 @@ dotfile or grh allowance tells an agent to use the old ones.
 - Phase 5: skills and grh CI green; `rg -n 'amont-agent|amont\.agent|AMONT_AGENT'`
   over the changed skill and dotfile files lists none.
 
+### Observed (2026-11-15, before the push)
+
+- Phase 1: relais 0.61.0 and greengate 4.5.0 released and installed here
+  (`relais --version`, `greengate --version`); their tests read each name.
+- Phase 2: `cargo test --workspace` passes in the commit gate; the names test
+  also refuses an old prefix in any case; a journal of either header and
+  outcome and merge rows of either schema are read (unit tests in
+  journal.rs and review_outcomes.rs).
+- Phase 3: the migration ran against scratch machines in `tests/migrate.rs`
+  (forward, second run, reverse, held lock, failed step, 50 hooks one
+  attempt, reverse then hook then migrate keeping every row), and ran once on
+  this machine by accident (below): 30 keys, both state roots and the plugin
+  registration moved in 430 ms, and `migrate --reverse` put all 30 keys back
+  with identical values (compared against a copy taken first). Not run on a
+  real `kill -9`. `scripts/leak-hunt.sh` reports 40 of 40 test files clean.
+
 ## Rollback
 
 - Phase 4: `greenpiste migrate --reverse` (rows and headers written by 5.0 since migration are rewritten to the old schema, or listed as lost before 4.0.1 runs), then `brew` back to 4.0.1 (a tap
@@ -316,6 +334,18 @@ reads left are the ones the census list names.
   rewritten.
 - 2026-11-14 — major version 5.0.0: env and config names change.
 - 2026-11-15 — the migration lock is greenpiste's own `flock` helper, moved to `greenpiste-guard::lock`, not `greenharness-slots`': greenpiste takes no `greenharness-*` crate (every part stays optional), and the lock only guards greenpiste's own migration.
+- 2026-11-15 — incident: tests of this branch migrated the author's real home.
+  Every subcommand migrates first, and test files that started the binary
+  without scratch paths (nineteen, then a second kind that left
+  `XDG_STATE_HOME` or the git config inherited) reached the real config
+  directory, git config and state root. Cause found by running each test file
+  against a canary machine; fixed by scratch paths on every spawn,
+  `tests/spawn_isolation.rs` (static) and `scripts/leak-hunt.sh` (dynamic).
+  The installed 4.x hooks ignored the migrated `greenpiste.*` keys for about
+  three hours until `migrate --reverse` restored them.
+- 2026-11-15 — the review panel found that hooks which cannot migrate wrote a
+  new root beside the old one; `settings::data_dir()` is now the one resolver
+  and the merge appends colliding logs.
 - 2026-11-15 — the greengate Phase 1 reviews found that a provenance payload still in the old directory was skipped once the new root existed; greengate now reads per payload, so Phase 3 needs no ordering constraint on provenance.
 
 <!-- panel: repos=amont-agent,relais,amont,grh,greenharness-skills,dotfiles,decisions adds=contract reviewers=backend,lang:rust,lang:typescript body-sha=2f09c81bd251 -->

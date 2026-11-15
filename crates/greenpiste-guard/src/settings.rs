@@ -42,7 +42,9 @@ pub fn config_dir() -> Option<std::path::PathBuf> {
     if let Some(d) = std::env::var_os("CLAUDE_CONFIG_DIR") {
         return Some(std::path::PathBuf::from(d));
     }
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    let home = std::env::var_os("HOME")
+        .filter(|d| !d.is_empty())
+        .or_else(|| std::env::var_os("USERPROFILE"))?;
     Some(std::path::PathBuf::from(home).join(".claude"))
 }
 
@@ -82,7 +84,9 @@ pub fn state_root() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|d| !d.is_empty()) {
         return Some(PathBuf::from(dir).join("state"));
     }
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    let home = std::env::var_os("HOME")
+        .filter(|d| !d.is_empty())
+        .or_else(|| std::env::var_os("USERPROFILE"))?;
     Some(PathBuf::from(home).join(".local").join("state"))
 }
 
