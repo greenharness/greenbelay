@@ -129,7 +129,7 @@ If either tool is absent (`command -v` fails) or older (exit 2, an unknown flag)
   - attribution failures: 1,347 in worktrees whose `worktree add` survives in no transcript (742 of them in one worktree, `happier-wt-m2-mockups`, created before the 30-day transcript retention), and 500 in detached or removed worktrees.
 
   The report prints both shares, and the bar is checked on the failure share.
-- 2026-11-15 (build) — **Runtime is 67.8–72.3 s wall, against the 60 s bar** (release build, 30-day window, 32 s CPU, load average about 20 from a concurrent LLVM build). Recorded as a miss under load, not fixed: CPU time is half the bar.
+- 2026-11-15 (build) — **Runtime is 67.8–72.3 s wall (32 s CPU on the first run, 37 s on the last), against the 60 s bar** (release build, 30-day window, 32 s CPU, load average about 20 from a concurrent LLVM build). Recorded as a miss under load, not fixed: CPU time is half the bar.
 - 2026-11-15 (build) — **A closed pipe exits 0 as specified**: `plan-review` joins the subcommands that keep SIGPIPE ignored (`src/main.rs`), so the write fails as EPIPE and `main` ends quietly (the builder's first version had restored SIGPIPE, ending by the signal; the unix review caught it).
 
 ## Verification
@@ -153,6 +153,7 @@ If either tool is absent (`command -v` fails) or older (exit 2, an unknown flag)
   Delta: all approve-with-changes, with no high or blocking finding.
 - Deliberate, filed as one follow-up: `clip` when `done < start` (a rebased commit date; theoretical), stops and questions after `done`, the EPIPE exit code, flush, the SIGPIPE comment, commas between exclusion labels, the `HashSet` import, a `clip` unit test, typed errors, and the `(Option<u64>, u64)` sentinel.
 
+- implementation-review on the closing commit (tree 7c9c52ce7074, opus): approve-with-changes. Two low findings fixed here: the CPU figures and the population behind 61. One kept as deliberate: Phase 2 closes with two bars missed as worded, which are recorded in Verification, the Decision log and the Outcome.
 ## Outcome
 Shipped, all installed here on 2026-11-15:
 - greenpiste 4.2.0 `plan-review stats --time` (#261, #262);
@@ -165,7 +166,7 @@ The first 30-day measure: a median 0.63 h blocked over 73 reviewed plans, so the
 Surprises, from running against live data:
 - `gitBranch` is frozen at the session's start.
 - The landed-body sha resolves 17 of 157 plans in the ledger; the machine comment's `body-sha` resolves 75 of 90.
-- Reused `~/.claude/plans` files share one `first_round_sha`, so 61 plans have no round-1 body of their own.
+- Reused `~/.claude/plans` files share one `first_round_sha`, so 61 plans in the window (open and finished, the `shared_first_round` count) have no round-1 body of their own.
 - Worktrees added through `git -C $VAR` mapped to the wrong repository.
 - Subagents' worktree adds sit in `subagents/` transcripts.
 - Half of blocked time runs on no landed plan's branch.
