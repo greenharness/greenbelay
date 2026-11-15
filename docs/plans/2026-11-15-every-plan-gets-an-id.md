@@ -1,5 +1,5 @@
 ---
-status: active
+status: done              # live checks open to 2026-12-19 (see Verification)
 branch: feat/plan-id
 repos: [relais, amont-agent, greenharness-skills, grh, decisions]
 adrs: [ADR-0070, ADR-0039]
@@ -137,7 +137,7 @@ repos=… areas=… body=… panel=… seats=… counts=repos:3,phases:6,prs:3,r
 - The `plan-review-backend` subtract step reads `merge-candidates`.
 
 ## Phases
-- [ ] Phase 1 — relais reads the new fields: `relais/crates/relais/src/review_outcome.rs`, `relais/CHANGELOG.md`. Release v0.63.0 (tag-release) and install it here.
+- [x] Phase 1 — relais reads the new fields: `relais/crates/relais/src/review_outcome.rs`, `relais/CHANGELOG.md`. Release v0.63.0 (tag-release) and install it here.
 - [x] Phase 2 — the plan id and the ledger:
   - `crates/greenpiste-process/src/plan_review.rs` (assign and retire the id, `baseline`, `save`, `judge`'s call);
   - `crates/greenpiste-process/src/review_outcomes.rs` (`recorded`, `record_locked`: rows, rounds and first rounds by `plan_id`; `on_plan_answered`: retire the id when `approved`);
@@ -152,9 +152,9 @@ repos=… areas=… body=… panel=… seats=… counts=repos:3,phases:6,prs:3,r
   - `crates/greenpiste-process/src/plan_time.rs` (key by `plan-id`, the follow-ups);
   - `tests/plan_review.rs` (:1483 and :1510 expect the trailing `counts=`; the agent-line tests stay), `tests/plan_time.rs`;
   - `docs/plan-review.md`, `CHANGELOG.md`.
-- [ ] Phase 4 — release greenpiste 4.3.0 (tag-release), after Phase 1's relais is installed: `Cargo.toml`, `Cargo.lock`, `greenharness.toml`, `CHANGELOG.md`. Install it here. The data-names branch rebases over 4.3.0, and its schema rename must carry `plan_id` and `counts` (tell that session at release).
-- [ ] Phase 5 — skills: `greenharness-skills/parts/workflow/skills/plan-review/SKILL.md`, `greenharness-skills/parts/workflow/skills/worktree-task/plan-template.md`, `greenharness-skills/parts/workflow/agents/plan-review-backend.md`. Release skills v0.9.0, pin it in `grh/catalog.toml` (grh 0.6.2), install it, and run `grh install workflow --yes`.
-- [ ] Phase 6 — decisions: `docs/programmes/time-to-done/map.md` (B5 and B9 built; the done check is unblocked).
+- [x] Phase 4 — release greenpiste 4.3.0 (tag-release), after Phase 1's relais is installed: `Cargo.toml`, `Cargo.lock`, `greenharness.toml`, `CHANGELOG.md`. Install it here. The data-names branch rebases over 4.3.0, and its schema rename must carry `plan_id` and `counts` (tell that session at release).
+- [x] Phase 5 — skills: `greenharness-skills/parts/workflow/skills/plan-review/SKILL.md`, `greenharness-skills/parts/workflow/skills/worktree-task/plan-template.md`, `greenharness-skills/parts/workflow/agents/plan-review-backend.md`. Release skills v0.9.0, pin it in `grh/catalog.toml` (grh 0.6.2), install it, and run `grh install workflow --yes`.
+- [x] Phase 6 — decisions: `docs/programmes/time-to-done/map.md` (B5 and B9 built; the done check is unblocked).
 
 ## Decision log
 - 2026-11-15 — The person chose the redesign (a plan id) over the branch/H1 heuristic. The heuristic split plans by guessing; an id makes plan identity a fact.
@@ -205,5 +205,30 @@ repos=… areas=… body=… panel=… seats=… counts=repos:3,phases:6,prs:3,r
   - the docs and CHANGELOG wording (`plan.counts` is an object, `words:` shows `/R1` whenever round 1 exists).
 
 ## Outcome
+Shipped and installed here on 2026-11-15:
+- relais 0.63.0 (relais#472, #473);
+- greenpiste 4.3.0 (#264, #265);
+- skills 0.9.0 (skills#25) and grh 0.6.2 (grh#42);
+- the decisions map (decisions#207).
+
+Records:
+- relais 0.63.0 and greenpiste 4.3.0 were installed via brew, and skills 0.9.0 via grh 0.6.2 and `grh install workflow --yes`, all on 2026-11-15.
+- Phase 6 check: `relais programme check docs/programmes/time-to-done` exited 0 in decisions on 2026-11-15, before decisions#207.
+- The data-names session was told at release (2026-11-15, in a session message). Its rebase carries `plan_id`, `plan.counts` and the new store directories.
+- Tests named by the plan, all passing in the 1,953-test run: `plan_panel_assigns_a_plan_id_once_and_keeps_stdout` (tests/plan_review.rs) and `a_landed_plan_with_a_plan_id_resolves_from_its_own_rows` (tests/plan_time.rs).
+- Deferrals: the deliberate lows are listed under B9 in decisions `docs/programmes/time-to-done/map.md`. They end when that follow-up is built, at the latest before the 2026-12-19 done check.
+
+Live checks:
+- `plan-panel` on a scratch plan wrote `plan-id: p-01M7G5NH…` into its front matter, and a second run left the file byte-identical;
+- line 1 ended `counts=repos:4,phases:6,…,merge-candidates:1+2;2+3;3+4`;
+- the installed skills name `plan-id`.
+
+**Surprise:** relais had been dropping 996 of 1,561 review rows (64 %) as invalid, because greenpiste writes fields its strict reader never declared. All review rows now parse, and relais labels 1,187 of them.
+
+**Not fixed:** 424 merge rows still count invalid, because relais's merge-row reader lacks `applied_labels`. That is a follow-up in the programme map.
+
+**To watch:**
+- the first real panel after the release gets a `plan-id:`, and its rows carry it;
+- after a week, `plan_id: null` rows dated after the install number 0.
 
 <!-- panel: repos=relais,amont-agent,greenharness-skills,grh,decisions adds=cli,contract reviewers=backend,lang:rust,unix,tui,architect body-sha=f1267bf8ce83 -->
