@@ -61,6 +61,10 @@ impl Step for ConfigKeys {
     fn reverse(&self, env: &Env) -> Result<String, String> {
         migrate_machine(env, Rename::REVERSE, self.between)
     }
+
+    fn plan(&self, env: &Env, direction: Direction) -> Result<Vec<String>, String> {
+        plan_machine(env, Rename::for_direction(direction))
+    }
 }
 
 /// Rename the keys in a repository's own config and worktree config. For a
@@ -366,6 +370,35 @@ fn migrate_machine(env: &Env, rename: Rename, between: Between) -> Result<String
         ));
     }
     finish(moved, errors)
+}
+
+/// What [`migrate_machine`] would rename, read through `git config --list`
+/// only; no file is opened for writing.
+fn plan_machine(env: &Env, rename: Rename) -> Result<Vec<String>, String> {
+    let (tops, command_keys) = inventory(env, rename)?;
+    let mut lines = Vec::new();
+    for file in collect_files(env, tops)? {
+        let mut seen: Vec<String> = Vec::new();
+        for entry in list_file(env, &file)? {
+            let Some(new_key) = rename.apply(&entry.key) else {
+                continue;
+            };
+            if !seen.contains(&entry.key) {
+                lines.push(format!(
+                    "rename {} to {new_key} in {}",
+                    entry.key,
+                    file.display()
+                ));
+                seen.push(entry.key);
+            }
+        }
+    }
+    for key in command_keys {
+        lines.push(format!(
+            "refuse: {key} is set by the command line or GIT_CONFIG_COUNT, which no file holds"
+        ));
+    }
+    Ok(lines)
 }
 
 fn finish(moved: usize, errors: Vec<String>) -> Result<String, String> {

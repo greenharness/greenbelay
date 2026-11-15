@@ -90,6 +90,10 @@ usage: ",
   install [--write]     add the hook to settings.json (prints it by default), and
                         place and enable the clear-relay plugin
   uninstall [--write]   remove exactly what install added, the plugin included
+  migrate [--reverse] [--dry-run]
+                        move this machine's state, git config keys and plugin
+                        registration to the current names (or back); --dry-run
+                        says what would change and writes nothing
   status                every rule, its stance, and what it has seen
   doctor [--json]       is the guard installed, runnable, and actually firing?
                         --json prints the findings and, apart from health, the
@@ -236,9 +240,10 @@ enum Sub {
     Board,
     Open,
     Suppressions,
+    Migrate,
 }
 
-const SUBCOMMANDS: [(&str, Sub); 32] = [
+const SUBCOMMANDS: [(&str, Sub); 33] = [
     ("hook", Sub::Hook),
     ("install", Sub::Install),
     ("uninstall", Sub::Uninstall),
@@ -271,6 +276,7 @@ const SUBCOMMANDS: [(&str, Sub); 32] = [
     ("board", Sub::Board),
     ("open", Sub::Open),
     ("suppressions", Sub::Suppressions),
+    ("migrate", Sub::Migrate),
 ];
 
 enum Invocation {
@@ -342,6 +348,130 @@ fn die_on_sigpipe() {
 #[cfg(not(unix))]
 fn die_on_sigpipe() {}
 
+/// Run the one-time migration before a command, never failing it. `migrate`
+/// and `doctor` report on the migration themselves; a command asked for its
+/// help is only reading. A hook says nothing: its stdout is a decision.
+fn preflight_migration(name: &Sub, args: &[OsString]) {
+    let asks_help = args.iter().any(|a| a == "--help" || a == "-h");
+    if matches!(name, Sub::Migrate | Sub::Doctor) || asks_help {
+        return;
+    }
+    let pending = greenpiste_guard::migrate::preflight();
+    if pending && !matches!(name, Sub::Hook) {
+        eprintln!("{BIN}: migration pending: run {BIN} migrate");
+    }
+}
+
+const MIGRATE_WAIT_CAP: std::time::Duration = std::time::Duration::from_secs(30);
+
+fn run_migrate(args: &[OsString]) -> ExitCode {
+    use greenpiste_guard::migrate::{self, Direction, MigrateError, Outcome, Wait};
+    let mut direction = Direction::Forward;
+    let mut dry_run = false;
+    for arg in args {
+        match arg.to_string_lossy().as_ref() {
+            "--reverse" => direction = Direction::Reverse,
+            "--dry-run" => dry_run = true,
+            "--help" | "-h" => {
+                println!(concat!(
+                    "usage: ",
+                    greenpiste_guard::bin!(),
+                    " migrate [--reverse] [--dry-run]"
+                ));
+                println!();
+                println!("Move this machine's state directories, git config keys and plugin");
+                println!("registration to the current names; --reverse moves them back.");
+                println!("  --dry-run  print what would change; write nothing, take no lock");
+                return ExitCode::SUCCESS;
+            }
+            other => {
+                eprintln!("{BIN}: migrate takes --reverse and --dry-run, not {other}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+    let Some(env) = migrate::Env::from_process() else {
+        eprintln!("{BIN}: {}", MigrateError::NoHome);
+        return ExitCode::FAILURE;
+    };
+    if dry_run {
+        return match migrate::machine_plan(&env, direction) {
+            Ok(lines) => {
+                for line in lines {
+                    println!("would: {line}");
+                }
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("{BIN}: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    // Say once that another process holds the lock before waiting for it; a
+    // lock the probe gets is released at once.
+    let probe = greenpiste_guard::lock::lock_within(
+        &env.config_dir
+            .join(greenpiste_guard::names::MIGRATE_LOCK_FILE),
+        std::time::Duration::ZERO,
+    );
+    if matches!(probe, Ok(None)) {
+        eprintln!("{BIN}: waiting for another migration to finish");
+    }
+    drop(probe);
+    let outcome = migrate::machine_in(&env, direction, Wait::Capped(MIGRATE_WAIT_CAP));
+    let verdict = match outcome {
+        Ok(Outcome::Migrated { steps, elapsed }) => {
+            for step in &steps {
+                println!("{step}");
+            }
+            format!(
+                "migrated {} steps in {:.1}s",
+                steps.len(),
+                elapsed.as_secs_f64()
+            )
+        }
+        Ok(Outcome::AlreadyDone | Outcome::FailedBefore | Outcome::Busy) => {
+            "already migrated".to_string()
+        }
+        Ok(Outcome::Reversed) => "reversed".to_string(),
+        Ok(Outcome::ReversedAlready) => "already reversed".to_string(),
+        Err(error) => {
+            eprintln!(
+                "{BIN}: {error}\nfix what it names, then run `{BIN} migrate` again (or \
+                 `{BIN} migrate --reverse` to put everything back)"
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(error) = migrate_local_repository(&env, direction) {
+        eprintln!("{BIN}: {error}");
+        return ExitCode::FAILURE;
+    }
+    println!("{verdict}");
+    ExitCode::SUCCESS
+}
+
+/// An explicit run inside a git repository also renames that repository's own
+/// config keys; never a hook's job.
+fn migrate_local_repository(
+    env: &greenpiste_guard::migrate::Env,
+    direction: greenpiste_guard::migrate::Direction,
+) -> Result<(), String> {
+    let Ok(here) = std::env::current_dir() else {
+        return Ok(());
+    };
+    let inside = std::process::Command::new("git")
+        .current_dir(&here)
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if !inside {
+        return Ok(());
+    }
+    greenpiste_guard::migrate_config::migrate_local(env, &here, direction).map(drop)
+}
+
 fn main() -> ExitCode {
     // `suppressions --staged` must see the index git handed the hook (a
     // temporary one on `commit -a` and `commit <path>`), so it is read here,
@@ -397,6 +527,9 @@ fn main() -> ExitCode {
         }
     ) {
         die_on_sigpipe();
+    }
+    if let Invocation::Sub { name, args } = &invocation {
+        preflight_migration(name, args);
     }
     match invocation {
         Invocation::Help => {
@@ -475,6 +608,7 @@ fn main() -> ExitCode {
                     ExitCode::FAILURE
                 }
             }
+            Sub::Migrate => run_migrate(&args),
             Sub::Corpus => run_corpus(&args),
             Sub::Graduate => run_graduate(&args, true),
             Sub::Demote => run_graduate(&args, false),

@@ -12,6 +12,23 @@
   following `include` and `includeIf` whether or not the condition holds).
   Each key is copied, read back, and only then removed, so an interrupted run
   loses nothing and a re-run adds nothing; `--reverse` puts the old keys back.
+- **`greenpiste migrate [--reverse] [--dry-run]`** runs the migration by hand:
+  it waits up to 30 seconds for the lock, prints a line per step and a last
+  line (`migrated N steps in X.Xs`, `already migrated`, `reversed` or `already
+  reversed`), and exits 1 with the repair when a step refuses. `--dry-run`
+  prints `would: ...` for each change and writes nothing. Run inside a git
+  repository, it also renames that repository's own config keys.
+- **The migration has a plugin-registration step**: the `clear-relay` plugin's
+  enabled-plugin key, known-marketplace entry and path, `stateDir` option and
+  the placed `marketplace.json` name move to the new marketplace id (and back
+  with `--reverse`). A disabled entry stays disabled, other settings are left
+  as they are, and a `settings.json` holding both registrations is refused
+  with nothing written.
+- **Every command, hooks included, migrates this machine on its first run
+  without ever blocking or refusing.** A hook never waits for the lock, tries a
+  failed migration only once, and prints nothing extra; any other command
+  says `migration pending: run greenpiste migrate` when a step failed. `--help`,
+  `--version`, `doctor` and `migrate` never trigger it.
 
 ### Changed
 

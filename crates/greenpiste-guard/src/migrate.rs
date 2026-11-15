@@ -61,6 +61,8 @@ pub trait Step {
     /// Do the step; the `Ok` text is a note ("" when there is none).
     fn forward(&self, env: &Env) -> Result<String, String>;
     fn reverse(&self, env: &Env) -> Result<String, String>;
+    /// What the step would do in `direction`, one line each, reading only.
+    fn plan(&self, env: &Env, direction: Direction) -> Result<Vec<String>, String>;
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -134,7 +136,59 @@ pub fn steps() -> Vec<Box<dyn Step>> {
     vec![
         Box::new(StateDirectories::new()),
         Box::new(crate::migrate_config::ConfigKeys::new()),
+        Box::new(crate::migrate_plugin::PluginRegistration::new()),
     ]
+}
+
+/// What the real steps would do in `direction`, each line prefixed with its
+/// step's name; reads only and takes no lock.
+pub fn machine_plan(env: &Env, direction: Direction) -> Result<Vec<String>, MigrateError> {
+    let mut lines = Vec::new();
+    let owned = steps();
+    let ordered: Vec<&Box<dyn Step>> = match direction {
+        Direction::Forward => owned.iter().collect(),
+        Direction::Reverse => owned.iter().rev().collect(),
+    };
+    for step in ordered {
+        let planned = step
+            .plan(env, direction)
+            .map_err(|message| MigrateError::Step {
+                step: step.name().to_string(),
+                message,
+            })?;
+        lines.extend(
+            planned
+                .into_iter()
+                .map(|line| format!("{}: {line}", step.name())),
+        );
+    }
+    Ok(lines)
+}
+
+/// Run the migration for a command that must never fail: every outcome and
+/// every error is swallowed. Returns whether a failed-marker is waiting, so a
+/// caller that may talk can say the migration is pending.
+pub fn preflight() -> bool {
+    let attempted = std::panic::catch_unwind(|| {
+        if let Some(env) = Env::from_process() {
+            if nothing_old(&env) {
+                return failure_note(&env).is_some();
+            }
+        }
+        let _ = machine(Wait::Zero); // a hook is never blocked or refused by the migration
+        Env::from_process()
+            .and_then(|env| failure_note(&env))
+            .is_some()
+    });
+    attempted.unwrap_or(false)
+}
+
+/// Whether neither old root exists, as a directory or a symlink: a machine
+/// that never ran the old tool has nothing to move, and its commands should
+/// not pay for the git calls of the config step.
+fn nothing_old(env: &Env) -> bool {
+    !exists(&env.config_dir.join(old::DATA_DIR))
+        && !exists(&env.state_root.with_file_name(old::DATA_DIR))
 }
 
 fn exists(path: &Path) -> bool {
@@ -221,7 +275,7 @@ pub fn run(
                     }
                 }
             }
-            write_marker(&done, "")?;
+            write_marker(&done, &format!("{}\n", started.elapsed().as_millis()))?;
             remove_marker(&reversed)?;
             remove_marker(&failed)?;
             Ok(Outcome::Migrated {
@@ -416,6 +470,53 @@ impl Step for StateDirectories {
             }
         }
         Ok(notes.join("; "))
+    }
+
+    fn plan(&self, env: &Env, direction: Direction) -> Result<Vec<String>, String> {
+        let mut lines = Vec::new();
+        for (old_path, new_path) in StateDirectories::roots(env) {
+            let (old_meta, new_exists) = (old_path.symlink_metadata().ok(), exists(&new_path));
+            let (old, new) = (old_path.display(), new_path.display());
+            match direction {
+                Direction::Forward => match old_meta {
+                    Some(meta) if meta.file_type().is_symlink() => {}
+                    Some(meta) if meta.is_dir() && new_exists => {
+                        lines.push(format!(
+                            "merge {old} into {new} and leave a symlink at {old}"
+                        ));
+                    }
+                    Some(meta) if meta.is_dir() => {
+                        lines.push(format!(
+                            "rename {old} to {new} and leave a symlink at {old}"
+                        ));
+                    }
+                    Some(_) => lines.push(format!("refuse: {old} is a file, not a directory")),
+                    None if new_exists => lines.push(format!("leave a symlink at {old} to {new}")),
+                    None => {}
+                },
+                Direction::Reverse => {
+                    match &old_meta {
+                        Some(meta) if meta.file_type().is_symlink() => {
+                            lines.push(format!("remove the symlink at {old}"));
+                        }
+                        Some(meta) if meta.is_dir() && new_exists => {
+                            lines.push(format!("merge {old} into {new}"));
+                        }
+                        _ => {}
+                    }
+                    if new_exists {
+                        lines.push(format!("rename {new} to {old}"));
+                    }
+                }
+            }
+        }
+        if direction == Direction::Reverse && exists(&env.config_dir.join(names::DATA_DIR)) {
+            lines.push(format!(
+                "rewrite the journal header and review-row schemas under {} to the old names",
+                env.config_dir.join(old::DATA_DIR).display()
+            ));
+        }
+        Ok(lines)
     }
 
     fn reverse(&self, env: &Env) -> Result<String, String> {
@@ -698,7 +799,8 @@ mod tests {
             steps,
             vec![
                 "state-directories".to_string(),
-                "git config keys".to_string()
+                "git config keys".to_string(),
+                "plugin registration".to_string()
             ]
         );
         assert!(elapsed < Duration::from_secs(60));
@@ -707,6 +809,24 @@ mod tests {
         assert_eq!(fs::read_link(config_old(&env)).unwrap(), config_new(&env));
         assert_eq!(fs::read_link(state_old(&env)).unwrap(), env.state_root);
         assert!(exists(&env.config_dir.join(names::MIGRATE_DONE_MARKER)));
+    }
+
+    #[test]
+    fn plan_reads_only() {
+        let (_scratch, env) = machine_tree();
+        let step = StateDirectories::new();
+        for direction in [Direction::Forward, Direction::Reverse] {
+            let config = snapshot(&env.config_dir);
+            let state = snapshot(state_old(&env).parent().unwrap());
+            let times = mtimes(&env.config_dir);
+            let lines = step.plan(&env, direction).unwrap();
+            if direction == Direction::Forward {
+                assert_eq!(lines.len(), 2, "{lines:?}");
+            }
+            assert_eq!(snapshot(&env.config_dir), config);
+            assert_eq!(snapshot(state_old(&env).parent().unwrap()), state);
+            assert_eq!(mtimes(&env.config_dir), times);
+        }
     }
 
     #[test]
@@ -888,6 +1008,9 @@ mod tests {
         }
         fn reverse(&self, _env: &Env) -> Result<String, String> {
             Ok(String::new())
+        }
+        fn plan(&self, _env: &Env, _direction: Direction) -> Result<Vec<String>, String> {
+            Ok(Vec::new())
         }
     }
 

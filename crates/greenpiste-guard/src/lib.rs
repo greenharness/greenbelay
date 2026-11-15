@@ -30,6 +30,7 @@ pub mod lock;
 pub mod lsp;
 pub mod migrate;
 pub mod migrate_config;
+pub mod migrate_plugin;
 pub mod mine;
 pub mod names;
 pub mod notes_names;
