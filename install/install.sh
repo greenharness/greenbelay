@@ -23,7 +23,7 @@ if [ -n "${NO_COLOR:-}" ] || [ ! -t 1 ]; then RED=''; GREEN=''; YELLOW=''; OFF='
 
 say()  { printf '  %s\n' "$1"; }
 ok()   { printf "  ${GREEN}✓${OFF} %s\n" "$1"; }
-warn() { printf "  ${YELLOW}!${OFF} %s\n" "$1"; }
+warn() { printf "  ${YELLOW}!${OFF} %s\n" "$1" >&2; }
 die()  { printf "  ${RED}✗${OFF} %s\n" "$1" >&2; exit 1; }
 
 # The settings are GREENPISTE_BIN_DIR and GREENPISTE_VERSION. Their old names,

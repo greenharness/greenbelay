@@ -300,3 +300,26 @@ test('no stateDir: an empty XDG_STATE_HOME is ignored', { options: {} }, async (
   await answer($, LINE)
   expect(logPaths(world)).toEqual(['/home/person/.local/state/greenpiste/clear-relay/s1.jsonl'])
 })
+
+test('no stateDir: an empty CLAUDE_CONFIG_DIR is ignored', { options: {} }, async ($, on) => {
+  const world = stage($, on)
+  world.env.set('CLAUDE_CONFIG_DIR', '')
+  await answer($, LINE)
+  expect(logPaths(world)).toEqual(['/home/person/.local/state/greenpiste/clear-relay/s1.jsonl'])
+})
+
+test('no stateDir: USERPROFILE stands in for a missing HOME', { options: {} }, async ($, on) => {
+  const world = stage($, on)
+  world.env.delete('HOME')
+  world.env.set('USERPROFILE', '/users/person')
+  await answer($, LINE)
+  expect(logPaths(world)).toEqual(['/users/person/.local/state/greenpiste/clear-relay/s1.jsonl'])
+})
+
+test('no stateDir and no home at all: no log, no path at the root, and the relay still arms', { options: {} }, async ($, on) => {
+  const world = stage($, on)
+  world.env.delete('HOME')
+  await answer($, LINE)
+  expect(logPaths(world)).toEqual([])
+  expect(world.toasts[0]).toMatch(/^clear within 10 s/)
+})
