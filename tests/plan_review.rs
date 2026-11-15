@@ -1011,7 +1011,7 @@ fn plan_panel_lists_what_the_hook_will_require() {
     let full = panel(&plan);
     assert!(
         full.starts_with(&format!(
-            "repos=tool areas=cli,lang:rust body={} panel=full seats=paths\n",
+            "repos=tool areas=cli,lang:rust body={} panel=full seats=paths counts=",
             w.short(&plan)
         )),
         "{full}"
@@ -1027,17 +1027,24 @@ fn plan_panel_lists_what_the_hook_will_require() {
         t.review(&w, agent, &w.block(&plan, lang), Done::Foreground);
     }
     assert_eq!(w.present(&plan, &t), Said::Silent);
-    assert!(panel(&plan).contains(" panel=current seats=paths\n"));
+    assert!(panel(&plan).contains(" panel=current seats=paths counts="));
 
     // A change the person asks for, adding an interface: the delta, `ui`
-    // seating react and ui-design only (`screen` seats the other two).
-    let plan = w.plan(
-        "p.md",
-        &BODY.replace("The work.", "Changed."),
-        "repos=tool adds=ui",
-    );
+    // seating react and ui-design only (`screen` seats the other two). An
+    // edit keeps the front matter, and so the plan-id.
+    std::fs::write(
+        &plan,
+        std::fs::read_to_string(&plan)
+            .unwrap()
+            .replace("The work.", "Changed.")
+            .replace(
+                "<!-- panel: repos=tool -->",
+                "<!-- panel: repos=tool adds=ui -->",
+            ),
+    )
+    .unwrap();
     let delta = panel(&plan);
-    assert!(delta.contains("panel=delta seats=paths\n"), "{delta}");
+    assert!(delta.contains("panel=delta seats=paths counts="), "{delta}");
     assert!(
         delta.ends_with("plan-review-backend\nplan-review-react\nplan-review-ui-design\n"),
         "{delta}"
@@ -1106,22 +1113,32 @@ fn an_edited_plan_in_a_new_session_is_a_delta_not_a_full_panel() {
         String::from_utf8(out.stdout).unwrap()
     };
     let plan = w.plan("p.md", BODY, "repos=tool");
+    panel(&plan); // gives the plan its plan-id
     let mut t = Transcript::default();
     full_panel(&w, &mut t, &plan);
     assert_eq!(w.present(&plan, &t), Said::Silent);
 
-    // A new session: a new random file name, one line edited.
-    let moved = w.plan(
-        "resumed-name.md",
-        &BODY.replace("The work.", "The work, edited."),
+    // A new session: a new random file name, one line edited, the front
+    // matter (and so the plan-id) carried along.
+    let moved = w.root.join("plans").join("resumed-name.md");
+    std::fs::write(
+        &moved,
+        std::fs::read_to_string(&plan)
+            .unwrap()
+            .replace("The work.", "The work, edited."),
+    )
+    .unwrap();
+    let delta = panel(&moved);
+    assert!(delta.contains("panel=delta seats=paths counts="), "{delta}");
+    assert!(delta.ends_with("\nplan-review-backend\n"), "{delta}");
+
+    // The same edit with no plan-id is another plan: a full panel.
+    let bare = w.plan(
+        "bare-name.md",
+        &BODY.replace("The work.", "The work, edited again."),
         "repos=tool",
     );
-    let delta = panel(&moved);
-    assert!(delta.contains("panel=delta seats=paths\n"), "{delta}");
-    assert!(
-        delta.ends_with("panel=delta seats=paths\nplan-review-backend\n"),
-        "{delta}"
-    );
+    assert!(panel(&bare).contains("panel=full seats=paths counts="));
     let mut fresh = Transcript::default();
     fresh.review(
         &w,
@@ -1137,7 +1154,7 @@ fn an_edited_plan_in_a_new_session_is_a_delta_not_a_full_panel() {
         &BODY.replace("# Plan", "# Another plan"),
         "repos=tool",
     );
-    assert!(panel(&other).contains("panel=full seats=paths\n"));
+    assert!(panel(&other).contains("panel=full seats=paths counts="));
 }
 
 #[test]
@@ -1232,7 +1249,10 @@ fn a_review_bound_before_2_25_still_passes_and_is_journalled() {
     .unwrap();
     let out = w2.bin().arg("plan-panel").arg(&again).output().unwrap();
     let panel = String::from_utf8(out.stdout).unwrap();
-    assert!(panel.contains(" panel=current seats=paths\n"), "{panel}");
+    assert!(
+        panel.contains(" panel=current seats=paths counts="),
+        "{panel}"
+    );
     assert_eq!(w2.present(&again, &Transcript::default()), Said::Silent);
 
     let both = w
@@ -1352,22 +1372,36 @@ fn a_plan_without_a_code_review_section_warns_and_keeps_its_stdout() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.starts_with(&format!(
-            "repos=tool areas=cli,lang:rust body={} panel=full seats=paths\n",
+            "repos=tool areas=cli,lang:rust body={} panel=full seats=paths counts=",
             w.short(&plan)
         )),
         "{stdout}"
     );
     assert!(!stdout.contains("Code review"), "{stdout}");
+    let err = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
-        String::from_utf8_lossy(&out.stderr).trim(),
+        err.lines().next().unwrap_or(""),
         "greenpiste: plan-panel: no ## Code review section; run plan-panel --code-review and add it after ## Non-goals"
+    );
+    // The only other line is the plan-id it assigned.
+    assert!(
+        err.lines()
+            .skip(1)
+            .all(|l| l.starts_with("greenpiste: plan-panel: assigned plan-id p-")),
+        "{err}"
     );
 
     let declared = format!("{BODY}\n## Code review\n\n- tool: backend, unix\n");
     let plan = w.plan("q.md", &declared, "repos=tool");
     let out = w.bin().arg("plan-panel").arg(&plan).output().unwrap();
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    assert!(out.stderr.is_empty(), "{out:?}");
+    // Nothing to warn about: only the plan-id it assigned.
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.lines()
+            .all(|l| l.starts_with("greenpiste: plan-panel: assigned plan-id p-")),
+        "{err}"
+    );
 }
 
 #[test]
@@ -1427,7 +1461,7 @@ fn a_plan_is_seated_from_the_files_its_phases_name_not_every_area() {
     let first = out.lines().next().unwrap();
     assert!(
         first.starts_with("repos=app areas=cli,lang:rust body=")
-            && first.ends_with(" panel=full seats=paths"),
+            && first.contains(" panel=full seats=paths counts="),
         "{out}"
     );
     assert_eq!(
@@ -1472,7 +1506,7 @@ fn a_plan_is_seated_from_the_files_its_phases_name_not_every_area() {
     // No file named: today's area seats, and the advice on stderr only.
     let (out, err) = panel(NO_PATHS);
     assert!(
-        out.lines().next().unwrap().ends_with(" seats=areas"),
+        out.lines().next().unwrap().contains(" seats=areas counts="),
         "{out}"
     );
     for agent in [
@@ -1499,7 +1533,7 @@ fn a_plan_is_seated_from_the_files_its_phases_name_not_every_area() {
         "- [ ] Phase 1 — `src/main.rs`\n- [ ] Phase 2 — release and install",
     ));
     assert!(
-        out.lines().next().unwrap().ends_with(" seats=areas"),
+        out.lines().next().unwrap().contains(" seats=areas counts="),
         "{out}"
     );
     assert!(out.lines().any(|l| l == "plan-review-ux-research"), "{out}");
@@ -1606,7 +1640,10 @@ fn a_baseline_stored_before_the_split_stays_current() {
     .unwrap();
     let out = w.bin().arg("plan-panel").arg(&plan).output().unwrap();
     let panel = String::from_utf8(out.stdout).unwrap();
-    assert!(panel.contains(" panel=current seats=areas\n"), "{panel}");
+    assert!(
+        panel.contains(" panel=current seats=areas counts="),
+        "{panel}"
+    );
 }
 
 /// A plan over a Rust and a TypeScript file, every phase naming one: each
@@ -1734,12 +1771,15 @@ fn a_delta_to_one_language_phase_re_requires_that_seat_alone() {
     }
     assert_eq!(world.present(&plan, &transcript), Said::Silent);
 
-    // The person asks for a change to the TypeScript phase only.
-    let plan = world.plan(
-        "p.md",
-        &TWO_LANGS.replace("the TypeScript part.", "the TypeScript part, changed."),
-        "repos=tool",
-    );
+    // The person asks for a change to the TypeScript phase only: an edit,
+    // so the front matter (and the plan-id plan-panel wrote) stays.
+    std::fs::write(
+        &plan,
+        std::fs::read_to_string(&plan)
+            .unwrap()
+            .replace("the TypeScript part.", "the TypeScript part, changed."),
+    )
+    .unwrap();
     let said = world.present(&plan, &transcript);
     let Said::Deny(why) = &said else {
         panic!("{said:?}")
@@ -2189,4 +2229,451 @@ fn plan_panel_proposes_the_profiles_when_no_default_branch_is_known() {
         err.trim_end().ends_with("; the profiles are proposed"),
         "{err}"
     );
+}
+
+/// The `plan-panel` stdout, stderr and success for `plan`.
+fn plan_panel(world: &World, plan: &Path) -> (String, String, bool) {
+    let out = world.bin().arg("plan-panel").arg(plan).output().unwrap();
+    (
+        String::from_utf8(out.stdout).unwrap(),
+        String::from_utf8(out.stderr).unwrap(),
+        out.status.success(),
+    )
+}
+
+/// ExitPlanMode answered on `plan` (PostToolUse): the hook's own output.
+fn answer(world: &World, plan: &Path, response: serde_json::Value) -> std::process::Output {
+    let payload = serde_json::json!({
+        "hook_event_name": "PostToolUse", "tool_name": "ExitPlanMode",
+        "session_id": "s1", "cwd": world.root,
+        "tool_input": {"plan": "x", "planFilePath": plan},
+        "tool_response": response,
+    });
+    let mut child = world
+        .bin()
+        .arg("hook")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(payload.to_string().as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+/// The person approves the plan (a `plan` in the tool response).
+fn approve_plan(world: &World, plan: &Path) -> std::process::Output {
+    answer(
+        world,
+        plan,
+        serde_json::json!({"plan": "x", "isAgent": false, "filePath": plan}),
+    )
+}
+
+/// The person rejects the plan (an error string in the tool response).
+fn reject_plan(world: &World, plan: &Path) -> std::process::Output {
+    answer(
+        world,
+        plan,
+        serde_json::json!("The user doesn't want to proceed with this tool use."),
+    )
+}
+
+fn plan_id_of(plan: &Path) -> Option<String> {
+    std::fs::read_to_string(plan)
+        .unwrap()
+        .lines()
+        .find_map(|l| l.strip_prefix("plan-id: ").map(str::to_string))
+}
+
+/// A stdout whose read end is already closed when the child starts, so its
+/// first write fails with EPIPE (a reader that closed after the child wrote
+/// would test nothing).
+#[cfg(unix)]
+fn closed_stdout() -> std::process::Stdio {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    extern "C" {
+        fn pipe(fds: *mut i32) -> i32;
+        fn close(fd: i32) -> i32;
+    }
+    let mut fds = [0i32; 2];
+    assert_eq!(unsafe { pipe(fds.as_mut_ptr()) }, 0);
+    assert_eq!(unsafe { close(fds[0]) }, 0);
+    std::process::Stdio::from(unsafe { OwnedFd::from_raw_fd(fds[1]) })
+}
+
+/// The ledger's review rows, parsed.
+fn review_rows(world: &World) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(world.store().join("outcomes.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| v.get("role").is_some() && v.get("round").is_some())
+        .collect()
+}
+
+/// `plan-review record` on `transcript`, with `stdout` for its stdout.
+fn record(
+    world: &World,
+    transcript: &Transcript,
+    plan: &Path,
+    stdout: std::process::Stdio,
+) -> std::process::ExitStatus {
+    let file = world.root.join("t.jsonl");
+    std::fs::write(&file, transcript.lines.join("\n") + "\n").unwrap();
+    world
+        .bin()
+        .args(["plan-review", "record", "--transcript"])
+        .arg(&file)
+        .arg(plan)
+        .stdin(std::process::Stdio::null())
+        .stdout(stdout)
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap()
+}
+
+#[test]
+fn plan_panel_assigns_a_plan_id_once_and_keeps_stdout() {
+    let world = World::new("plan-id-assign");
+    rust_cli(&world);
+    let plan = world.plan("x.md", BODY, "repos=tool");
+    let sha = world.short(&plan);
+    let (first_out, first_err, ok) = plan_panel(&world, &plan);
+    assert!(ok, "{first_err}");
+    let id = plan_id_of(&plan).expect("an id in the front matter");
+    assert!(id.starts_with("p-") && id.len() == 28, "{id}");
+    assert!(
+        first_err.contains(&format!("assigned plan-id {id}")),
+        "{first_err}"
+    );
+    assert_eq!(world.short(&plan), sha, "the id is outside the body sha");
+    let before = std::fs::read(&plan).unwrap();
+    let (second_out, second_err, _) = plan_panel(&world, &plan);
+    assert_eq!(
+        first_out, second_out,
+        "the run that assigns the id prints the same stdout"
+    );
+    assert!(!second_err.contains("plan-id"), "{second_err}");
+    assert_eq!(
+        std::fs::read(&plan).unwrap(),
+        before,
+        "a second run leaves the file byte-identical"
+    );
+    assert!(!first_out.contains("plan-id"), "{first_out}");
+}
+
+#[test]
+fn a_new_plan_in_an_approved_file_gets_its_own_id_and_a_full_panel() {
+    let world = World::new("plan-id-reuse");
+    rust_cli(&world);
+    let plan = world.plan("x.md", BODY, "repos=tool");
+    plan_panel(&world, &plan);
+    let first_id = plan_id_of(&plan).unwrap();
+    let mut transcript = Transcript::default();
+    full_panel(&world, &mut transcript, &plan);
+    assert_eq!(world.present(&plan, &transcript), Said::Silent);
+    approve_plan(&world, &plan);
+    // The next plan, in the same file, keeping the old front matter (an
+    // edit, not a fresh Write).
+    let text = std::fs::read_to_string(&plan)
+        .unwrap()
+        .replace("The work.", "Another plan entirely.");
+    std::fs::write(&plan, text).unwrap();
+    let (out, err, ok) = plan_panel(&world, &plan);
+    assert!(ok, "{err}");
+    let next_id = plan_id_of(&plan).unwrap();
+    assert_ne!(first_id, next_id);
+    assert!(
+        err.contains(&format!(
+            "replaced plan-id {first_id} (approved) with {next_id}"
+        )),
+        "{err}"
+    );
+    assert!(
+        out.lines().next().unwrap().contains(" panel=full "),
+        "{out}"
+    );
+}
+
+#[test]
+fn the_hook_seats_a_full_panel_for_a_plan_edited_after_approval_without_plan_panel() {
+    let world = World::new("plan-id-live");
+    rust_cli(&world);
+    let plan = world.plan("x.md", BODY, "repos=tool");
+    plan_panel(&world, &plan);
+    let mut transcript = Transcript::default();
+    full_panel(&world, &mut transcript, &plan);
+    assert_eq!(world.present(&plan, &transcript), Said::Silent);
+    approve_plan(&world, &plan);
+    // Another plan is edited into the same file, and plan-panel never runs:
+    // the file still carries the approved plan's `plan-id:` line.
+    let text = std::fs::read_to_string(&plan)
+        .unwrap()
+        .replace("The work.", "A different plan, written over the old one.");
+    std::fs::write(&plan, text).unwrap();
+    // Backend alone reviewed it: a delta would be satisfied. The id is
+    // retired, so the whole panel is required.
+    let mut backend_only = Transcript::default();
+    backend_only.review(
+        &world,
+        "plan-review-backend",
+        &world.block(&plan, None),
+        Done::Foreground,
+    );
+    let Said::Deny(why) = world.present(&plan, &backend_only) else {
+        panic!("a full panel was required")
+    };
+    for role in ["lang:rust", "tui", "unix"] {
+        assert!(why.contains(role), "{role}: {why}");
+    }
+}
+
+#[test]
+fn a_rejected_plan_keeps_its_id_and_its_edit_is_a_delta() {
+    let world = World::new("plan-id-reject");
+    rust_cli(&world);
+    let plan = world.plan("x.md", BODY, "repos=tool");
+    plan_panel(&world, &plan);
+    let first_id = plan_id_of(&plan).unwrap();
+    let mut transcript = Transcript::default();
+    full_panel(&world, &mut transcript, &plan);
+    assert_eq!(world.present(&plan, &transcript), Said::Silent);
+    reject_plan(&world, &plan);
+    let text = std::fs::read_to_string(&plan)
+        .unwrap()
+        .replace("The work.", "The work, as the person asked.");
+    std::fs::write(&plan, text).unwrap();
+    let (out, _, _) = plan_panel(&world, &plan);
+    assert_eq!(plan_id_of(&plan).unwrap(), first_id);
+    assert!(
+        out.lines().next().unwrap().contains(" panel=delta "),
+        "{out}"
+    );
+}
+
+/// Holds the ledger lock (an exclusive `flock`) until dropped.
+#[cfg(unix)]
+fn hold_ledger_lock(world: &World) -> std::fs::File {
+    use std::os::unix::io::AsRawFd;
+    extern "C" {
+        fn flock(fd: i32, op: i32) -> i32;
+    }
+    let store = world.store();
+    std::fs::create_dir_all(&store).unwrap();
+    let lock = std::fs::File::create(store.join("outcomes.jsonl.lock")).unwrap();
+    assert_eq!(unsafe { flock(lock.as_raw_fd(), 2) }, 0);
+    lock
+}
+
+#[cfg(unix)]
+#[test]
+fn an_approval_is_recorded_while_the_ledger_is_locked() {
+    let world = World::new("plan-id-locked");
+    rust_cli(&world);
+    let plan = world.plan("x.md", BODY, "repos=tool");
+    plan_panel(&world, &plan);
+    let first_id = plan_id_of(&plan).unwrap();
+    // Another writer holds the ledger lock past the hook's budget.
+    let lock = hold_ledger_lock(&world);
+    approve_plan(&world, &plan);
+    drop(lock);
+    let record = std::fs::read_to_string(
+        world
+            .store()
+            .join("approved")
+            .join(format!("{first_id}.json")),
+    )
+    .expect("approval written");
+    assert!(record.contains("greenpiste-plan-approval-v1"), "{record}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_busy_ledger_is_refused_without_touching_the_plan() {
+    let world = World::new("plan-id-busy");
+    rust_cli(&world);
+    let plan = world.plan("x.md", BODY, "repos=tool");
+    let before = std::fs::read(&plan).unwrap();
+    let lock = hold_ledger_lock(&world);
+    let (out, err, ok) = plan_panel(&world, &plan);
+    drop(lock);
+    assert!(!ok);
+    assert!(out.is_empty(), "{out}");
+    assert!(
+        err.contains("plan-panel: ledger busy; nothing written. Run again: greenpiste plan-panel "),
+        "{err}"
+    );
+    assert_eq!(std::fs::read(&plan).unwrap(), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_read_only_plan_file_is_refused_with_nothing_on_stdout() {
+    use std::os::unix::fs::PermissionsExt;
+    let world = World::new("plan-id-readonly");
+    rust_cli(&world);
+    let plan = world.plan("x.md", BODY, "repos=tool");
+    let plans = world.root.join("plans");
+    std::fs::set_permissions(&plans, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let (out, err, ok) = plan_panel(&world, &plan);
+    std::fs::set_permissions(&plans, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(!ok);
+    assert!(out.is_empty(), "{out}");
+    assert!(err.contains("plan-panel: cannot write plan-id:"), "{err}");
+    assert!(
+        err.contains("make it writable, then run: greenpiste plan-panel "),
+        "{err}"
+    );
+    assert!(plan_id_of(&plan).is_none());
+}
+
+#[test]
+fn an_unwritable_approval_store_leaves_the_hook_exit_and_stdout_alone() {
+    let world = World::new("plan-id-approval-fails");
+    rust_cli(&world);
+    let plan = world.plan("x.md", BODY, "repos=tool");
+    plan_panel(&world, &plan);
+    let first_id = plan_id_of(&plan).unwrap();
+    // `approved` is a file, so the store cannot be made.
+    std::fs::write(world.store().join("approved"), "not a directory").unwrap();
+    let out = approve_plan(&world, &plan);
+    assert!(out.status.success(), "{out:?}");
+    assert!(out.stdout.is_empty(), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains(&format!(
+            "plan-review: could not record approval of {first_id}:"
+        )),
+        "{err}"
+    );
+    assert!(
+        err.contains("delete the plan-id: line to start a new one."),
+        "{err}"
+    );
+}
+
+#[test]
+fn an_unreadable_plan_at_approval_is_reported_not_swallowed() {
+    let world = World::new("plan-id-approval-unreadable");
+    let out = approve_plan(&world, &world.root.join("plans").join("gone.md"));
+    assert!(out.status.success(), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("plan-review: could not record approval: cannot read "),
+        "{err}"
+    );
+}
+
+#[test]
+fn rows_and_rounds_follow_the_plan_id() {
+    let world = World::new("plan-id-rows");
+    rust_cli(&world);
+    let plan = world.plan("x.md", BODY, "repos=tool");
+    plan_panel(&world, &plan);
+    let first_id = plan_id_of(&plan).unwrap();
+    // Backend alone, notified (so with an agent id), on plan A then plan B.
+    let mut transcript = Transcript::default();
+    transcript.review(
+        &world,
+        "plan-review-backend",
+        &world.block(&plan, None),
+        Done::NotifiedUser,
+    );
+    approve_plan(&world, &plan);
+    let text = std::fs::read_to_string(&plan)
+        .unwrap()
+        .replace("The work.", "Plan B.");
+    std::fs::write(&plan, text).unwrap();
+    plan_panel(&world, &plan);
+    let next_id = plan_id_of(&plan).unwrap();
+    transcript.review(
+        &world,
+        "plan-review-backend",
+        &world.block(&plan, None),
+        Done::NotifiedUser,
+    );
+    assert!(record(&world, &transcript, &plan, std::process::Stdio::null()).success());
+    let rows = review_rows(&world);
+    let of = |id: &str| {
+        rows.iter()
+            .filter(|r| r["plan_id"] == id)
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        !of(&first_id).is_empty() && !of(&next_id).is_empty(),
+        "{rows:?}"
+    );
+    for row in of(&next_id) {
+        assert_eq!(row["round"], 1, "{row}");
+        assert_eq!(row["first_round_sha"], row["body_sha"], "{row}");
+    }
+    // B's body is the file's, so its rows describe it, counts included (A's
+    // body changed before `record`, so its rows carry no features).
+    assert!(
+        of(&next_id)
+            .iter()
+            .all(|r| r["plan"]["counts"]["phases"].as_u64() == Some(1)),
+        "{rows:?}"
+    );
+}
+
+#[test]
+fn a_body_without_a_plan_id_records_a_null_plan_id() {
+    let world = World::new("plan-id-null");
+    rust_cli(&world);
+    let plan = world.plan("x.md", BODY, "repos=tool");
+    let mut transcript = Transcript::default();
+    transcript.review(
+        &world,
+        "plan-review-backend",
+        &world.block(&plan, None),
+        Done::NotifiedUser,
+    );
+    assert!(record(&world, &transcript, &plan, std::process::Stdio::null()).success());
+    let rows = review_rows(&world);
+    assert!(!rows.is_empty());
+    for row in rows {
+        assert!(row["plan_id"].is_null(), "{row}");
+        assert_eq!(row["round"], 1, "{row}");
+    }
+    assert!(plan_id_of(&plan).is_none(), "record never writes the plan");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_closed_stdout_keeps_the_exit_code_on_success_and_on_failure() {
+    let world = World::new("closed-stdout");
+    rust_cli(&world);
+    let plan = world.plan("x.md", BODY, "repos=tool");
+    // Success: the review has an agent id, a row is written, exit 0.
+    let mut transcript = Transcript::default();
+    transcript.review(
+        &world,
+        "plan-review-backend",
+        &world.block(&plan, None),
+        Done::NotifiedUser,
+    );
+    let status = record(&world, &transcript, &plan, closed_stdout());
+    assert_eq!(status.code(), Some(0), "{status:?}");
+    // Failure: a foreground review carries no agent id, so nothing is
+    // written and the command exits 1 with its message for a closed pipe.
+    let world = World::new("closed-stdout-failure");
+    rust_cli(&world);
+    let plan = world.plan("x.md", BODY, "repos=tool");
+    let mut transcript = Transcript::default();
+    transcript.review(
+        &world,
+        "plan-review-backend",
+        &world.block(&plan, None),
+        Done::Foreground,
+    );
+    let status = record(&world, &transcript, &plan, closed_stdout());
+    assert_eq!(status.code(), Some(1), "{status:?}");
 }

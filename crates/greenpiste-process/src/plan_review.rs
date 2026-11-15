@@ -1148,6 +1148,9 @@ pub struct Baseline {
     /// written before 3.23.0, which kept no slices (decision 3: its delta
     /// keeps the old rule); `Some` of an empty map had nothing sliced.
     pub slices: Option<BTreeMap<String, SliceRecord>>,
+    /// The plan's `plan-id:` at that pass; `None` for a plan without one,
+    /// or a baseline saved before 4.3.0.
+    pub plan_id: Option<crate::plan_id::PlanId>,
 }
 
 /// A sliced role's slice as a baseline keeps it: its sha and one sha per
@@ -1495,6 +1498,10 @@ fn load(file: &Path) -> Option<Baseline> {
         roles: set("roles"),
         classes,
         slices: v.get("slices").and_then(slice_records),
+        plan_id: v
+            .get("plan_id")
+            .and_then(|p| p.as_str())
+            .and_then(|p| crate::plan_id::PlanId::try_from(p).ok()),
     })
 }
 
@@ -1512,17 +1519,29 @@ fn title_key(text: &str, repos: &[String]) -> Option<String> {
 /// to ask for backend plus the reviewers of new areas instead of the whole
 /// panel. Two plans with the same H1 and repositories share a title
 /// baseline; backend still reviews the body.
-pub fn baseline(path: &str, sha: &str, legacy: &str, title: Option<&str>) -> Option<Baseline> {
+///
+/// The older-body lookups (by path, by title) count only for the same plan:
+/// their stored `plan_id` must equal `plan_id`, and a baseline with no id
+/// matches only a plan with no id. Plan mode reuses a file for the next
+/// plan, which would otherwise be seated as a delta of the last one.
+pub fn baseline(
+    path: &str,
+    sha: &str,
+    legacy: &str,
+    title: Option<&str>,
+    plan_id: Option<&crate::plan_id::PlanId>,
+) -> Option<Baseline> {
     let s = store()?;
     let by_path = load(&s.join("by-path").join(format!("{}.json", key(path))));
     let by_body = |b: &str| load(&s.join("by-body").join(format!("{b}.json")));
+    let same_plan = |b: &Baseline| b.plan_id.as_ref() == plan_id;
     by_path
         .clone()
         .filter(|b| of_body(&b.sha, sha, legacy))
         .or_else(|| by_body(sha))
         .or_else(|| by_body(legacy)) // LEGACY
-        .or(by_path)
-        .or_else(|| load(&s.join("by-title").join(format!("{}.json", title?))))
+        .or(by_path.filter(same_plan))
+        .or_else(|| load(&s.join("by-title").join(format!("{}.json", title?))).filter(same_plan))
 }
 
 pub(crate) fn private_dir(dir: &Path) -> Option<()> {
@@ -1542,6 +1561,7 @@ fn save(path: &str, title: Option<&str>, b: &Baseline) -> Option<()> {
         "classes": b.classes,
         "names": NAMES,
         "path": path,
+        "plan_id": b.plan_id.as_ref().map(|id| id.as_str()),
         "slices": b.slices.as_ref().map(|m| {
             m.iter()
                 .map(|(r, s)| (r.clone(), serde_json::json!({"sha": s.sha, "spans": s.spans})))
@@ -1867,7 +1887,10 @@ fn judged(ev: &PlanExit) -> Result<Judged, Early> {
     };
 
     let title = title_key(&text, &m.repos);
-    let base = baseline(&path, &sha, &legacy, title.as_deref());
+    // The file's id counts only while it is live: a plan approved and then
+    // edited into a new plan keeps its old line, and must not inherit it.
+    let plan_id = crate::plan_id::live(&text);
+    let base = baseline(&path, &sha, &legacy, title.as_deref(), plan_id.as_ref());
     // The slice part of the journal excerpt: which roles are sliced, and
     // whether the baseline predates slices (decision 3).
     let slice_note = {
@@ -1935,6 +1958,7 @@ fn judged(ev: &PlanExit) -> Result<Judged, Early> {
                         Some(b) if b.slices.is_none() => None,
                         _ => Some(slices.iter().map(|(r, s)| (r.clone(), s.into())).collect()),
                     },
+                    plan_id: plan_id.clone(),
                 },
             );
             let listed = bound.into_iter().collect::<Vec<_>>().join(",");
@@ -2249,12 +2273,24 @@ pub struct Panel {
     /// The roles bound to a slice of the plan: `plan-panel` prints
     /// ` --slice <role>` on their lines.
     pub sliced: BTreeSet<String>,
+    /// What happened to the plan's `plan-id:`, for stderr.
+    pub id_note: Option<String>,
+    /// The plan's size, printed as the `counts=` token that ends line 1.
+    pub counts: Counts,
 }
 
+/// The panel this plan needs. It first gives the plan file a live
+/// `plan-id:` ([`crate::plan_id::ensure`]): written before anything is
+/// printed, and only when the id is absent or was approved with another
+/// body.
 pub fn panel(plan_file: &Path) -> Result<Panel, String> {
     let text = std::fs::read_to_string(plan_file)
         .map_err(|e| format!("cannot read {}: {e}", plan_file.display()))?;
     let m = meta(&text)?;
+    let assigned =
+        crate::plan_id::ensure(plan_file, &text).map_err(|e| format!("plan-panel: {e}"))?;
+    let id_note = assigned.note();
+    let plan_id = assigned.id().clone();
     let seated = seating(&m, &text)?;
     let advice = seated.advice().map(|a| a.text);
     let (classes, source) = (seated.classes, seated.source);
@@ -2262,7 +2298,7 @@ pub fn panel(plan_file: &Path) -> Result<Panel, String> {
     let Shas { sha, legacy } = shas(&text).map_err(|e| e.to_string())?;
     let slices = sliced_roles(&text, &roles(&classes)).map_err(|e| e.to_string())?;
     let title = title_key(&text, &m.repos);
-    let (mode, needed) = match baseline(&path, &sha, &legacy, title.as_deref()) {
+    let (mode, needed) = match baseline(&path, &sha, &legacy, title.as_deref(), Some(&plan_id)) {
         None => ("full", roles(&classes)),
         Some(b) if is_current(&b, &sha, &legacy, &classes) => ("current", BTreeSet::new()),
         Some(b) => ("delta", delta_needs(&b, &classes, &slices).roles),
@@ -2276,7 +2312,147 @@ pub fn panel(plan_file: &Path) -> Result<Panel, String> {
         source,
         advice,
         sliced: slices.into_keys().collect(),
+        id_note,
+        counts: counts(
+            &text,
+            &m.repos,
+            crate::review_outcomes::round1_body(&plan_id).as_deref(),
+        ),
     })
+}
+
+/// A plan's size, as `plan-panel` prints it on line 1 (`Display`, one token
+/// with no spaces) and `record` stores it in a row's `plan.counts`
+/// ([`Counts::to_json`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Counts {
+    pub repos: usize,
+    pub phases: usize,
+    pub prs: usize,
+    pub releases: usize,
+    /// 🧑 items under Phases.
+    pub person: usize,
+    pub words: usize,
+    /// The words of the plan's round 1, when it has one on record.
+    pub round1_words: Option<usize>,
+    /// Pairs of adjacent phases (by their 1-based place) that could merge.
+    pub merge_candidates: Vec<(usize, usize)>,
+}
+
+impl Counts {
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "repos": self.repos, "phases": self.phases, "prs": self.prs,
+            "releases": self.releases, "person": self.person,
+            "words": self.words, "round1_words": self.round1_words,
+            "merge_candidates": self.merge_candidates,
+        })
+    }
+}
+
+impl std::fmt::Display for Counts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "counts=repos:{},phases:{},prs:{},releases:{},person:{},words:{}",
+            self.repos, self.phases, self.prs, self.releases, self.person, self.words
+        )?;
+        if let Some(first) = self.round1_words {
+            write!(f, "/{first}")?;
+        }
+        f.write_str(",merge-candidates:")?;
+        if self.merge_candidates.is_empty() {
+            return f.write_str("-");
+        }
+        for (i, (a, b)) in self.merge_candidates.iter().enumerate() {
+            write!(f, "{}{a}+{b}", if i == 0 { "" } else { ";" })?;
+        }
+        Ok(())
+    }
+}
+
+/// The version files whose change makes a phase a release.
+const VERSION_FILES: [&str; 5] = [
+    "Cargo.toml",
+    "package.json",
+    "plugin.json",
+    "pyproject.toml",
+    "greenharness.toml",
+];
+
+/// What `plan-panel` reports of a plan's size. `round1` is the body of the
+/// plan's round 1, for `words:<now>/<round 1>`.
+pub fn counts(text: &str, repos: &[String], round1: Option<&str>) -> Counts {
+    let words = |t: &str| crate::plan_text::canonical(t).split_whitespace().count();
+    let spans = crate::file_types::phase_spans(text);
+    let lines: Vec<&str> = text.lines().collect();
+    let labelled: Vec<&crate::file_types::PhaseSpan> =
+        spans.iter().filter(|s| !s.label.is_empty()).collect();
+    let releases = labelled
+        .iter()
+        .filter(|s| {
+            let named = s
+                .paths
+                .iter()
+                .any(|p| VERSION_FILES.contains(&p.rsplit('/').next().unwrap_or(p)));
+            let said = lines
+                .get(s.lines.start..s.lines.end.min(lines.len()))
+                .is_some_and(|ls| {
+                    ls.iter().any(|l| {
+                        l.to_lowercase()
+                            .split(|c: char| !c.is_alphanumeric())
+                            .any(|w| w == "release")
+                    })
+                });
+            named || said
+        })
+        .count();
+    // A phase's repositories: a path's first component when it names one of
+    // the plan's, else the plan's first (a path inside the home repository).
+    let repo_of = |p: &str| {
+        let first = p.split('/').next().unwrap_or("");
+        repos
+            .iter()
+            .find(|r| r.as_str() == first)
+            .cloned()
+            .unwrap_or_else(|| repos.first().cloned().unwrap_or_default())
+    };
+    let shape = |s: &crate::file_types::PhaseSpan| {
+        let r: BTreeSet<String> = s.paths.iter().map(|p| repo_of(p)).collect();
+        let c: BTreeSet<String> = s
+            .paths
+            .iter()
+            .flat_map(|p| crate::file_types::path_classes(p))
+            .collect();
+        (r, c)
+    };
+    let place = |x: &crate::file_types::PhaseSpan| {
+        labelled
+            .iter()
+            .position(|l| l.lines == x.lines)
+            .map_or(0, |i| i + 1)
+    };
+    let mut merge_candidates = Vec::new();
+    for pair in spans.windows(2) {
+        let (a, b) = (&pair[0], &pair[1]);
+        // Adjacent in the list, so no 🧑 item sits between them.
+        if a.label.is_empty() || b.label.is_empty() || a.paths.is_empty() || b.paths.is_empty() {
+            continue;
+        }
+        if shape(a) == shape(b) {
+            merge_candidates.push((place(a), place(b)));
+        }
+    }
+    Counts {
+        repos: repos.len(),
+        phases: labelled.len(),
+        prs: repos.len(),
+        releases,
+        person: spans.len() - labelled.len(),
+        words: words(text),
+        round1_words: round1.map(words),
+        merge_candidates,
+    }
 }
 
 /// The agent to launch for a role, and the `--lang` its block takes.
@@ -2289,6 +2465,62 @@ pub fn agent_for(role: &str) -> (String, Option<&str>) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn counts_are_one_token_and_count_what_the_plan_names() {
+        let body = "# T\n\n## Phases\n\
+- [ ] Phase 1 — `a/src/x.rs`\n\
+- [ ] Phase 2 — `a/src/y.rs`\n\
+- [ ] 🧑 decision: which?\n\
+- [ ] Phase 3 — `b/src/z.rs`\n\
+- [ ] Phase 4 — release: `a/Cargo.toml`, `a/CHANGELOG.md`\n";
+        let repos = vec!["a".to_string(), "b".to_string()];
+        let token = super::counts(body, &repos, None).to_string();
+        assert!(!token.contains(' '), "{token}");
+        assert!(
+            token.starts_with("counts=repos:2,phases:4,prs:2,releases:1,person:1,"),
+            "{token}"
+        );
+        // Phases 1 and 2 name Rust files in one repository, no 🧑 item between
+        // them: the only candidate pair.
+        assert!(token.ends_with(",merge-candidates:1+2"), "{token}");
+        // CHANGELOG.md alone is not a release.
+        let changelog_only = "# T\n\n## Phases\n- [ ] Phase 1 — `a/CHANGELOG.md`\n";
+        let token = super::counts(changelog_only, &repos, None).to_string();
+        assert!(token.contains("releases:0,"), "{token}");
+        // Whenever a round 1 is on record, the words carry its words.
+        let token = super::counts(body, &repos, Some("# T\n")).to_string();
+        assert!(token.contains(",words:") && token.contains('/'), "{token}");
+        let same = super::counts(body, &repos, Some(body)).to_string();
+        assert!(
+            same.contains('/'),
+            "round 1 equal to now still prints it: {same}"
+        );
+    }
+
+    #[test]
+    fn counts_of_the_plan_that_added_them_read_three_releases() {
+        // The landed plan of this very change: relais v0.63.0, greenpiste
+        // 4.3.0 and skills v0.9.0 are its three releases.
+        let plan = include_str!("../../../docs/plans/2026-11-15-every-plan-gets-an-id.md");
+        // The plan's own repositories, by their machine comment (the
+        // checkout names are not source strings of this tool).
+        let comment = plan.lines().last().unwrap_or("");
+        let listed = comment
+            .split("repos=")
+            .nth(1)
+            .and_then(|r| r.split_whitespace().next())
+            .unwrap_or("");
+        let repos: Vec<String> = listed.split(',').map(String::from).collect();
+        assert_eq!(repos.len(), 5, "{comment}");
+        let counts = super::counts(plan, &repos, None);
+        assert_eq!(counts.releases, 3, "{counts}");
+        assert_eq!(counts.phases, 6, "{counts}");
+        assert!(counts.to_string().contains(",releases:3,"), "{counts}");
+        let json = counts.to_json();
+        assert_eq!(json["releases"], 3);
+        assert!(json["round1_words"].is_null());
+    }
+
     #[test]
     fn env_outranks_git_config_and_empty_env_is_unset() {
         use super::{pick_explicit, RootSource};
@@ -2679,6 +2911,7 @@ mod tests {
             roles: set(&["backend", "lang:rust"]),
             classes: set(&["lang:rust"]),
             slices: None,
+            plan_id: None,
         };
         let new = "2".repeat(64);
         let classes = set(&["lang:rust", "ui", "screen"]);
@@ -2746,6 +2979,7 @@ mod tests {
             roles: set(&["backend", "lang:rust"]),
             classes: classes.clone(),
             slices: None,
+            plan_id: None,
         };
         assert!(is_current(&base, &new, &old, &classes));
         assert!(!is_current(&base, &new, "-", &classes));
@@ -2788,6 +3022,7 @@ mod tests {
                 ("lang:rust".to_string(), rec(rust)),
                 ("lang:typescript".to_string(), rec(ts)),
             ])),
+            plan_id: None,
         }
     }
 

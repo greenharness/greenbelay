@@ -501,6 +501,53 @@ fn a_repeated_entry_counts_once() {
     );
 }
 
+/// A landed plan with `plan-id:` is its own rows: its start and round-1 body
+/// come from the ledger rows with that id, whatever its machine comment says.
+#[test]
+fn a_landed_plan_with_a_plan_id_resolves_from_its_own_rows() {
+    let fx = fixture("planid");
+    let id = "p-01M7FVXGP6XFZ6EEK02527AQE2";
+    let r2 = "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef";
+    // Plan w: a landed plan whose machine comment names no ledger body, but
+    // whose id the ledger knows (round 1 at T + 4000).
+    let text = format!(
+        "---\nstatus: active\nbranch: feat/w\nrepos: [app]\nplan-id: {id}\n---\n# W\n\n## Goal\nMeasure.\n\n## Phases\n- [ ] Phase 1 — a: `src/a.rs`\n\n<!-- panel: repos=app reviewers=backend body-sha=000000000000 -->\n"
+    );
+    fx.commit_plan("2026-01-06-w.md", &text, T + 4500);
+    fx.commit_plan(
+        "2026-01-06-w.md",
+        &text.replace("status: active", "status: done"),
+        T + 6000,
+    );
+    let store = fx.dir.join("claude/greenpiste/plan-review");
+    let row = json!({"schema": "greenpiste-review-outcome-v1", "role": "backend", "round": 1,
+                     "body_sha": r2, "first_round_sha": r2, "plan_id": id,
+                     "recorded_at": T + 4000, "agent_id": "a9"});
+    let mut rows = std::fs::read_to_string(store.join("outcomes.jsonl")).unwrap();
+    rows.push_str(&format!("{row}\n"));
+    std::fs::write(store.join("outcomes.jsonl"), rows).unwrap();
+    std::fs::write(
+        store.join(format!("bodies/{r2}.md")),
+        plan("feat/w", "active", ""),
+    )
+    .unwrap();
+    let out = fx.run(&["--time", "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let plan_w = by_branch(&report, "plans", "feat/w");
+    assert_eq!(plan_w["reviewed"], true, "{plan_w}");
+    // T + 4000 → T + 6000 = 2000 s.
+    assert_eq!(plan_w["elapsed_h"], 0.56, "{plan_w}");
+    assert!(
+        !plan_w["words"].is_null(),
+        "its round-1 body is its own: {plan_w}"
+    );
+}
+
 #[test]
 fn time_text_fits_80_columns_and_since_filters() {
     let fx = fixture("text");
@@ -539,20 +586,34 @@ fn time_usage_errors_exit_2() {
     }
 }
 
+/// A stdout whose read end is closed before the child starts, so its first
+/// write fails with EPIPE.
+#[cfg(unix)]
+fn closed_stdout() -> Stdio {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    extern "C" {
+        fn pipe(fds: *mut i32) -> i32;
+        fn close(fd: i32) -> i32;
+    }
+    let mut fds = [0i32; 2];
+    assert_eq!(unsafe { pipe(fds.as_mut_ptr()) }, 0);
+    assert_eq!(unsafe { close(fds[0]) }, 0);
+    Stdio::from(unsafe { OwnedFd::from_raw_fd(fds[1]) })
+}
+
+#[cfg(unix)]
 #[test]
-fn a_closed_pipe_exits_zero() {
+fn a_closed_stdout_exits_zero() {
     let fx = fixture("pipe");
-    let mut child = fx
+    // `plan-review` keeps SIGPIPE ignored, so the write fails as EPIPE and
+    // `main` treats it as the end of the reader: the command's own exit
+    // code (0 here), never a signal (141) or a panic (101).
+    let status = fx
         .command()
         .arg("--time")
-        .stdout(Stdio::piped())
+        .stdout(closed_stdout())
         .stderr(Stdio::null())
-        .spawn()
+        .status()
         .unwrap();
-    drop(child.stdout.take());
-    // `plan-review` keeps SIGPIPE ignored, so the write fails as EPIPE and
-    // `main` treats it as the end of the reader: exit 0, never a signal
-    // (141) or a panic (101).
-    let code = child.wait().unwrap().code();
-    assert_eq!(code, Some(0));
+    assert_eq!(status.code(), Some(0), "{status:?}");
 }
