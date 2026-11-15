@@ -7,6 +7,11 @@
 - **greenpiste 5.0.0 migrates this machine's state directories once, under a
   lock, and never blocks a hook.** The move is reversible with `greenpiste
   migrate --reverse` (the command arrives in a later change).
+- **The migration also renames this machine's `amont.agent.*` git config keys
+  to `greenpiste.*`**, in the files that hold them (global and system scope,
+  following `include` and `includeIf` whether or not the condition holds).
+  Each key is copied, read back, and only then removed, so an interrupted run
+  loses nothing and a re-run adds nothing; `--reverse` puts the old keys back.
 
 ### Changed
 
