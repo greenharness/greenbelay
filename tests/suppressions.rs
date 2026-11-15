@@ -76,11 +76,22 @@ impl Repo {
         repo
     }
 
+    /// The test's own temp directory, which holds the scratch config and state
+    /// the binary's migration is pointed at.
+    fn scratch_root(&self) -> &Path {
+        self.config
+            .parent()
+            .expect("the config file sits in the scratch directory")
+    }
+
     fn command(&self, program: &str) -> Command {
         let mut cmd = Command::new(program);
         cmd.current_dir(&self.dir)
             .env("GIT_CONFIG_GLOBAL", &self.config)
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("CLAUDE_CONFIG_DIR", self.scratch_root().join("claude"))
+            .env("XDG_STATE_HOME", self.scratch_root().join("state"))
             .env("GIT_AUTHOR_NAME", "t")
             .env("GIT_AUTHOR_EMAIL", "t@example.com")
             .env("GIT_COMMITTER_NAME", "t")

@@ -4,6 +4,9 @@
 
 ### Added
 
+- **`greenpiste migrate --dry-run` says `nothing to do: already migrated`
+  (`already reversed` with `--reverse`) when there is nothing to do**, instead
+  of printing nothing.
 - **The documentation and the CI install tests use the new names, and
   `docs/migrate.md` describes the migration.** The guides name the
   `GREENPISTE_*` variables, `greenpiste.*` keys and `~/.claude/greenpiste`;

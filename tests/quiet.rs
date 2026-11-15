@@ -89,6 +89,8 @@ fn quiet_cmd(home: &Path, args: &[&str]) -> Command {
     c.arg("quiet")
         .args(args)
         .env("CLAUDE_CONFIG_DIR", home)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("QUIET_ACTIVE_DIR", active(home))
         // A fixed session: an entry is written only inside one, and the
         // agent's own must never reach a test (or CI, which has none).
@@ -675,6 +677,8 @@ fn a_log_that_cannot_be_created_writes_no_entry_and_keeps_the_exit() {
     std::fs::write(&blocker, "x").unwrap();
     let out = quiet_cmd(&home, &["--", "sh", "-c", "exit 3"])
         .env("CLAUDE_CONFIG_DIR", &blocker)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(3));
@@ -695,6 +699,8 @@ fn a_relative_config_dir_still_names_absolute_logs() {
     let mut child = quiet_cmd(&home, &["--", "sh", "-c", "sleep 1; echo last-line"])
         .current_dir(&home)
         .env("CLAUDE_CONFIG_DIR", "cfg")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .stdout(Stdio::null())
         .spawn()
         .expect("spawn");

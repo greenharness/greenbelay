@@ -110,6 +110,8 @@ fn send(payload: &str) -> Reply {
     let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
         .arg("hook")
         .env("CLAUDE_CONFIG_DIR", &home)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .env_remove("GREENPISTE_OFF")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

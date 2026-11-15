@@ -78,7 +78,7 @@ impl Transcript {
 
     fn run(&self, args: &[&str]) -> String {
         let dir = self.write();
-        let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let out = greenpiste_command()
             .args(args)
             .arg("--transcripts")
             .arg(dir.join("projects"))
@@ -272,7 +272,7 @@ fn novelty_puts_the_unlike_match_first() {
 #[test]
 fn an_unknown_rank_is_refused() {
     let dir = Transcript::new("rank").write().clone();
-    let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let out = greenpiste_command()
         .args(["explain", "pipe-to-tail", "--rank", "wisdom"])
         .arg("--transcripts")
         .arg(dir.join("projects"))
@@ -280,4 +280,24 @@ fn an_unknown_rank_is_refused() {
         .expect("the binary runs");
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("--rank takes `novelty`"));
+}
+
+/// The greenpiste binary pointed at scratch directories, so the migration every
+/// subcommand runs first never touches the real home of whoever runs the tests.
+/// A caller that sets one of these variables itself overrides it afterwards.
+fn greenpiste_command() -> Command {
+    static SCRATCH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    let scratch = SCRATCH.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("gp-mine-scratch-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("claude")).expect("scratch config dir");
+        std::fs::create_dir_all(dir.join("state")).expect("scratch state home");
+        dir
+    });
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    command
+        .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
+        .env("XDG_STATE_HOME", scratch.join("state"))
+        .env("GIT_CONFIG_GLOBAL", scratch.join("gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    command
 }

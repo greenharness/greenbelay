@@ -15,7 +15,7 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 fn check(dir: &Path, extra: &[&str], command: &str) -> (bool, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let out = greenpiste_command()
         .arg("check")
         .arg("--cwd")
         .arg(dir)
@@ -134,4 +134,25 @@ fn a_confirmed_stale_base_prints_its_remedy() {
     assert_prints_remedy(&clone, "stale-base", "git switch -c feat/z");
     let _ = std::fs::remove_dir_all(&origin); // best-effort cleanup of a temp directory; a leftover is harmless
     let _ = std::fs::remove_dir_all(&clone); // best-effort cleanup of a temp directory; a leftover is harmless
+}
+
+/// The greenpiste binary pointed at scratch directories, so the migration every
+/// subcommand runs first never touches the real home of whoever runs the tests.
+/// A caller that sets one of these variables itself overrides it afterwards.
+fn greenpiste_command() -> Command {
+    static SCRATCH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    let scratch = SCRATCH.get_or_init(|| {
+        let dir =
+            std::env::temp_dir().join(format!("gp-check_confirm-scratch-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("claude")).expect("scratch config dir");
+        std::fs::create_dir_all(dir.join("state")).expect("scratch state home");
+        dir
+    });
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    command
+        .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
+        .env("XDG_STATE_HOME", scratch.join("state"))
+        .env("GIT_CONFIG_GLOBAL", scratch.join("gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    command
 }

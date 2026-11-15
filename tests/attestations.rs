@@ -433,6 +433,8 @@ fn a_closed_pipe_is_quiet() {
     sh.arg("-c").arg(&script);
     let o = sh
         .env("CLAUDE_CONFIG_DIR", w.0.join("claude"))
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("HOME", w.0.join("home"))
         .env("XDG_CONFIG_HOME", w.0.join("home/.config"))
         .env("GREENPISTE_PLAN_ROOT", w.0.join("root"))

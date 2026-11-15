@@ -400,6 +400,15 @@ fn run_migrate(args: &[OsString]) -> ExitCode {
     if dry_run {
         return match migrate::machine_plan(&env, direction) {
             Ok(lines) => {
+                if lines.is_empty() {
+                    println!(
+                        "nothing to do: already {}",
+                        match direction {
+                            Direction::Forward => "migrated",
+                            Direction::Reverse => "reversed",
+                        }
+                    );
+                }
                 for line in lines {
                     println!("would: {line}");
                 }

@@ -313,7 +313,7 @@ fn dry_run_says_what_would_change_and_changes_nothing() {
         assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
         assert!(stdout(&output)
             .lines()
-            .all(|line| line.starts_with("would: ")));
+            .all(|line| line.starts_with("would: ") || line.starts_with("nothing to do: ")));
         assert_eq!(machine.snapshot(), before);
         assert_eq!(machine.git_keys(), keys);
     }
@@ -324,6 +324,21 @@ fn dry_run_says_what_would_change_and_changes_nothing() {
     );
     assert!(forward.contains("would: git config keys: "), "{forward}");
     assert!(forward.contains("would: state-directories: "), "{forward}");
+}
+
+#[test]
+fn dry_run_on_a_machine_with_nothing_to_do_says_so() {
+    let machine = Machine::old_style("dry-run-nothing");
+    let migrated = machine.run(&["migrate"]);
+    assert_eq!(migrated.status.code(), Some(0), "{}", stderr(&migrated));
+    let forward = machine.run(&["migrate", "--dry-run"]);
+    assert_eq!(forward.status.code(), Some(0), "{}", stderr(&forward));
+    assert_eq!(stdout(&forward).trim(), "nothing to do: already migrated");
+    let reversed = machine.run(&["migrate", "--reverse"]);
+    assert_eq!(reversed.status.code(), Some(0), "{}", stderr(&reversed));
+    let backward = machine.run(&["migrate", "--reverse", "--dry-run"]);
+    assert_eq!(backward.status.code(), Some(0), "{}", stderr(&backward));
+    assert_eq!(stdout(&backward).trim(), "nothing to do: already reversed");
 }
 
 #[test]

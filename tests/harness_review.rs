@@ -47,6 +47,8 @@ impl Home {
             .arg("--out")
             .arg(self.out())
             .env("CLAUDE_CONFIG_DIR", &self.0)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .env_remove("GREENPISTE_OFF")
             .output()
             .expect("the binary runs");
@@ -114,6 +116,8 @@ fn the_json_has_one_row_per_rule_and_assertion() {
     let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
         .args(["rules", "--json"])
         .env("CLAUDE_CONFIG_DIR", &h.0)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()
         .expect("the binary runs");
     assert_eq!(out.status.code(), Some(0), "rules --json exits 0");

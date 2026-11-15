@@ -222,7 +222,7 @@ impl Scratch {
     }
 
     fn sha(&self, cwd: &Path, global: Option<&Path>) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        greenpiste_command()
             .args(["block", "sha", "-C"])
             .arg(cwd)
             .args(["--base", "main"])
@@ -343,7 +343,7 @@ fn a_binary_file_prints_nothing_and_exits_1() {
 }
 
 fn block(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    greenpiste_command()
         .arg("block")
         .args(args)
         .output()
@@ -428,7 +428,7 @@ impl Registry {
     }
 
     fn run(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        greenpiste_command()
             .arg("block")
             .args(args)
             .env("CLAUDE_CONFIG_DIR", &self.config)
@@ -726,4 +726,24 @@ fn list_and_revoke_pick_the_same_source_across_generations() {
     );
     let revoked = registry.run(&["revoke", "fp:aaaaaaaaaaaa", "--because", "x"]);
     assert_eq!(out_text(&revoked), "o/second\ttopic\t-\n");
+}
+
+/// The greenpiste binary pointed at scratch directories, so the migration every
+/// subcommand runs first never touches the real home of whoever runs the tests.
+/// A caller that sets one of these variables itself overrides it afterwards.
+fn greenpiste_command() -> Command {
+    static SCRATCH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    let scratch = SCRATCH.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("gp-block-scratch-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("claude")).expect("scratch config dir");
+        std::fs::create_dir_all(dir.join("state")).expect("scratch state home");
+        dir
+    });
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    command
+        .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
+        .env("XDG_STATE_HOME", scratch.join("state"))
+        .env("GIT_CONFIG_GLOBAL", scratch.join("gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    command
 }

@@ -10,7 +10,12 @@ const PROV: &str = "refs/notes/amont-provenance";
 const ATTEST: &str = "refs/notes/amont-attest";
 
 fn run(dir: &Path, prog: &str, args: &[&str]) -> String {
-    let out = Command::new(prog)
+    let mut command = if prog == BIN {
+        greenpiste_command()
+    } else {
+        Command::new(prog)
+    };
+    let out = command
         .current_dir(dir)
         .args(args)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -178,7 +183,7 @@ impl World {
 
     fn shipped_with_gh(&self, extra: &[&str], gh: &str) -> (String, String, i32) {
         let plan = self.plan_file();
-        let out = Command::new(BIN)
+        let out = greenpiste_command()
             .current_dir(&self.top)
             .arg("shipped")
             .arg(&plan)
@@ -715,17 +720,37 @@ fn usage_errors_and_help() {
     let w = World::new("usage");
     let (_, _, code) = w.shipped(&["--nope"]);
     assert_eq!(code, 2);
-    let help = Command::new(BIN)
+    let help = greenpiste_command()
         .args(["shipped", "--help"])
         .output()
         .unwrap();
     assert!(help.status.success());
     assert!(String::from_utf8_lossy(&help.stdout).contains("usage: greenpiste shipped"));
-    let main_help = Command::new(BIN).arg("--help").output().unwrap();
+    let main_help = greenpiste_command().arg("--help").output().unwrap();
     assert!(String::from_utf8_lossy(&main_help.stdout).contains("shipped <plan.md>"));
-    let missing = Command::new(BIN)
+    let missing = greenpiste_command()
         .args(["shipped", "/nonexistent/plan.md"])
         .output()
         .unwrap();
     assert_eq!(missing.status.code(), Some(2));
+}
+
+/// The greenpiste binary pointed at scratch directories, so the migration every
+/// subcommand runs first never touches the real home of whoever runs the tests.
+/// A caller that sets one of these variables itself overrides it afterwards.
+fn greenpiste_command() -> Command {
+    static SCRATCH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    let scratch = SCRATCH.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("gp-shipped-scratch-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("claude")).expect("scratch config dir");
+        std::fs::create_dir_all(dir.join("state")).expect("scratch state home");
+        dir
+    });
+    let mut command = Command::new(BIN);
+    command
+        .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
+        .env("XDG_STATE_HOME", scratch.join("state"))
+        .env("GIT_CONFIG_GLOBAL", scratch.join("gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    command
 }

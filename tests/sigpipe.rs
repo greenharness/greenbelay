@@ -81,7 +81,7 @@ fn a_closed_pipe_kills_a_listing_quietly() {
     // The guard on the guard: if this listing ever stops being bigger than a
     // pipe buffer, the race never happens and the test below stops testing
     // anything. It must say so rather than going quietly green.
-    let full = Command::new("sh")
+    let full = scratch_sh()
         .arg("-c")
         .arg(format!(
             "'{}' explain pipe-to-tail --transcripts '{}' --sample 4000",
@@ -97,7 +97,7 @@ fn a_closed_pipe_kills_a_listing_quietly() {
         full.stdout.len()
     );
 
-    Command::new("sh")
+    scratch_sh()
         .arg("-c")
         .arg(&script)
         .output()
@@ -140,7 +140,7 @@ fn a_closed_pipe_kills_a_listing_quietly() {
 fn rules_survives_a_closed_pipe() {
     let bin = env!("CARGO_BIN_EXE_greenpiste");
     for reader in ["head -1", "grep -q pipe-to-tail"] {
-        let out = Command::new("sh")
+        let out = scratch_sh()
             .arg("-c")
             .arg(format!("'{bin}' rules 2>&1 | {reader}"))
             .output()
@@ -168,7 +168,7 @@ fn rules_survives_a_closed_pipe() {
 #[test]
 fn help_survives_a_closed_pipe() {
     let bin = env!("CARGO_BIN_EXE_greenpiste");
-    let out = Command::new("sh")
+    let out = scratch_sh()
         .arg("-c")
         .arg(format!("'{bin}' --help 2>&1 | grep -q backtest"))
         .output()
@@ -183,4 +183,24 @@ fn help_survives_a_closed_pipe() {
         out.status.success(),
         "`--help | grep -q backtest` must pass"
     );
+}
+
+/// A shell whose children, the greenpiste binary among them, see scratch
+/// directories, so the migration every subcommand runs first never touches the
+/// real home of whoever runs the tests.
+fn scratch_sh() -> Command {
+    static SCRATCH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    let scratch = SCRATCH.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("gp-sigpipe-scratch-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("claude")).expect("scratch config dir");
+        std::fs::create_dir_all(dir.join("state")).expect("scratch state home");
+        dir
+    });
+    let mut command = Command::new("sh");
+    command
+        .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
+        .env("XDG_STATE_HOME", scratch.join("state"))
+        .env("GIT_CONFIG_GLOBAL", scratch.join("gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    command
 }

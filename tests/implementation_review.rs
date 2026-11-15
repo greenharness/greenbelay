@@ -132,7 +132,7 @@ impl World {
     }
 
     fn bin(&self) -> Command {
-        let mut c = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+        let mut c = greenpiste_command();
         // The fakes (`aval`, and `amont` or `git` where a test installs
         // them) come first on PATH.
         let path = std::env::var_os("PATH").unwrap_or_default();
@@ -1957,7 +1957,7 @@ fn a_passing_push_with_a_plan_writes_the_provenance_record() {
     assert_eq!(parts[0], "plan");
     assert_eq!(parts[1], "docs/plans/2026-09-29-x.md");
     assert_eq!(parts[2].len(), 64, "{plan}");
-    let shown = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let shown = greenpiste_command()
         .arg("plan-sha")
         .arg(repo.join("docs/plans/2026-09-29-x.md"))
         .output()
@@ -2029,7 +2029,7 @@ fn a_plan_approved_with_evidence_is_recorded_as_preview_evidence() {
     w.commit(&repo, &[("src/lib.rs", "fn a() { b() }\nfn b() {}\n")]);
     git(&repo, &["config", "greenpiste.push-preview.ui", "true"]);
     let head = git(&repo, &["rev-parse", "HEAD"]);
-    let shown = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let shown = greenpiste_command()
         .arg("plan-sha")
         .arg(repo.join(plan_rel))
         .output()
@@ -2061,7 +2061,7 @@ fn a_mockup_change_with_an_approval_is_recorded_as_preview_approved() {
             ("docs/mockups/pill/Main.dc.html", "<x-dc></x-dc>\n"),
         ],
     );
-    let shown = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let shown = greenpiste_command()
         .arg("plan-sha")
         .arg(repo.join(plan_rel))
         .output()
@@ -2720,7 +2720,7 @@ fn a_review_in_the_transcript_is_honoured_with_no_agent_installed() {
     w.commit(&repo, &[("src/lib.rs", "fn a() { b() }\nfn b() {}\n")]);
     git(&repo, &["config", "greenpiste.push-preview.ui", "true"]);
     let head = git(&repo, &["rev-parse", "HEAD"]);
-    let shown = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let shown = greenpiste_command()
         .arg("plan-sha")
         .arg(repo.join(plan_rel))
         .output()
@@ -4768,4 +4768,27 @@ fn an_empty_gh_override_in_the_hook_counts_as_unset() {
         said,
         "the pin record was made with GREENPISTE_GH set; run review-brief without it",
     );
+}
+
+/// The greenpiste binary pointed at scratch directories, so the migration every
+/// subcommand runs first never touches the real home of whoever runs the tests.
+/// A caller that sets one of these variables itself overrides it afterwards.
+fn greenpiste_command() -> Command {
+    static SCRATCH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    let scratch = SCRATCH.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!(
+            "gp-implementation_review-scratch-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(dir.join("claude")).expect("scratch config dir");
+        std::fs::create_dir_all(dir.join("state")).expect("scratch state home");
+        dir
+    });
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    command
+        .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
+        .env("XDG_STATE_HOME", scratch.join("state"))
+        .env("GIT_CONFIG_GLOBAL", scratch.join("gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    command
 }
