@@ -501,6 +501,50 @@ fn a_repeated_entry_counts_once() {
     );
 }
 
+/// A landed plan with `plan-id:` is its own rows: its start and round-1 body
+/// come from the ledger rows with that id, whatever its machine comment says.
+#[test]
+fn a_landed_plan_with_a_plan_id_resolves_from_its_own_rows() {
+    let fx = fixture("planid");
+    let id = "p-01M7FVXGP6XFZ6EEK02527AQE2";
+    let r2 = "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef";
+    // Plan w: a landed plan whose machine comment names no ledger body, but
+    // whose id the ledger knows (round 1 at T + 4000).
+    let text = format!(
+        "---\nstatus: active\nbranch: feat/w\nrepos: [app]\nplan-id: {id}\n---\n# W\n\n## Goal\nMeasure.\n\n## Phases\n- [ ] Phase 1 — a: `src/a.rs`\n\n<!-- panel: repos=app reviewers=backend body-sha=000000000000 -->\n"
+    );
+    fx.commit_plan("2026-01-06-w.md", &text, T + 4500);
+    fx.commit_plan(
+        "2026-01-06-w.md",
+        &text.replace("status: active", "status: done"),
+        T + 6000,
+    );
+    let store = fx.dir.join("claude/amont-agent/plan-review");
+    let row = json!({"schema": "amont-agent-review-outcome-v1", "role": "backend", "round": 1,
+                     "body_sha": r2, "first_round_sha": r2, "plan_id": id,
+                     "recorded_at": T + 4000, "agent_id": "a9"});
+    let mut rows = std::fs::read_to_string(store.join("outcomes.jsonl")).unwrap();
+    rows.push_str(&format!("{row}\n"));
+    std::fs::write(store.join("outcomes.jsonl"), rows).unwrap();
+    std::fs::write(
+        store.join(format!("bodies/{r2}.md")),
+        plan("feat/w", "active", ""),
+    )
+    .unwrap();
+    let out = fx.run(&["--time", "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let w = by_branch(&v, "plans", "feat/w");
+    assert_eq!(w["reviewed"], true, "{w}");
+    // T + 4000 → T + 6000 = 2000 s.
+    assert_eq!(w["elapsed_h"], 0.56, "{w}");
+    assert!(!w["words"].is_null(), "its round-1 body is its own: {w}");
+}
+
 #[test]
 fn time_text_fits_80_columns_and_since_filters() {
     let fx = fixture("text");

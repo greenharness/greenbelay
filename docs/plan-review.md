@@ -98,7 +98,7 @@ file shows: `cli`, `ui`, `screen`, `ops`, `contract` (or its old name
 `greenpiste plan-panel <plan.md>` answers with the hook's own code:
 
 ```
-repos=greenpiste areas=cli,lang:rust body=cf3f43c938c4 panel=full seats=paths
+repos=greenpiste areas=cli,lang:rust body=cf3f43c938c4 panel=full seats=paths counts=repos:1,phases:2,prs:1,releases:1,person:0,words:640,merge-candidates:-
 plan-review-backend
 plan-review-language --lang rust
 plan-review-tui
@@ -111,6 +111,50 @@ named; the advice is then on stderr). `panel=delta` lists only the reviews
 needed since the plan's last accepted body. `panel=current` lists none. A
 baseline stored before 3.22.0 reads in today's class names (`large` as
 `contract`, `ui` with `screen`), so a plan it covered stays current.
+
+`counts=` ends line 1 as one token with no spaces, so a reader that splits
+the line on spaces still finds every other key, and agent lines still start
+on line 2:
+
+- `repos`: the machine comment's list;
+- `phases`: the phases under `## Phases`;
+- `prs`: the repositories the machine comment declares;
+- `releases`: phases naming a version file (`Cargo.toml`, `package.json`,
+  `plugin.json`, `pyproject.toml`, `greenharness.toml`) or the word
+  "release" (`CHANGELOG.md` alone does not count);
+- `person`: 🧑 items under Phases;
+- `words`: the body's words, as `words:<now>/<round 1>` once the plan's
+  round 1 differs;
+- `merge-candidates`: adjacent phase pairs (`2+3;5+6`) naming files in the
+  same repositories with the same file-type classes, and no 🧑 item between
+  them; `-` when there are none.
+
+### The plan id
+
+`plan-panel` gives the plan file a `plan-id: p-<26-char ULID>` front-matter
+line when it has none, before it prints anything. The front matter is
+outside the body sha, so no review goes stale. The write takes the ledger
+lock, re-reads the file and refuses one changed since it was read
+(`plan changed under plan-panel; nothing written. Re-read <path>, then run:
+greenpiste plan-panel <path>`), then renames a temp file into place; a file
+it cannot write prints `cannot write plan-id: <path>: <error>`. Both exit 1
+with nothing on stdout. A second run leaves the file byte-identical.
+
+When the person approves ExitPlanMode (PostToolUse, `approved: true`), the
+hook writes `plan-review/approved/<id>.json`
+(`{"schema": "greenpiste-plan-approval-v1", "plan_id", "body_sha",
+"approved_at"}`), before it takes the ledger lock and without it. The next
+`plan-panel` on another body replaces the retired id
+(`replaced plan-id p-… (approved) with p-…` on stderr); a rejection retires
+nothing, so a revised plan stays one plan.
+
+Each body `plan-panel` sees is mapped to its id in
+`plan-review/ids/<body_sha>.json` (`greenpiste-plan-id-v1`). `record` reads
+a row's `plan_id` from that map (on a miss, the file's own id when the file
+still holds that body), and numbers `round` and `first_round_sha` within
+the id. The baseline's older-body lookups (by path, by title) serve only
+the same `plan_id`, so a new plan in a reused file is a full panel for both
+`plan-panel` and the ExitPlanMode hook.
 
 ## Binding a review to the plan
 

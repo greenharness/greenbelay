@@ -242,6 +242,8 @@ struct Ledger {
     starts: HashMap<String, (Option<u64>, u64)>,
     /// (after, before) of every plan-apply merge row.
     merges: Vec<(String, String)>,
+    /// plan id → its first-round sha, from the rows that carry a `plan_id`.
+    by_id: HashMap<String, String>,
 }
 
 impl Ledger {
@@ -251,6 +253,7 @@ impl Ledger {
             reviews: Vec::new(),
             starts: HashMap::new(),
             merges: Vec::new(),
+            by_id: HashMap::new(),
         };
         for r in rows {
             if let (Some(after), Some(before)) = (s(r, "body_sha_after"), s(r, "body_sha_before")) {
@@ -261,6 +264,9 @@ impl Ledger {
                 continue;
             };
             let first = s(r, "first_round_sha").unwrap_or_else(|| body.clone());
+            if let Some(id) = s(r, "plan_id") {
+                l.by_id.entry(id).or_insert_with(|| first.clone());
+            }
             let at = r.get("recorded_at").and_then(Value::as_u64).unwrap_or(0);
             let round1 = r.get("round").and_then(Value::as_u64) == Some(1);
             let e = l.starts.entry(first.clone()).or_insert((None, u64::MAX));
@@ -421,7 +427,11 @@ fn plans_in(dir: &Path, ledger: &Ledger, bodies: Option<&Path>, ex: &mut Exclusi
             greenpiste_guard::git::stdout_in(dir, &["show", &format!("{first_commit}:{rel}")])
                 .map(|t| crate::plan_text::body_sha(&t))
         });
-        let first = key.as_deref().and_then(|k| ledger.first_round(k));
+        // A plan with an id is its rows; a plan without one is found by its
+        // machine comment's body sha (the landed body's as a fallback).
+        let first = crate::plan_id::read(&text)
+            .and_then(|id| ledger.by_id.get(&id).cloned())
+            .or_else(|| key.as_deref().and_then(|k| ledger.first_round(k)));
         let start = first.as_deref().and_then(|f| ledger.start_of(f));
         let r1 = first
             .as_deref()
@@ -1263,8 +1273,12 @@ fn measure(
             let gap_end = prev.filter(|(pt, _, _)| e.t - pt > GAP);
             match &e.kind {
                 Kind::Calls(cs) => {
+                    // Stops, questions, PRs and releases count for a plan only
+                    // inside its span, as blocked and person time do.
+                    let in_span = who
+                        .filter(|&i| e.t >= plans[i].start && e.t <= plans[i].done.unwrap_or(now));
                     for (id, name, cmd, bg) in cs {
-                        let t = target(&mut tallies, &mut unattributed, who);
+                        let t = target(&mut tallies, &mut unattributed, in_span);
                         match name.as_str() {
                             "AskUserQuestion" => t.questions += 1,
                             "ExitPlanMode" => t.stops += 1,
@@ -1368,6 +1382,9 @@ type Spans = Vec<(f64, f64)>;
 
 /// Each interval cut to `[a, b]`: the parts inside, and the parts outside.
 fn clip(xs: Spans, a: f64, b: f64) -> (Spans, Spans) {
+    // A span that ends before it starts (a rebased `done` commit) is empty:
+    // nothing is inside, and nothing is counted twice outside.
+    let b = b.max(a);
     let (mut inside, mut outside) = (Vec::new(), Vec::new());
     for (s, e) in xs {
         if s < a {
@@ -1605,7 +1622,9 @@ impl Report {
         } else {
             out.push_str("exclusions:\n");
             let mut line = String::from(" ");
-            for c in counts {
+            let n = counts.len();
+            for (k, c) in counts.into_iter().enumerate() {
+                let c = if k + 1 < n { format!("{c},") } else { c };
                 if line.len() + c.len() + 1 > 78 {
                     out.push_str(&line);
                     out.push('\n');
@@ -1712,6 +1731,39 @@ mod tests {
                 path: PathBuf::from("/r/app-wt-x")
             }]
         );
+    }
+
+    #[test]
+    fn clip_cuts_each_interval_to_the_span() {
+        // (interval, span start, span end, inside, outside)
+        type Case = ((f64, f64), f64, f64, Spans, Spans);
+        let cases: [Case; 5] = [
+            ((0.0, 5.0), 10.0, 20.0, vec![], vec![(0.0, 5.0)]),
+            ((12.0, 15.0), 10.0, 20.0, vec![(12.0, 15.0)], vec![]),
+            ((25.0, 30.0), 10.0, 20.0, vec![], vec![(25.0, 30.0)]),
+            (
+                (5.0, 25.0),
+                10.0,
+                20.0,
+                vec![(10.0, 20.0)],
+                vec![(5.0, 10.0), (20.0, 25.0)],
+            ),
+            // `done` before `start`: an empty span; the interval counts once.
+            (
+                (10.0, 20.0),
+                15.0,
+                12.0,
+                vec![],
+                vec![(10.0, 15.0), (15.0, 20.0)],
+            ),
+        ];
+        for (iv, a, b, inside, outside) in cases {
+            let (i, o) = clip(vec![iv], a, b);
+            assert_eq!(i, inside, "{iv:?} in [{a}, {b}]");
+            assert_eq!(o, outside, "{iv:?} in [{a}, {b}]");
+            let total: f64 = o.iter().chain(&i).map(|(s, e)| e - s).sum();
+            assert_eq!(total, iv.1 - iv.0, "counted once: {iv:?}");
+        }
     }
 
     #[test]
