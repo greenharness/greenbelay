@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v5.0.0
+
+greenpiste 5.0.0 writes only its own data names. The first command after
+upgrading (a hook, or any subcommand except `migrate` and `doctor`) moves a
+machine's state directories, git config keys and plugin registration once, under
+a lock and without ever blocking a hook; `greenpiste migrate --reverse` puts
+everything back. See `docs/migrate.md`.
+
 ### Fixed
 
 - **`greenpiste doctor` exits non-zero on a failed migration or a leftover,
