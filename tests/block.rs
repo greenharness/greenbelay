@@ -227,6 +227,7 @@ impl Scratch {
             .arg(cwd)
             .args(["--base", "main"])
             .env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
+            .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("HOME", &self.root)
             .env(
@@ -432,6 +433,7 @@ impl Registry {
             .arg("block")
             .args(args)
             .env("CLAUDE_CONFIG_DIR", &self.config)
+            .env_remove("XDG_STATE_HOME")
             .output()
             .unwrap()
     }

@@ -41,6 +41,7 @@ impl World {
     fn cmd(&self) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
         c.env("CLAUDE_CONFIG_DIR", self.0.join("claude"))
+            .env_remove("XDG_STATE_HOME")
             .env("HOME", self.0.join("home"))
             .env("GREENPISTE_PLAN_ROOT", self.0.join("root"))
             .env_remove("GIT_CONFIG_GLOBAL")
@@ -433,6 +434,7 @@ fn a_closed_pipe_is_quiet() {
     sh.arg("-c").arg(&script);
     let o = sh
         .env("CLAUDE_CONFIG_DIR", w.0.join("claude"))
+        .env_remove("XDG_STATE_HOME")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("HOME", w.0.join("home"))

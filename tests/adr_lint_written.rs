@@ -100,6 +100,7 @@ impl World {
         let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
             .arg("hook")
             .env("CLAUDE_CONFIG_DIR", self.root.join("config"))
+            .env_remove("XDG_STATE_HOME")
             .env("PATH", path)
             .env("GREENPISTE_ADR_LINT", self.bin("adr-lint"))
             .env("GIT_CONFIG_GLOBAL", self.root.join("no-global-gitconfig"))

@@ -47,6 +47,7 @@ impl World {
     fn bin(&self) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
         c.env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
+            .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GREENPISTE_PLAN_ROOT", self.root.join("repos"))

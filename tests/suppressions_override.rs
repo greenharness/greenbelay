@@ -24,6 +24,7 @@ fn pre_bash(command: &str) -> (String, String) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
         .arg("hook")
         .env("CLAUDE_CONFIG_DIR", &home)
+        .env_remove("XDG_STATE_HOME")
         .env("GIT_CONFIG_GLOBAL", home.join("no-global-gitconfig"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env_remove("GREENPISTE_OFF")

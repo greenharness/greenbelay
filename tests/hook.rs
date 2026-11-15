@@ -106,6 +106,7 @@ fn send_inner(payload: &str, path: String, slot: HostSlot) -> Reply {
     let mut child = command
         .arg("hook")
         .env("CLAUDE_CONFIG_DIR", home())
+        .env_remove("XDG_STATE_HOME")
         .env("PATH", path)
         // The guard must not be silenced by the developer's own environment
         // while its own tests are running.
@@ -818,6 +819,7 @@ fn a_declined_confirm_records_why_and_status_reads_it_back() {
     let status = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
         .arg("status")
         .env("CLAUDE_CONFIG_DIR", home())
+        .env_remove("XDG_STATE_HOME")
         .env_remove("GREENPISTE_OFF")
         .output()
         .expect("the binary runs");
@@ -1569,6 +1571,7 @@ fn send_with_global_err(payload: &str, global: &str) -> (Reply, String) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
         .arg("hook")
         .env("CLAUDE_CONFIG_DIR", &dir)
+        .env_remove("XDG_STATE_HOME")
         .env("GIT_CONFIG_GLOBAL", &cfg)
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .env("SHELL", "/bin/zsh")
@@ -1808,6 +1811,7 @@ impl LspWorld {
         let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
             .arg("hook")
             .env("CLAUDE_CONFIG_DIR", &self.config)
+            .env_remove("XDG_STATE_HOME")
             .env("PATH", lsp_path(&self.bin))
             .env("GIT_CONFIG_GLOBAL", &cfg)
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -3305,6 +3309,7 @@ fn send_clocked_with_path(
     let mut child = command
         .arg("hook")
         .env("CLAUDE_CONFIG_DIR", config_dir)
+        .env_remove("XDG_STATE_HOME")
         .env("GREENPISTE_TEST_NOW", now.to_string())
         .env("GIT_CONFIG_GLOBAL", home().join("no-global-gitconfig"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -3616,6 +3621,7 @@ fn work_overlap_window_is_read_from_git_config() {
         let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
             .arg("hook")
             .env("CLAUDE_CONFIG_DIR", home())
+            .env_remove("XDG_STATE_HOME")
             .env("GREENPISTE_TEST_NOW", (scene.start + later).to_string())
             .env("GIT_CONFIG_GLOBAL", &window_config)
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
@@ -4728,6 +4734,7 @@ fn relais_run_forks_a_failing_probe_is_silent_and_journalled() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
         .arg("hook")
         .env("CLAUDE_CONFIG_DIR", &dir)
+        .env_remove("XDG_STATE_HOME")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .env("PATH", &path)

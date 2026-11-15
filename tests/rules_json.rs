@@ -28,6 +28,7 @@ impl Home {
             .args(args)
             .current_dir(&self.0)
             .env("CLAUDE_CONFIG_DIR", self.0.join("claude"))
+            .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", self.0.join("global"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env_remove("GREENPISTE_OFF")

@@ -118,6 +118,7 @@ impl World {
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .env("CLAUDE_CONFIG_DIR", &self.config)
+            .env_remove("XDG_STATE_HOME")
             .env("GREENPISTE_PLAN_ROOT", &self.root)
             .output()
             .expect("runs")
@@ -154,6 +155,7 @@ impl World {
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .env("CLAUDE_CONFIG_DIR", &self.config)
+            .env_remove("XDG_STATE_HOME")
             .env("GREENPISTE_PLAN_ROOT", &self.root)
             .output()
             .expect("runs");

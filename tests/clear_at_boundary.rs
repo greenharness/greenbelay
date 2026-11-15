@@ -137,6 +137,7 @@ impl World {
         command
             .arg("hook")
             .env("CLAUDE_CONFIG_DIR", &self.claude)
+            .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", &self.global)
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env_remove("GREENPISTE_OFF")

@@ -11,8 +11,8 @@
 #   scripts/leak-hunt.sh                 every tests/*.rs
 #   scripts/leak-hunt.sh block shipped   only those
 #
-# A canary migrated means: the done-marker exists, the old config root became a
-# symlink, or the old key `amont.agent.enabled` is gone. A test file whose
+# A canary migrated means: the done-marker exists, the old config root or state
+# root became a symlink, a new state root appeared, or the old key `amont.agent.enabled` is gone. A test file whose
 # `cargo test` fails to build or run (no `test result:` line) is BUILD-FAIL,
 # never ok. See also tests/spawn_isolation.rs, the static check. A test that only
 # writes its own `greenpiste.*` keys into the inherited git config is not a
@@ -48,6 +48,8 @@ for t in $tests; do
     migrated=
     [ -e "$canary/claude/greenpiste-migrated" ] && migrated="the done-marker was written"
     [ -L "$canary/claude/amont-agent" ] && migrated="the old config root became a symlink"
+    [ -L "$canary/state/amont-agent" ] && migrated="the old state root became a symlink"
+    [ -e "$canary/state/greenpiste" ] && migrated="${migrated:-a new state root was created}"
     git config --file "$canary/gitconfig" --get amont.agent.enabled > /dev/null 2>&1 \
         || migrated="${migrated:-the old git key amont.agent.enabled is gone}"
     if [ -n "$migrated" ]; then

@@ -142,6 +142,7 @@ impl World {
         c.env("GREENPISTE_AVAL", self.aval_path());
         c.env_remove("GREENPISTE_PLAN_ROOT");
         c.env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
+            .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", self.root.join("global"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env_remove("GREENPISTE_OFF");

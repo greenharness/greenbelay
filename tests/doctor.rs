@@ -292,6 +292,7 @@ fn two_installs_are_reported_as_a_double_fire() {
         .arg("doctor")
         .current_dir(h.0.join("proj"))
         .env("CLAUDE_CONFIG_DIR", &h.0)
+        .env_remove("XDG_STATE_HOME")
         .output()
         .expect("runs");
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -309,6 +310,7 @@ fn the_kill_switch_is_reported() {
     let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
         .arg("doctor")
         .env("CLAUDE_CONFIG_DIR", &h.0)
+        .env_remove("XDG_STATE_HOME")
         .env("GREENPISTE_OFF", "1")
         .output()
         .expect("runs");
@@ -527,6 +529,7 @@ fn doctor_says_whether_the_lsp_rules_can_speak_here() {
             .arg("doctor")
             .current_dir(&repo)
             .env("CLAUDE_CONFIG_DIR", &h.0)
+            .env_remove("XDG_STATE_HOME")
             .env(
                 "PATH",
                 std::env::join_paths([bin.clone()]).expect("a PATH of one directory"),
@@ -549,6 +552,7 @@ fn integration(h: &Home) -> (i32, serde_json::Value) {
     let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
         .args(["doctor", "--json"])
         .env("CLAUDE_CONFIG_DIR", &h.0)
+        .env_remove("XDG_STATE_HOME")
         .env_remove("GREENPISTE_OFF")
         .output()
         .expect("the binary runs");
@@ -639,6 +643,7 @@ fn doctor_help_prints_usage_on_stdout_and_exits_zero() {
         let out = std::process::Command::new(env!("CARGO_BIN_EXE_greenpiste"))
             .args(["doctor", flag])
             .env("CLAUDE_CONFIG_DIR", &h.0)
+            .env_remove("XDG_STATE_HOME")
             .output()
             .expect("the binary runs");
         assert_eq!(out.status.code(), Some(0), "{flag}");
@@ -699,6 +704,7 @@ fn plan_root_doctor(
         .args(json.then_some("--json"))
         .current_dir(cwd)
         .env("CLAUDE_CONFIG_DIR", &w.0)
+        .env_remove("XDG_STATE_HOME")
         .env("HOME", &home)
         .env("GIT_CONFIG_GLOBAL", &gitconfig)
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -827,6 +833,7 @@ fn opener_doctor_line(home_dir: &Home, name: &str, opener: Option<&str>) -> Stri
         .args(["doctor", "--json"])
         .current_dir(&home_dir.0)
         .env("CLAUDE_CONFIG_DIR", &home_dir.0)
+        .env_remove("XDG_STATE_HOME")
         .env("HOME", &home)
         .env("GIT_CONFIG_GLOBAL", &gitconfig)
         .env("GIT_CONFIG_NOSYSTEM", "1")

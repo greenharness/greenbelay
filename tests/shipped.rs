@@ -190,6 +190,7 @@ impl World {
             .args(extra)
             .env("GREENPISTE_PLAN_ROOT", self.top.join("root"))
             .env("CLAUDE_CONFIG_DIR", self.top.join("claude"))
+            .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .env("GREENPISTE_GH", gh)

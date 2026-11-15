@@ -16,6 +16,7 @@ fn root(name: &str) -> PathBuf {
 fn bin(root: &Path) -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
     c.env("CLAUDE_CONFIG_DIR", root.join("claude"))
+        .env_remove("XDG_STATE_HOME")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env_remove("GREENPISTE_OFF");

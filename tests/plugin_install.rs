@@ -31,6 +31,8 @@ impl Home {
         let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
             .args(args)
             .env("CLAUDE_CONFIG_DIR", &self.0)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("XDG_STATE_HOME", self.state())
             .output()
             .expect("the binary runs");

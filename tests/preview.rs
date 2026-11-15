@@ -126,6 +126,7 @@ impl World {
             .args(args)
             .current_dir(&self.work)
             .env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
+            .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", self.root.join("global"))
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .env_remove("GREENPISTE_OFF")
