@@ -70,13 +70,7 @@ fn every_rule_has_a_corpus() {
 /// subcommand runs first never touches the real home of whoever runs the tests.
 /// A caller that sets one of these variables itself overrides it afterwards.
 fn greenpiste_command() -> Command {
-    static SCRATCH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-    let scratch = SCRATCH.get_or_init(|| {
-        let dir = std::env::temp_dir().join(format!("gp-corpus-scratch-{}", std::process::id()));
-        std::fs::create_dir_all(dir.join("claude")).expect("scratch config dir");
-        std::fs::create_dir_all(dir.join("state")).expect("scratch state home");
-        dir
-    });
+    let scratch = fresh_scratch("corpus");
     let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
     command
         .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
@@ -84,4 +78,29 @@ fn greenpiste_command() -> Command {
         .env("GIT_CONFIG_GLOBAL", scratch.join("gitconfig"))
         .env("GIT_CONFIG_NOSYSTEM", "1");
     command
+}
+
+/// A new, empty scratch directory for one spawn, named by process id, the
+/// clock and a retry counter; `create_dir` fails on a name already taken.
+fn fresh_scratch(label: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let mut suffix = 0u32;
+    loop {
+        let dir = std::env::temp_dir().join(format!(
+            "gp-{label}-{}-{nanos}-{suffix}",
+            std::process::id()
+        ));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => {
+                std::fs::create_dir(dir.join("claude")).expect("scratch config dir");
+                std::fs::create_dir(dir.join("state")).expect("scratch state home");
+                return dir;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => suffix += 1,
+            Err(error) => panic!("scratch directory {}: {error}", dir.display()),
+        }
+    }
 }

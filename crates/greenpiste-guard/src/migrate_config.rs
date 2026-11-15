@@ -464,21 +464,14 @@ fn plan_machine(env: &Env, rename: Rename) -> Result<Vec<String>, StepError> {
 
 /// The old-name keys this machine's config files still hold, each with the
 /// file that holds it, found the way the migration step finds them. Read-only;
-/// anything git cannot answer is reported as no keys.
-pub fn old_keys(env: &Env) -> Vec<(String, PathBuf)> {
+/// anything git cannot answer is an error, never "no keys".
+pub fn old_keys(env: &Env) -> Result<Vec<(String, PathBuf)>, StepError> {
     let rename = Rename::FORWARD;
-    let Ok((tops, _)) = inventory(env, rename) else {
-        return Vec::new();
-    };
-    let Ok(files) = IncludeWalk::files(env, tops) else {
-        return Vec::new();
-    };
+    let (tops, _) = inventory(env, rename)?;
+    let files = IncludeWalk::files(env, tops)?;
     let mut found: Vec<(String, PathBuf)> = Vec::new();
     for file in files {
-        let Ok(entries) = list_file(env, &file) else {
-            continue;
-        };
-        for entry in entries {
+        for entry in list_file(env, &file)? {
             if rename.apply(&entry.key).is_some() {
                 let hit = (entry.key, file.clone());
                 if !found.contains(&hit) {
@@ -487,7 +480,7 @@ pub fn old_keys(env: &Env) -> Vec<(String, PathBuf)> {
             }
         }
     }
-    found
+    Ok(found)
 }
 
 fn finish(moved: usize, errors: Vec<StepError>) -> Result<String, StepError> {

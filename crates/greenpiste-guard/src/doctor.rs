@@ -376,46 +376,56 @@ fn migration() -> Vec<Finding> {
 
 fn migration_findings(env: Option<&crate::migrate::Env>, variables: &[String]) -> Vec<Finding> {
     let fix = format!("{} migrate", names::PRODUCT);
-    let mut lines: Vec<String> = Vec::new();
+    // Findings greenpiste can fix: not advisory, doctor exits non-zero.
+    let mut blocking: Vec<String> = Vec::new();
+    // Names greenpiste cannot fix (the person's own environment): advisory.
+    let mut advisory: Vec<String> = Vec::new();
     if let Some(env) = env {
         let markers = crate::migrate::marker_state(env);
         if let Some(note) = markers.failed {
-            lines.push(format!(
+            blocking.push(format!(
                 "migration failed earlier: {}; run {fix}",
                 note.trim().replace('\n', ": ")
             ));
         }
         if markers.reversed {
-            lines.push(format!("migration was reversed; run {fix} to redo it"));
+            blocking.push(format!("migration was reversed; run {fix} to redo it"));
         }
         for root in crate::migrate::old_roots(env) {
-            lines.push(format!(
+            blocking.push(format!(
                 "old state directory {} is still a directory; run {fix}",
                 root.display()
             ));
         }
-        for (key, file) in crate::migrate_config::old_keys(env) {
-            lines.push(format!(
-                "old git config key {key} in {}; run {fix}",
-                file.display()
-            ));
+        match crate::migrate_config::old_keys(env) {
+            Ok(keys) => {
+                for (key, file) in keys {
+                    blocking.push(format!(
+                        "old git config key {key} in {}; run {fix}",
+                        file.display()
+                    ));
+                }
+            }
+            Err(why) => blocking.push(format!("could not read the git config keys: {why}")),
         }
-        if let Some(settings) = crate::migrate_plugin::old_registration(env) {
-            lines.push(format!(
+        match crate::migrate_plugin::old_registration(env) {
+            Ok(Some(settings)) => blocking.push(format!(
                 "old plugin registration in {}; run {fix}",
                 settings.display()
-            ));
+            )),
+            Ok(None) => {}
+            Err(why) => blocking.push(format!("could not read the plugin registration: {why}")),
         }
     }
     for name in variables {
         let rest = name.strip_prefix(names::old::ENV_PREFIX).unwrap_or(name);
-        lines.push(format!(
+        advisory.push(format!(
             "old environment variable {name} is set; set {}{rest} instead",
             names::ENV_PREFIX
         ));
     }
     let done = env.and_then(|env| crate::migrate::marker_state(env).done);
-    if lines.is_empty() {
+    if blocking.is_empty() && advisory.is_empty() {
         return vec![Finding::good(match done {
             Some(wall) => format!("migration: done in {wall} ms, nothing left"),
             None => "migration: nothing left over".to_string(),
@@ -427,7 +437,13 @@ fn migration_findings(env: Option<&crate::migrate::Env>, variables: &[String]) -
             "migration marker: done in {wall} ms"
         )));
     }
-    out.extend(lines.into_iter().map(|line| Finding {
+    out.extend(blocking.into_iter().map(|line| Finding {
+        ok: false,
+        advisory: false,
+        line,
+        detail: None,
+    }));
+    out.extend(advisory.into_iter().map(|line| Finding {
         ok: false,
         advisory: true,
         line,

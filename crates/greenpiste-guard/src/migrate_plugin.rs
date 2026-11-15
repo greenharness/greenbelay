@@ -82,16 +82,25 @@ fn sides(env: &Env, direction: Direction) -> (Side, Side) {
 }
 
 /// The `settings.json` that still registers the plugin under the old
-/// marketplace id, when there is one. Read-only; a file that is missing or
-/// does not parse reports nothing.
-pub fn old_registration(env: &Env) -> Option<PathBuf> {
+/// marketplace id, when there is one. Read-only; a missing file registers
+/// nothing, and one that cannot be read or parsed is an error, never "clean".
+pub fn old_registration(env: &Env) -> Result<Option<PathBuf>, StepError> {
     let path = env.config_dir.join(SETTINGS_FILE);
-    let raw = fs::read_to_string(&path).ok()?;
-    let Value::Object(root) = serde_json::from_str::<Value>(&raw).ok()? else {
-        return None;
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(StepError::io("read the plugin settings", source).at(&path)),
+    };
+    let Value::Object(root) = serde_json::from_str::<Value>(&raw)
+        .map_err(|why| StepError::refused(format!("{} does not parse: {why}", path.display())))?
+    else {
+        return Err(StepError::refused(format!(
+            "{} is not a JSON object",
+            path.display()
+        )));
     };
     let (old_side, _) = sides(env, Direction::Forward);
-    old_side.registered(&root).then_some(path)
+    Ok(old_side.registered(&root).then_some(path))
 }
 
 /// One file to write, and the line that says so.

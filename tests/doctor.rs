@@ -1016,3 +1016,65 @@ fn doctor_on_a_migrated_tree_has_nothing_to_report() {
     assert!(!out.contains("old state directory"), "{out}");
     assert!(!out.contains("old git config key"), "{out}");
 }
+
+/// A finding greenpiste can fix fails doctor (`✗`); the person's own
+/// environment is advice only (`!`). A bare scratch home fails doctor for other
+/// reasons (no hooks installed), so these read the marker on the finding's line.
+fn line_with<'a>(out: &'a str, needle: &str) -> &'a str {
+    out.lines()
+        .find(|l| l.contains(needle))
+        .unwrap_or_else(|| panic!("no line with {needle:?} in:\n{out}"))
+}
+
+#[test]
+fn a_failed_migration_is_a_failing_finding() {
+    let h = Home::new("migration-exit-failed");
+    std::fs::write(
+        h.0.join(names::MIGRATE_FAILED_MARKER),
+        "git config keys\nno way\n",
+    )
+    .unwrap();
+    let (_, out) = h.run(&["doctor"]);
+    let line = line_with(&out, "migration failed earlier");
+    assert!(
+        line.contains('✗'),
+        "a failed migration must fail doctor: {line}"
+    );
+    assert!(out.contains("no way"), "{out}");
+}
+
+#[test]
+fn a_leftover_of_the_old_names_is_a_failing_finding() {
+    let h = Home::new("migration-exit-leftover");
+    h.old_style();
+    let (_, out) = h.run(&["doctor"]);
+    for needle in [
+        old::DATA_DIR,
+        &*format!("{}git-add-broad.stance", old::CONFIG_PREFIX),
+        "old plugin registration",
+    ] {
+        let line = line_with(&out, needle);
+        assert!(line.contains('✗'), "{needle}: {line}");
+    }
+}
+
+#[test]
+fn an_old_environment_variable_is_advice_only() {
+    let h = Home::new("migration-exit-variable");
+    let (_, out) = h.doctor_with_old_variable();
+    let line = line_with(&out, &format!("{}OFF", old::ENV_PREFIX));
+    assert!(line.contains('!') && !line.contains('✗'), "{line}");
+}
+
+#[test]
+fn a_settings_file_that_does_not_parse_is_said_not_assumed_clean() {
+    let h = Home::new("migration-exit-unreadable");
+    std::fs::write(h.settings(), "{ not json").unwrap();
+    let (_, out) = h.run(&["doctor"]);
+    let line = line_with(&out, "could not read the plugin registration");
+    assert!(line.contains('✗'), "{line}");
+    assert!(
+        !out.contains("migration: nothing left over"),
+        "doctor claimed a clean machine it could not read:\n{out}"
+    );
+}

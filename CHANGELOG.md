@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- **`greenpiste doctor` exits non-zero on a failed migration or a leftover,
+  and says when it could not look.** A failed-marker, an old state directory,
+  an old `amont.agent.*` git key and an old plugin registration are no longer
+  advisory; when git or `settings.json` cannot be read it prints `could not
+  read <what>: <why>` instead of calling the machine clean. Old
+  `AMONT_AGENT_*` variables stay advisory.
 - **A hook that cannot migrate keeps using the data directory that exists,
   and the migration merges colliding journals and ledgers rather than setting
   the old one aside.** A busy, failed or reversed machine no longer gets a
