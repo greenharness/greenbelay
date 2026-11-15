@@ -138,7 +138,7 @@ repos=… areas=… body=… panel=… seats=… counts=repos:3,phases:6,prs:3,r
 
 ## Phases
 - [ ] Phase 1 — relais reads the new fields: `relais/crates/relais/src/review_outcome.rs`, `relais/CHANGELOG.md`. Release v0.63.0 (tag-release) and install it here.
-- [ ] Phase 2 — the plan id and the ledger:
+- [x] Phase 2 — the plan id and the ledger:
   - `crates/greenpiste-process/src/plan_review.rs` (assign and retire the id, `baseline`, `save`, `judge`'s call);
   - `crates/greenpiste-process/src/review_outcomes.rs` (`recorded`, `record_locked`: rows, rounds and first rounds by `plan_id`; `on_plan_answered`: retire the id when `approved`);
   - `crates/greenpiste-process/src/plan_text.rs` (the front-matter writer: re-read, refuse if changed, `write_atomic`, as plan_apply.rs:720-728);
@@ -147,7 +147,7 @@ repos=… areas=… body=… panel=… seats=… counts=repos:3,phases:6,prs:3,r
     - a re-presented body keeps its id;
     - a body without an id records `plan_id: null`;
     - the run that assigns the id prints the same stdout as the next run, byte for byte, with `assigned plan-id` on stderr only.
-- [ ] Phase 3 — counts and `--time`:
+- [x] Phase 3 — counts and `--time`:
   - `crates/greenpiste-process/src/plan_review.rs` (`counts`), `src/main.rs` (the line-1 token, the writer);
   - `crates/greenpiste-process/src/plan_time.rs` (key by `plan-id`, the follow-ups);
   - `tests/plan_review.rs` (:1483 and :1510 expect the trailing `counts=`; the agent-line tests stay), `tests/plan_time.rs`;
@@ -165,12 +165,12 @@ repos=… areas=… body=… panel=… seats=… counts=repos:3,phases:6,prs:3,r
 
 ## Verification
 - Phase 1: a relais test parses a row with `plan_id` and `plan.counts`, and an old row, with no invalid count. Live: after install, `relais` reads the current ledger with `invalid` lower than before (counts recorded both times).
-- Phase 2:
+- Phase 2: → Observed 2026-11-15: `cargo test --workspace` gave 1,953 passed, 0 failed. The fixtures cover two plans in one file (approve A, then B → a new id, round 1, `panel=full`); rejected then edited (same id, round 2); B edited in with no `plan-panel` run (`live()` → full panel); a refusal on a changed file; a busy lock (exit 1, empty stdout); an unwritable approval store (the hook's exit and stdout unchanged); and `plan_id: null` for a body with no id. The live checks come after the 4.3.0 install.
   - Fixture: plan A then plan B in one file, with A approved by the hook → B gets a new `plan-id`, its rows have `round: 1` and its own `first_round_sha`, and `plan-panel` prints `panel=full`.
   - Rejected ExitPlanMode, then an edited body → same `plan_id`, `round: 2`; approved, then an edited body → a new `plan-id` and `panel=full`.
   - Live: the next real panel adds `plan-id:` to its plan file, and its rows carry the same `plan_id`.
   - Live, after a week: `plan_id: null` rows dated after install = 0, and at least one id has a `round: 2` row.
-- Phase 3:
+- Phase 3: → Observed 2026-11-15: the `counts=` token matches its literal and has no space, and line 2 is still the first agent; `releases:3` on this plan; the `clip` table test passes; closed-stdout tests keep the exit code, for success and failure.
   - The `counts=` token equals the literal string the test writes (`merge-candidates:1+2` on two adjacent phases) and has no space. Line 2 is the first agent.
   - On this plan's body, `counts=` reads `releases:3`.
   - A landed plan with `plan-id:` resolves its start from its own rows.
@@ -179,6 +179,30 @@ repos=… areas=… body=… panel=… seats=… counts=repos:3,phases:6,prs:3,r
 - Phase 5: the installed `plan-review` SKILL.md and plan template name `plan-id:`.
 - Phase 6: `relais programme check docs/programmes/time-to-done` exits 0.
 - 2026-12-19: plans with `plan-id`, at least one round 2 and a saved round-1 body number at least 4, else the done check moves.
+
+## Implementation review
+- **Round 1, all seats opus.** implementation-review, backend, lang:rust, unix and tui all gave approve-with-changes.
+  - Fixed in b9a49016:
+    - backend's high: `live()` in judge, record and ensure;
+    - implementation-review's blockers: the urandom return, swallowed errors, the flag helper, names, missing tests;
+    - a bounded lock;
+    - the `PlanId` and `PlanIdError` types;
+    - `counts` stored as an object;
+    - realpath before writing;
+    - `catch_unwind` around the approval;
+    - messages.
+- **Delta: all five approve-with-changes, lows only.**
+- **Deliberate, as one follow-up**, since a third pass is not allowed:
+  - test-local short names;
+  - the `include_str!` plan fixture;
+  - `PlanIdError::source()`;
+  - one spelling of an id;
+  - doc comments;
+  - a symlink test;
+  - the `holds-until` end condition;
+  - a corrupt approval file reported on stderr;
+  - next steps on the Read and Lock messages;
+  - the docs and CHANGELOG wording (`plan.counts` is an object, `words:` shows `/R1` whenever round 1 exists).
 
 ## Outcome
 
