@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v4.3.0
+
 ### Added
 
 - **Every plan gets an id.** `plan-panel` writes `plan-id: p-<ULID>` into
