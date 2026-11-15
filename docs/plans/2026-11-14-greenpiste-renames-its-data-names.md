@@ -339,8 +339,9 @@ run by hand (`greenpiste migrate`). The hook path (first hook migrates, wall
 time recorded) is exercised by `tests/migrate.rs` on scratch machines only.
 `~/.claude/greenpiste/journal.log` exists (header `greenpiste-v1`, the old rows
 appended; it rotated once). greengate's provenance push reading the moved
-directory was NOT yet exercised on this machine: it happens on the next
-greengate push, and the Phase 5 push is where to read it.
+directory: read on the push of this record (greengate 4.5.0 printed
+`provenance published` and no notice that it fell back to the old directory,
+so it found the payload under `~/.claude/greenpiste/provenance`).
 
 - 5.0.0 released: the run concluded `success` (14 assets, crates.io
   greenpiste and greenpiste-guard 5.0.0, the tap, "the published release
