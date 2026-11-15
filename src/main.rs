@@ -137,6 +137,9 @@ usage: ",
   plan-review stats [--json] [--model <id>]
                         per (role, model): reviews, findings, accepted ones;
                         marks a seat that is a retire-candidate
+  plan-review stats --time [--since <YYYY-MM-DD>] [--json]
+                        per landed plan: time to done, blocked and person
+                        hours, stops, word growth since round 1
   implementation-review record <plan.md> --verdict <v>
                         keep the implementation review's findings (JSON on
                         stdin) as one outcome row
@@ -392,7 +395,7 @@ fn main() -> ExitCode {
     if !matches!(
         invocation,
         Invocation::Sub {
-            name: Sub::Hook | Sub::Board | Sub::Suppressions,
+            name: Sub::Hook | Sub::Board | Sub::Suppressions | Sub::PlanReview,
             ..
         }
     ) {
@@ -495,8 +498,20 @@ fn main() -> ExitCode {
             Sub::PlanPanel => run_plan_panel(&args),
             Sub::PlanReview => {
                 let (said, code) = review_outcomes::run(&args);
-                print!("{said}");
-                code
+                // `print!` panics on a closed pipe (exit 101); a reader that
+                // stops early (`| head`) is not a failure.
+                use std::io::Write as _;
+                match std::io::stdout().write_all(said.as_bytes()) {
+                    Ok(()) => code,
+                    Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
+                    Err(e) => {
+                        eprintln!(
+                            "{}: plan-review: cannot write output: {e}",
+                            greenpiste_guard::names::BIN
+                        );
+                        ExitCode::from(1)
+                    }
+                }
             }
             Sub::ImplementationReview => {
                 let (said, code) = impl_review_outcomes::run(&args);

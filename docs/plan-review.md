@@ -390,6 +390,55 @@ closed approve-with-changes or rework yet have 0 parsed findings, and a
 `record_skipped` objects), `--model` keeps one model. Exit
 0, or 1 when a ledger cannot be read, 2 on a usage error.
 
+## Time to done: `plan-review stats --time`
+
+`greenpiste plan-review stats --time [--since <YYYY-MM-DD>] [--json]` reports
+each landed plan's time to done (ADR-0070 `work.plan-time-to-done`; the
+contract is the time-to-done programme's t01 ticket in decisions). It reads
+the transcripts under `~/.claude/projects`, this ledger and git, and nothing
+else (`harness.cross-tool-reads`). Run hours come from relais's own query,
+which retro-weekly joins on the `sessions` field.
+
+- **Plans:** every `docs/plans/*.md` with `branch:` in its front matter and
+  `status: active` or `done`, in the repositories under the plan root. Pointer
+  files (`canonical:`) and `.reviews.md` sidecars are skipped, and a plan
+  without `branch:` is counted under `exclusions`.
+- **Start:** the earliest round-1 row of the plan's first-round body. That body
+  is found from the `body-sha=` of the machine comment (in the plan or its
+  sidecar), else from the sha of the body as first committed, following
+  plan-apply merge rows back. A plan the ledger does not know is `unreviewed`.
+  It starts at its first commit and is left out of every median.
+- **Done:** the first commit that adds `status: done`. A plan without one is
+  unfinished, listed with its age so far.
+- **Attribution:** an entry belongs to the plan whose branch its `cwd` is on,
+  read from the transcripts' `git worktree add`, `remove` and `switch -c`
+  commands (by time, so a reused path changes plans) and `git worktree list`.
+  `gitBranch` is not read, because it stays at the session's first branch.
+  The session that runs the add also belongs to the plan from the plan's
+  start up to the add, whatever its `cwd`. Each entry counts for one plan, the
+  latest-started.
+- **Blocked:** the union of foreground gate, test and build calls, foreground
+  agents, relais calls, and gaps over 10 minutes ended by a background
+  notification. `resource_h` (JSON) is their plain sum. **Person:** gaps over
+  10 minutes ended by the person.
+
+The text output fits 80 columns: one row per finished plan (`u` marks an
+unreviewed one), the ten newest unfinished plans, the unattributed time, the
+exclusions, and a summary. The summary gives the medians of the reviewed
+plans, the share whose words grew past ×1.25, the unattributed share and,
+within it, the unmapped share (attribution failures: a worktree no surviving
+transcript adds, a detached or removed one, an entry without `cwd`), and
+`done check: insufficient` when fewer than four finished plans have a saved
+round-1 body. `--json` prints one object with `schema` (1), `plans`,
+`unfinished`, `unattributed`, `exclusions` and `summary`. Per plan it also
+gives `prs`, `releases`, `questions`, `resource_h`, `words` and `phases` from
+round 1 to final, and `sessions` (`[{id, from, to}]`). `--since` keeps the
+plans done on or after that day, plus every unfinished one. Progress goes to
+stderr only when stderr is a terminal and `--json` is off.
+
+Exit 0 on a report, 1 when the plan root, the ledger or the transcripts cannot
+be read, 2 on a usage error. A closed stdout pipe ends the process quietly: by SIGPIPE on unix, exit 0 where the write fails instead.
+
 ## The plan's code reviewers
 
 A plan declares who reviews its code in a `## Code review` section (after
