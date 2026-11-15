@@ -138,6 +138,21 @@ If either tool is absent (`command -v` fails) or older (exit 2, an unknown flag)
 - Phase 3: `~/.claude/tools/retro-weekly/retro-weekly.sh` → the report file has a `## Time to done` table with at least one row whose relais h is above 0, and a line giving relais hours whose `root_session` matched no plan session, out of the total.
 - Phase 4: t00 gives three recomputed baselines next to the provisional ones (0.13, 0.82 h, 1). `relais programme check docs/programmes/time-to-done` exits 0.
 
+## Implementation review
+- implementation-review (opus): round 1 approve-with-changes. Fixed: Verification states the observed numbers; Phase 2 ticked; `now` injected; banner comments deleted. Delta: approve-with-changes. Its "stale numbers" finding was wrong, since the figures came from the release build after the fixes. Its dedupe-test proof is done: 3 stops without the fix, 2 with it.
+- backend, lang:rust, unix, tui (opus): round 1 approve-with-changes. Fixed:
+  - the `epoch` non-ASCII panic;
+  - intervals clipped to the plan's span;
+  - `uuid` dedupe;
+  - no live fallback before the first event;
+  - SIGPIPE, so a closed pipe exits 0;
+  - 38-column names and readable labels;
+  - git failures counted;
+  - `shared_first_round`;
+  - a read error stops the file.
+  Delta: all approve-with-changes, with no high or blocking finding.
+- Deliberate, filed as one follow-up: `clip` when `done < start` (a rebased commit date; theoretical), stops and questions after `done`, the EPIPE exit code, flush, the SIGPIPE comment, commas between exclusion labels, the `HashSet` import, a `clip` unit test, typed errors, and the `(Option<u64>, u64)` sentinel.
+
 ## Outcome
 
 <!-- panel: repos=amont-agent,relais,dotfiles,decisions adds=cli,contract reviewers=backend,lang:rust,tui,unix,architect,po body-sha=19053529d9c2 -->
