@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 branch: feat/plan-time-to-done
 repos: [amont-agent, relais, dotfiles, decisions]
 adrs: [ADR-0070, ADR-0064]
@@ -99,7 +99,7 @@ The weekly report gains a `## Time to done` section:
 If either tool is absent (`command -v` fails) or older (exit 2, an unknown flag), the section says so in one line and the report goes on. Any other non-zero exit prints one failure line with the last stderr line. The window starts at `/bin/date -v-7d +%F`. The section is built in a temp file that the existing EXIT trap removes.
 
 ## Phases
-- [ ] Phase 1 — relais `report runs`: `crates/relais/src/cli/mod.rs`, `crates/relais/src/report/mod.rs`, `crates/relais/tests/report_runs.rs`, `CHANGELOG.md`. Release a minor version (tag-release). Built by a background agent.
+- [x] Phase 1 — relais `report runs`: `crates/relais/src/cli/mod.rs`, `crates/relais/src/report/mod.rs`, `crates/relais/tests/report_runs.rs`, `CHANGELOG.md`. Release a minor version (tag-release). Built by a background agent.
 - [x] Phase 2 — greenpiste `stats --time`, in parallel with Phase 1:
   - progress (`transcripts N/M`) on stderr only when stderr is a TTY; nothing when it is not;
   - a new module `crates/greenpiste-process/src/plan_time.rs`, with the flag and usage in `crates/greenpiste-process/src/review_outcomes.rs` (`run_stats`, `USAGE`) and `src/main.rs`;
@@ -107,8 +107,8 @@ If either tool is absent (`command -v` fails) or older (exit 2, an unknown flag)
   - timestamps (`--since`, transcript ISO times) parsed with `greenpiste_guard::civil::days_from_civil`, with no new date crate; `--model` with `--time`, and `--since` without `--time`, are usage errors;
   - `docs/plan-review.md` and `CHANGELOG.md`;
   - release a minor version. Built by a background agent; it rebases over the in-flight `feat/greenpiste-data-names` branch if that lands first.
-- [ ] Phase 3 — after both are released and installed on this machine, add the retro-weekly section in the chezmoi source `dot_claude/tools/retro-weekly/executable_retro-weekly.sh`. `chezmoi apply` that one file, then run the script once by hand with `RETRO_DIR=$(mktemp -d)`, so today's report is not overwritten.
-- [ ] Phase 4 — the first 30-day run, written into decisions:
+- [x] Phase 3 — after both are released and installed on this machine, add the retro-weekly section in the chezmoi source `dot_claude/tools/retro-weekly/executable_retro-weekly.sh`. `chezmoi apply` that one file, then run the script once by hand with `RETRO_DIR=$(mktemp -d)`, so today's report is not overwritten.
+- [x] Phase 4 — the first 30-day run, written into decisions:
   - `docs/programmes/time-to-done/t00-time-audit.md`: the recomputed baselines, with coverage, exclusions and the greenpiste version;
   - `docs/programmes/time-to-done/t01-what-time-to-done-measures.md`: the target, re-set to 60 % of the new median of reviewed plans, with the old 0.5 h target and the reason recorded beside it;
   - the two plans the person asked about. If either is not a landed plan, say so and give its closest match;
@@ -133,10 +133,10 @@ If either tool is absent (`command -v` fails) or older (exit 2, an unknown flag)
 - 2026-11-15 (build) — **A closed pipe exits 0 as specified**: `plan-review` joins the subcommands that keep SIGPIPE ignored (`src/main.rs`), so the write fails as EPIPE and `main` ends quietly (the builder's first version had restored SIGPIPE, ending by the signal; the unix review caught it).
 
 ## Verification
-- Phase 1: on a fixture ledger with 2 runs (one terminal, one running), `relais report runs --json` → 2 objects, the running one with `ended_at: null` and `hours > 0` (or `now` injected, so the test does not depend on the clock). On the live ledger, `relais report runs --json --since 2026-11-08 | jq '.schema, (.runs|length)'` → `1` and a count above 0; the ledger's mtime is unchanged.
+- Phase 1: on a fixture ledger with 2 runs (one terminal, one running), `relais report runs --json` → 2 objects, the running one with `ended_at: null` and `hours > 0` (or `now` injected, so the test does not depend on the clock). On the live ledger, `relais report runs --json --since 2026-11-08 | jq '.schema, (.runs|length)'` → `1` and a count above 0; the ledger's mtime is unchanged. → Observed 2026-11-15: relais v0.62.0 (relais#470, #471) installed. 10 `report_runs` tests passed. Live: `relais report runs --json --since 2026-11-08 | jq` → `1`, 253 runs, 53.8 h. `--since 2026-11-8` exits 2, and `| head` exits 0.
 - Phase 2: the fixture with one plan, two sessions and one overlap → `blocked_h` equals the hand-computed union, and `resource_h` is greater than `blocked_h`. A plan without `status: done` → listed under unfinished. On the live data, `greenpiste plan-review stats --time --since 2026-10-16` → at least 10 finished plans, with `unattributed` and `exclusions` printed; unattributed hours ≤ 25 % of all hours, and plans flagged `unreviewed` at most 55 % of finished plans, the 2026-11-15 measure being 82 of 157, which shrinks as plans land under the template (the summary line prints both, plus the number of finished plans with a round-1 body; under 4, the t10 check is reported as insufficient); the run completes in under 60 s (timed). → Observed 2026-11-15 (release build, `--since 2026-10-16`): 86 finished plans (73 reviewed, 13 unreviewed), 29 with a round-1 body; median blocked 0.63 h, median elapsed 11.84 h; **unattributed 50 % of blocked, of which 23 % unmapped** — the bar is held on the unmapped share (Decision log), the 50 % total misses the original wording; 0 plans with blocked over elapsed; **72.3 s wall, 37 s CPU** at load average about 20 — misses the 60 s bar (Decision log). `--test plan_time`: 9 passed.
-- Phase 3: `~/.claude/tools/retro-weekly/retro-weekly.sh` → the report file has a `## Time to done` table with at least one row whose relais h is above 0, and a line giving relais hours whose `root_session` matched no plan session, out of the total.
-- Phase 4: t00 gives three recomputed baselines next to the provisional ones (0.13, 0.82 h, 1). `relais programme check docs/programmes/time-to-done` exits 0.
+- Phase 3: `~/.claude/tools/retro-weekly/retro-weekly.sh` → the report file has a `## Time to done` table with at least one row whose relais h is above 0, and a line giving relais hours whose `root_session` matched no plan session, out of the total. → Observed 2026-11-15: dotfiles#64 applied with `chezmoi apply` (no drift in the target first). `RETRO_DIR=$(mktemp -d) retro-weekly.sh` → exit 0. The report has `## Time to done`, with 28 plans, 11 rows with relais h above 0, and "relais hours that matched no plan session: 44.29 of 56.85", followed by the 3 session reviews.
+- Phase 4: t00 gives three recomputed baselines next to the provisional ones (0.13, 0.82 h, 1). `relais programme check docs/programmes/time-to-done` exits 0. → Observed 2026-11-15: decisions `docs/time-to-done-b1-b3` records the baselines next to the provisional ones: phase growth 0.10 (was 0.13), a median 0.63 h blocked (was 0.82 h), a median 0 questions (mean 1.16; was 1). The target is re-set to 0.38 h, and both plans are measured. `relais programme check` exits 0.
 
 ## Implementation review
 - implementation-review (opus): round 1 approve-with-changes. Fixed: Verification states the observed numbers; Phase 2 ticked; `now` injected; banner comments deleted. Delta: approve-with-changes. Its "stale numbers" finding was wrong, since the figures came from the release build after the fixes. Its dedupe-test proof is done: 3 stops without the fix, 2 with it.
@@ -154,5 +154,22 @@ If either tool is absent (`command -v` fails) or older (exit 2, an unknown flag)
 - Deliberate, filed as one follow-up: `clip` when `done < start` (a rebased commit date; theoretical), stops and questions after `done`, the EPIPE exit code, flush, the SIGPIPE comment, commas between exclusion labels, the `HashSet` import, a `clip` unit test, typed errors, and the `(Option<u64>, u64)` sentinel.
 
 ## Outcome
+Shipped, all installed here on 2026-11-15:
+- greenpiste 4.2.0 `plan-review stats --time` (#261, #262);
+- relais v0.62.0 `report runs --json` (relais#470, #471);
+- retro-weekly's `## Time to done` (dotfiles#64);
+- the recomputed baselines and the re-set target, in decisions.
+
+The first 30-day measure: a median 0.63 h blocked over 73 reviewed plans, so the target is now 0.38 h.
+
+Surprises, from running against live data:
+- `gitBranch` is frozen at the session's start.
+- The landed-body sha resolves 17 of 157 plans in the ledger; the machine comment's `body-sha` resolves 75 of 90.
+- Reused `~/.claude/plans` files share one `first_round_sha`, so 61 plans have no round-1 body of their own.
+- Worktrees added through `git -C $VAR` mapped to the wrong repository.
+- Subagents' worktree adds sit in `subagents/` transcripts.
+- Half of blocked time runs on no landed plan's branch.
+
+Not met as worded: unattributed is 50 % (the 25 % bar is held on unmapped, at 23 %), and the runtime is 72 s wall (37 s CPU, under load). The follow-ups are B9 in the programme map.
 
 <!-- panel: repos=amont-agent,relais,dotfiles,decisions adds=cli,contract reviewers=backend,lang:rust,tui,unix,architect,po body-sha=19053529d9c2 -->
