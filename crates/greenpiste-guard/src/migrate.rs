@@ -115,7 +115,12 @@ fn io_error(what: impl Into<String>) -> impl FnOnce(io::Error) -> MigrateError {
 
 /// Whether the migration's done-marker exists.
 pub fn done(env: &Env) -> bool {
-    exists(&env.marker(names::MIGRATE_DONE_MARKER))
+    done_in(&env.config_dir)
+}
+
+/// Whether the done-marker exists in `config_dir`.
+pub fn done_in(config_dir: &Path) -> bool {
+    exists(&config_dir.join(names::MIGRATE_DONE_MARKER))
 }
 
 /// What the markers say, read-only.
@@ -357,6 +362,50 @@ fn system_seconds() -> u64 {
         .map_or(0, |elapsed| elapsed.as_secs())
 }
 
+fn is_log_name(name: &std::ffi::OsStr) -> bool {
+    let name = name.to_string_lossy();
+    name == "journal.log" || name.ends_with(".jsonl")
+}
+
+/// Merge the old file's rows ahead of the new file's into `new_file`, through
+/// a temp file renamed over it with the mode of the file it replaces. A
+/// journal keeps the new file's header line once; each file's own first line
+/// is dropped from the rows.
+fn append_merge(old_file: &Path, new_file: &Path, has_header: bool) -> io::Result<()> {
+    let old_bytes = fs::read(old_file)?;
+    let new_bytes = fs::read(new_file)?;
+    let mut out = Vec::with_capacity(old_bytes.len() + new_bytes.len() + 1);
+    let (old_rows, new_rows, header): (&[u8], &[u8], &[u8]) = if has_header {
+        let (_, old_rest) = split_first_line(&old_bytes);
+        let (new_header, new_rest) = split_first_line(&new_bytes);
+        (old_rest, new_rest, new_header)
+    } else {
+        (&old_bytes, &new_bytes, &[])
+    };
+    out.extend_from_slice(header);
+    if !header.is_empty() && !header.ends_with(b"\n") {
+        out.push(b'\n');
+    }
+    out.extend_from_slice(old_rows);
+    if !old_rows.is_empty() && !old_rows.ends_with(b"\n") {
+        out.push(b'\n');
+    }
+    out.extend_from_slice(new_rows);
+    let mut temp_name = new_file.file_name().unwrap_or_default().to_os_string();
+    temp_name.push(".migrate-tmp");
+    let temp = new_file.with_file_name(temp_name);
+    fs::write(&temp, &out)?;
+    fs::set_permissions(&temp, fs::metadata(new_file)?.permissions())?;
+    fs::rename(&temp, new_file)
+}
+
+fn split_first_line(bytes: &[u8]) -> (&[u8], &[u8]) {
+    match bytes.iter().position(|byte| *byte == b'\n') {
+        Some(end) => bytes.split_at(end + 1),
+        None => (bytes, &[]),
+    }
+}
+
 fn fix_it(what: &str, source: io::Error) -> String {
     format!("{what}: {source}; fix it and run again")
 }
@@ -432,13 +481,35 @@ impl StateDirectories {
         fs::remove_dir(from).map_err(|e| fix_it(&format!("cannot remove {}", from.display()), e))
     }
 
-    /// Move every entry of `from` into `into`; an entry that exists in both
-    /// stays as the one in `into`, and the other lands beside it.
+    /// Move every entry of `from` into `into`. Two regular log files
+    /// (`journal.log`, `*.jsonl`) at the same name are appended (old rows
+    /// first); two directories are merged recursively; any other entry that
+    /// exists in both stays as the one in `into`, and the other lands beside
+    /// it.
     fn merge(&self, from: &Path, into: &Path) -> io::Result<()> {
         let seconds = (self.clock_seconds)();
         for entry in fs::read_dir(from)? {
             let name = entry?.file_name();
+            let source = from.join(&name);
             let mut target = into.join(&name);
+            if exists(&target) {
+                let source_meta = source.symlink_metadata()?;
+                let target_meta = target.symlink_metadata()?;
+                if source_meta.is_dir()
+                    && target_meta.is_dir()
+                    && !source_meta.file_type().is_symlink()
+                    && !target_meta.file_type().is_symlink()
+                {
+                    self.merge(&source, &target)?;
+                    fs::remove_dir(&source)?;
+                    continue;
+                }
+                if source_meta.is_file() && target_meta.is_file() && is_log_name(&name) {
+                    append_merge(&source, &target, name == "journal.log")?;
+                    fs::remove_file(&source)?;
+                    continue;
+                }
+            }
             let mut attempt = 0u32;
             while exists(&target) {
                 let suffix = if attempt == 0 {
@@ -452,7 +523,7 @@ impl StateDirectories {
                 ));
                 attempt += 1;
             }
-            fs::rename(from.join(&name), &target)?;
+            fs::rename(&source, &target)?;
         }
         Ok(())
     }
@@ -1011,6 +1082,107 @@ mod tests {
             "old copy"
         );
         assert_eq!(fs::read_link(config_old(&env)).unwrap(), new);
+    }
+
+    fn scratch_dir(tag: &str) -> Scratch {
+        let dir = std::env::temp_dir().join(format!(
+            "gp-merge-{}-{tag}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::SeqCst)
+        ));
+        let _ = fs::remove_dir_all(&dir); // a leftover of a crashed run
+        fs::create_dir_all(&dir).unwrap();
+        Scratch(dir, serial())
+    }
+
+    #[test]
+    fn colliding_logs_are_appended_old_rows_first() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = scratch_dir("logs");
+        let (from, into) = (scratch.0.join("from"), scratch.0.join("into"));
+        fs::create_dir_all(from.join("plan-review")).unwrap();
+        fs::create_dir_all(into.join("plan-review")).unwrap();
+        fs::write(from.join("journal.log"), "old-header\nold1\nold2\n").unwrap();
+        fs::write(into.join("journal.log"), "new-header\nnew1\n").unwrap();
+        fs::set_permissions(into.join("journal.log"), fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(from.join("plan-review/o.jsonl"), "a\nb").unwrap();
+        fs::write(into.join("plan-review/o.jsonl"), "c\n").unwrap();
+        StateDirectories::new().absorb(&from, &into).unwrap();
+        assert_eq!(
+            fs::read_to_string(into.join("journal.log")).unwrap(),
+            "new-header\nold1\nold2\nnew1\n"
+        );
+        assert_eq!(
+            fs::metadata(into.join("journal.log"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        assert_eq!(
+            fs::read_to_string(into.join("plan-review/o.jsonl")).unwrap(),
+            "a\nb\nc\n"
+        );
+        assert!(!from.exists());
+        let leftovers = fs::read_dir(&into)
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("from-old")
+            })
+            .count();
+        assert_eq!(leftovers, 0);
+    }
+
+    #[test]
+    fn other_collisions_keep_a_side_copy() {
+        let scratch = scratch_dir("other");
+        let (from, into) = (scratch.0.join("from"), scratch.0.join("into"));
+        fs::create_dir_all(&from).unwrap();
+        fs::create_dir_all(&into).unwrap();
+        fs::write(from.join("notes.txt"), "old").unwrap();
+        fs::write(into.join("notes.txt"), "new").unwrap();
+        StateDirectories::new().absorb(&from, &into).unwrap();
+        assert_eq!(fs::read_to_string(into.join("notes.txt")).unwrap(), "new");
+        let side: Vec<_> = fs::read_dir(&into)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("notes.txt.from-old-"))
+            .collect();
+        assert_eq!(side.len(), 1);
+        assert_eq!(fs::read_to_string(into.join(&side[0])).unwrap(), "old");
+    }
+
+    #[test]
+    fn colliding_directories_merge_recursively() {
+        let scratch = scratch_dir("dirs");
+        let (from, into) = (scratch.0.join("from"), scratch.0.join("into"));
+        fs::create_dir_all(from.join("sub")).unwrap();
+        fs::create_dir_all(into.join("sub")).unwrap();
+        fs::write(from.join("sub/only-old"), "o").unwrap();
+        fs::write(into.join("sub/only-new"), "n").unwrap();
+        fs::write(from.join("sub/same"), "old").unwrap();
+        fs::write(into.join("sub/same"), "new").unwrap();
+        StateDirectories::new().absorb(&from, &into).unwrap();
+        assert_eq!(fs::read_to_string(into.join("sub/only-old")).unwrap(), "o");
+        assert_eq!(fs::read_to_string(into.join("sub/only-new")).unwrap(), "n");
+        assert_eq!(fs::read_to_string(into.join("sub/same")).unwrap(), "new");
+        let side = fs::read_dir(into.join("sub"))
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("same.from-old-")
+            })
+            .count();
+        assert_eq!(side, 1);
+        assert!(!into.join("sub.from-old-0").exists());
     }
 
     #[test]

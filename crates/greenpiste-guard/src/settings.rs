@@ -46,6 +46,31 @@ pub fn config_dir() -> Option<std::path::PathBuf> {
     Some(std::path::PathBuf::from(home).join(".claude"))
 }
 
+/// The data root a hook writes under: the new root when it exists as a
+/// directory (or a symlink to one) or the migration is done; else the old root
+/// while it is still a real directory; else the new root. A hook that cannot
+/// migrate (busy, failed, reversed) so keeps using the root that holds the
+/// history instead of starting a second one.
+pub fn data_dir() -> Option<PathBuf> {
+    Some(data_dir_in(&config_dir()?))
+}
+
+pub(crate) fn data_dir_in(config: &Path) -> PathBuf {
+    let new_root = config.join(crate::names::DATA_DIR);
+    if new_root.is_dir() || crate::migrate::done_in(config) {
+        return new_root;
+    }
+    let old_root = config.join(crate::names::old::DATA_DIR);
+    let old_is_real_dir = old_root
+        .symlink_metadata()
+        .is_ok_and(|meta| meta.is_dir() && !meta.file_type().is_symlink());
+    if old_is_real_dir {
+        old_root
+    } else {
+        new_root
+    }
+}
+
 /// The directory under which `amont-agent/claude-marketplace` lives: the XDG
 /// state home, else a `state` directory beside a relocated Claude config, else
 /// `~/.local/state`. A relocated config keeps its state with it, so a scratch
@@ -738,5 +763,47 @@ mod is_ours_tests {
             assert!(!is_ours(&entry(command)), "{command}");
         }
         assert!(!is_ours(&json!({ "type": "command" })));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn data_dir_follows_whichever_root_exists() {
+        use crate::names::{old, DATA_DIR, MIGRATE_DONE_MARKER};
+        let base = std::env::temp_dir().join(format!("gp-datadir-{}", std::process::id()));
+        let fresh = |tag: &str| {
+            let dir = base.join(tag);
+            let _ = std::fs::remove_dir_all(&dir); // a leftover of a crashed run
+            std::fs::create_dir_all(&dir).unwrap();
+            dir
+        };
+        let neither = fresh("neither");
+        assert_eq!(data_dir_in(&neither), neither.join(DATA_DIR));
+        let only_new = fresh("only-new");
+        std::fs::create_dir(only_new.join(DATA_DIR)).unwrap();
+        assert_eq!(data_dir_in(&only_new), only_new.join(DATA_DIR));
+        let only_old = fresh("only-old");
+        std::fs::create_dir(only_old.join(old::DATA_DIR)).unwrap();
+        assert_eq!(data_dir_in(&only_old), only_old.join(old::DATA_DIR));
+        let both = fresh("both");
+        std::fs::create_dir(both.join(old::DATA_DIR)).unwrap();
+        std::fs::create_dir(both.join(DATA_DIR)).unwrap();
+        assert_eq!(data_dir_in(&both), both.join(DATA_DIR));
+        let linked = fresh("linked");
+        std::fs::create_dir(linked.join(DATA_DIR)).unwrap();
+        std::os::unix::fs::symlink(linked.join(DATA_DIR), linked.join(old::DATA_DIR)).unwrap();
+        assert_eq!(data_dir_in(&linked), linked.join(DATA_DIR));
+        let old_link_only = fresh("old-link-only");
+        std::fs::create_dir(old_link_only.join("elsewhere")).unwrap();
+        std::os::unix::fs::symlink(
+            old_link_only.join("elsewhere"),
+            old_link_only.join(old::DATA_DIR),
+        )
+        .unwrap();
+        assert_eq!(data_dir_in(&old_link_only), old_link_only.join(DATA_DIR));
+        let marker_only = fresh("marker");
+        std::fs::create_dir(marker_only.join(old::DATA_DIR)).unwrap();
+        std::fs::write(marker_only.join(MIGRATE_DONE_MARKER), "1").unwrap();
+        assert_eq!(data_dir_in(&marker_only), marker_only.join(DATA_DIR));
+        let _ = std::fs::remove_dir_all(&base); // best-effort cleanup of a temp dir
     }
 }

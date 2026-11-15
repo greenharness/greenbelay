@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixed
+
+- **A hook that cannot migrate keeps using the data directory that exists,
+  and the migration merges colliding journals and ledgers rather than setting
+  the old one aside.** A busy, failed or reversed machine no longer gets a
+  second `~/.claude/greenpiste` beside the old root, and `journal.log` and
+  `*.jsonl` files found in both roots are appended (old rows first) instead of
+  the old history landing in an unread `.from-old-*` file.
+
 ### Added
 
 - **`greenpiste migrate --dry-run` says `nothing to do: already migrated`

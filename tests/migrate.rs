@@ -377,6 +377,26 @@ fn a_hook_migrates_once_and_still_decides() {
     assert!(is_symlink(&machine.claude().join(old::DATA_DIR)));
 }
 
+/// The journal's lines in `dir`, header included.
+fn journal_lines(dir: &Path) -> Vec<String> {
+    fs::read_to_string(dir.join("journal.log"))
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+fn assert_hook_row_in_old_root_only(machine: &Machine) {
+    assert!(
+        !machine.claude().join(names::DATA_DIR).exists(),
+        "a hook that cannot migrate must not create the new root"
+    );
+    assert!(!is_symlink(&machine.claude().join(old::DATA_DIR)));
+    let lines = journal_lines(&machine.claude().join(old::DATA_DIR));
+    assert_eq!(lines[1], "row one", "{lines:?}");
+    assert!(lines.len() > 2, "the hook's row is missing: {lines:?}");
+}
+
 #[test]
 fn a_hook_never_migrates_after_a_reverse() {
     let machine = Machine::old_style("hook-after-reverse");
@@ -385,21 +405,54 @@ fn a_hook_never_migrates_after_a_reverse() {
         machine.run(&["migrate", "--reverse"]).status.code(),
         Some(0)
     );
-    let before = without_markers(&machine.snapshot());
     let output = machine.hook(DENIED);
     assert!(is_deny(&output));
     assert!(!machine.done_marker().exists());
-    // The hook's own journal may create the new directory; the old one stays put.
-    assert!(!is_symlink(&machine.claude().join(old::DATA_DIR)));
     assert!(!machine.state().join(names::DATA_DIR).exists());
-    assert!(machine.claude().join(old::DATA_DIR).is_dir());
-    assert!(!is_symlink(&machine.claude().join(old::DATA_DIR)));
-    let after = without_markers(&machine.snapshot());
-    for (key, value) in &before {
-        if !key.ends_with(".log") && !key.starts_with(&format!("{}/", old::DATA_DIR)) {
-            assert_eq!(after.get(key), Some(value), "{key}");
-        }
+    assert_hook_row_in_old_root_only(&machine);
+}
+
+#[test]
+fn an_explicit_migrate_after_a_hook_following_a_reverse_keeps_every_row() {
+    let machine = Machine::old_style("merge-after-reverse");
+    assert_eq!(machine.run(&["migrate"]).status.code(), Some(0));
+    assert_eq!(
+        machine.run(&["migrate", "--reverse"]).status.code(),
+        Some(0)
+    );
+    assert!(is_deny(&machine.hook(DENIED)));
+    assert_hook_row_in_old_root_only(&machine);
+    let rows_before = journal_lines(&machine.claude().join(old::DATA_DIR)).len() - 1;
+
+    let migrated = machine.run(&["migrate"]);
+    assert_eq!(migrated.status.code(), Some(0), "{}", stderr(&migrated));
+    for key in machine.snapshot().keys() {
+        assert!(!key.contains(".from-old-"), "{key}");
     }
+    let lines = journal_lines(&machine.claude().join(names::DATA_DIR));
+    let headers = lines
+        .iter()
+        .filter(|l| *l == names::JOURNAL_HEADER || *l == old::JOURNAL_HEADER)
+        .count();
+    assert_eq!(headers, 1, "{lines:?}");
+    assert!(lines[0] == names::JOURNAL_HEADER || lines[0] == old::JOURNAL_HEADER);
+    assert_eq!(lines.len() - 1, rows_before, "{lines:?}");
+    assert_eq!(lines[1], "row one");
+    assert!(lines[2..].iter().all(|l| l != "row one"));
+
+    let status = machine.run(&["status"]);
+    assert_eq!(status.status.code(), Some(0), "{}", stderr(&status));
+}
+
+#[test]
+fn a_hook_on_a_migrated_machine_writes_into_the_new_root() {
+    let machine = Machine::old_style("hook-migrated");
+    assert_eq!(machine.run(&["migrate"]).status.code(), Some(0));
+    let before = journal_lines(&machine.claude().join(names::DATA_DIR)).len();
+    assert!(is_deny(&machine.hook(DENIED)));
+    let after = journal_lines(&machine.claude().join(names::DATA_DIR)).len();
+    assert!(after > before);
+    assert!(is_symlink(&machine.claude().join(old::DATA_DIR)));
 }
 
 #[test]
@@ -414,14 +467,8 @@ fn a_hook_with_the_lock_held_decides_and_moves_nothing() {
     .expect("the test takes the lock");
     let output = machine.hook(DENIED);
     assert!(is_deny(&output), "{}", stdout(&output));
-    // The hook's own journal may create the new directory; the old one stays put.
-    assert!(!is_symlink(&machine.claude().join(old::DATA_DIR)));
     assert!(!machine.done_marker().exists());
-    assert!(machine
-        .claude()
-        .join(old::DATA_DIR)
-        .join("journal.log")
-        .is_file());
+    assert_hook_row_in_old_root_only(&machine);
     drop(held);
 }
 
@@ -451,6 +498,12 @@ fn a_failing_step_is_attempted_once_by_fifty_hooks() {
     assert_eq!(fs::read_to_string(&failed).unwrap(), note);
     assert_eq!(fs::metadata(&failed).unwrap().modified().unwrap(), modified);
     assert!(!machine.done_marker().exists());
+    // The state-directories step runs before the failing one, so the data
+    // already lives in the new root; the hooks follow it there.
+    let lines = journal_lines(&machine.claude().join(names::DATA_DIR));
+    assert_eq!(lines[1], "row one", "{lines:?}");
+    assert!(lines.len() > 50, "{lines:?}");
+    assert!(is_symlink(&machine.claude().join(old::DATA_DIR)));
 
     let other = machine.run(&["rules"]);
     assert!(
