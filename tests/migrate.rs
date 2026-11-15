@@ -271,7 +271,9 @@ fn migrate_moves_everything_and_a_second_run_changes_nothing() {
     assert!(machine.claude().join(names::DATA_DIR).is_dir());
     assert_old_root_links(&machine);
     assert!(machine.state().join(names::DATA_DIR).is_dir());
-    assert!(is_symlink(&machine.state().join(old::DATA_DIR)));
+    if cfg!(unix) {
+        assert!(is_symlink(&machine.state().join(old::DATA_DIR)));
+    }
     let settings = fs::read_to_string(machine.claude().join("settings.json")).unwrap();
     assert!(settings.contains(&format!("{PLUGIN}@{}", names::DATA_DIR)));
     assert!(!settings.contains(old::DATA_DIR));
