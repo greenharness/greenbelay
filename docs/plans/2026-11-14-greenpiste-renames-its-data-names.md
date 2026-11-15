@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 branch: feat/greenpiste-data-names
 repos: [amont-agent, relais, amont, grh, greenharness-skills, dotfiles, decisions]
 adrs: [ADR-0068, ADR-0064]
@@ -252,7 +252,7 @@ dotfile or grh allowance tells an agent to use the old ones.
   `amont-agent/docs/install.md`, `amont-agent/Cargo.toml`,
   `amont-agent/greenharness.toml`; released, installed here, first
   command migrates.
-- [ ] Phase 5 — written instructions: `greenharness-skills/parts/workflow/skills/worktree-task/SKILL.md`,
+- [x] Phase 5 — written instructions: `greenharness-skills/parts/workflow/skills/worktree-task/SKILL.md`,
   `greenharness-skills/parts/workflow/skills/plan-review/SKILL.md`,
   `greenharness-skills/parts/workflow/skills/retro/SKILL.md`,
   `greenharness-skills/parts/workflow/agents/browser-check.md`,
@@ -260,7 +260,7 @@ dotfile or grh allowance tells an agent to use the old ones.
   `dotfiles/dot_claude/tools/retro-weekly/executable_retro-weekly.sh`,
   `grh/scripts/e2e.sh`, `grh/catalog.toml` (skills pin), `grh/manifests/greenpiste.toml`
   (5.0.0 pin); skills and grh released.
-- [ ] Phase 6 — record: `decisions/docs/programmes/gate-guardrails/map.md`
+- [x] Phase 6 — record: `decisions/docs/programmes/gate-guardrails/map.md`
   (3b-2 done; the census list gains every old read this plan keeps, and what the
   migration leaves behind: the four marker files and the lock file in the Claude
   config directory, and the symlinks at the old state roots), and lists the two
@@ -372,6 +372,24 @@ so it found the payload under `~/.claude/greenpiste/provenance`).
   are not run under the canary. Follow-up: run them there too.
 - Both follow-ups go on the programme map as 5.0.1 items (Phase 6).
 
+### Phase 5 and 6, observed (2026-11-15)
+
+- skills#26 merged (checks green) and v0.10.0 released; `scripts/check.sh` and
+  the unit tests pass; no `AMONT_AGENT_*`, `amont.agent.*` or
+  `~/.claude/amont-agent` is left in `parts/`. `grh install workflow` placed the
+  new skills here; `browser-check.md` is the person's own copy (it pins
+  `model: haiku`), so only its two attestation paths were patched by hand
+  instead of `--replace`.
+- grh#43 merged (e2e green on macOS and Linux, the pinned-manifest check) and
+  v0.7.0 released and installed: it pins greenpiste 5.0.0 (the release's own
+  manifest, tarball sums cross-checked) and skills 0.10.0.
+- dotfiles#65 merged: `dot_claude/settings.json.tmpl` named
+  `clear-relay@amont-agent` and would have undone the migration at the next
+  `chezmoi apply`; it and retro-weekly now match the live files. `CLAUDE.md.tmpl`
+  holds command names only, no data names, and was left as it is.
+- decisions#209 merged: the programme map records 3b-2, the follow-ups and the
+  census list.
+
 ### Kept as they are (review lows, 2026-11-15)
 
 - `Step::plan` returns strings and a refusal is marked by one shared prefix
@@ -395,8 +413,14 @@ so it found the payload under `~/.claude/greenpiste/provenance`).
 
 ## Outcome
 
-On this machine nothing greenpiste writes says `amont-agent`, and the old
-reads left are the ones the census list names.
+On this machine nothing greenpiste writes says `amont-agent` (checked: the
+journal rows written after the migration name only the checkout directory
+`amont-agent-wt-*`, the hooks point at `greenpiste`, no `amont.agent.*` key is
+left), and the old reads left are the ones the census list names. Not as
+planned: the first command after the upgrade did not migrate (an earlier
+`--reverse` had left its marker), Claude Code's own plugin registry needed its
+own commands, and an accidental first migration by a test run was reversed. The
+5.0.1 follow-ups are on the programme map.
 
 ## Decision log
 
