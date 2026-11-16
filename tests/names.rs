@@ -1,5 +1,4 @@
-//! The tool's name is said from `names` alone (ADR-0064, plan "amont-agent
-//! ships as greenbelay"). This test fails on `amont-agent` inside any Rust
+//! The tool's name is said from `names` alone (ADR-0064, ADR-0071). This test fails on `amont-agent` inside any Rust
 //! string literal under `crates/*/src`, `src` and `tests`, except in a
 //! `names.rs`, except the alias binary's file name.
 

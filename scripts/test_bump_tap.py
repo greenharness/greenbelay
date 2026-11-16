@@ -67,8 +67,8 @@ class BumpTap(unittest.TestCase):
         self.formula = self.dir / "amont-agent.rb"
         self.formula.write_text(FORMULA)
         self.sums = self.dir / "SHA256SUMS"
-        # A real release lists both archive sets; only greenbelay-* feeds the
-        # formula, the amont-agent-* ones carry other (alias) bytes.
+        # Only greenbelay-* feeds the formula; the amont-agent-* lines stand
+        # for foreign archives the parser must skip.
         self.sums.write_text(
             "".join(f"{'a' * 64}  greenbelay-2.0.0-{t}.tar.gz\n" for t in TARGETS)
             + "".join(f"{'b' * 64}  amont-agent-2.0.0-{t}.tar.gz\n" for t in TARGETS)

@@ -83,8 +83,8 @@ def main() -> None:
         if len(parts) != 2:
             continue
         sha, name = parts
-        # The amont-agent-* alias archives are the same binary under the old
-        # name; only the greenbelay-* archives feed the formula.
+        # Only the greenbelay-* archives feed the formula; any other line
+        # (an older release's foreign archive name) is skipped.
         m = re.fullmatch(r"greenbelay-([0-9.]+)-(.+?)\.(?:tar\.gz|zip)", name)
         if not m:
             continue

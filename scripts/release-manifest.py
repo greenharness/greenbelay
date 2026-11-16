@@ -30,7 +30,6 @@ Python 3.11 or later (tomllib); run it as `python3 -I`.
 
 import hashlib
 import pathlib
-import re
 import sys
 import tomllib
 from typing import NoReturn

@@ -1,6 +1,5 @@
 //! Every name the tool says about itself, in one place (ADR-0064
-//! `harness.bundle-names`, ADR-0068 `harness.renames`; plan "amont-agent ships
-//! as greenbelay").
+//! `harness.bundle-names`, ADR-0071 `harness.renames`).
 //!
 //! Messages, usage text, error prefixes, `--version` lines, command hints and
 //! the hook decision prefix are built from these, never from a literal: a
@@ -26,7 +25,8 @@ pub const PRODUCT: &str = bin!();
 /// The binary.
 pub const BIN: &str = bin!();
 
-/// The binary's old name, still installed as an alias (a copy).
+/// The binary's old name, recognised in hook entries and commands until the
+/// census; no longer installed (ADR-0071).
 pub const ALIAS: &str = "amont-agent";
 
 /// The state and config directory segment (`~/.claude/greenbelay/`) and the

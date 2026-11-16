@@ -45,10 +45,12 @@ class Greenbelay < Formula
   def caveats
     <<~EOS
       greenpiste is now greenbelay, and no greenpiste or amont-agent binary
-      is installed: hook entries that call the old path fail until they are
-      rewritten with:
+      is installed. Hook entries in ~/.claude/settings.json that call
+      greenpiste fail until their command is renamed to greenbelay (greenbelay
+      install does not recognise greenpiste entries as its own, and would add
+      a second handler beside each). Check with:
 
-        greenbelay install --write
+        greenbelay doctor
 
       Rules that refuse by default: #{refusing_by_default.join(", ")}
     EOS

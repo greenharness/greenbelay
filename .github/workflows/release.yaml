@@ -291,8 +291,8 @@ jobs:
 
   # greenbelay stands alone (ADR-0064 `harness.standalone-tools`): installed
   # by install/install.sh from the archives this run built, on a clean runner
-  # with no grh, it answers its own commands, and its old name runs as the
-  # same build.
+  # with no grh, it answers its own commands, and it places no old-name
+  # binary.
   standalone:
     name: greenbelay stands alone (${{ matrix.os }})
     needs: [guard, build]
@@ -682,6 +682,8 @@ jobs:
           import json, pathlib, sys
           path = pathlib.Path(sys.argv[1])
           renames = json.loads(path.read_text()) if path.exists() else {}
+          if not isinstance(renames, dict):
+              sys.exit(f"{path}: expected a JSON object")
           renames.pop("amont-agent", None)
           renames["greenpiste"] = "greenbelay"
           path.write_text(json.dumps(renames, indent=2, sort_keys=True) + "\n")
@@ -796,8 +798,8 @@ jobs:
           reported=$(greenbelay --version)
           printf '%s\n' "$reported"
           [ "$reported" = "greenbelay $VERSION" ] || { echo "::error::greenbelay --version said: $reported"; exit 1; }
-          if command -v greenpiste > /dev/null 2>&1; then
-            echo "::error::the upgrade left a greenpiste binary"; exit 1
+          if command -v greenpiste > /dev/null 2>&1 || command -v amont-agent > /dev/null 2>&1; then
+            echo "::error::the upgrade left an old-name binary"; exit 1
           fi
 
       - name: Say so
