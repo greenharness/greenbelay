@@ -10,7 +10,7 @@ plan-id: p-01M7H8RWZF2TBZTBW0BCZQ5ANA
 ## Review panel
 
 👉 **Decide:** none — approve if greenpiste should name the `claude plugin` commands that fix Claude Code's registry, and never run them itself.
-📍 amont-agent, grh · Phases 1–2 built · next: implementation review, then Phase 3 (release 5.0.1). Panel: backend, lang:rust, tui, unix (opus-5-5), codex (gpt).
+📍 amont-agent, grh · Phases 1–2 built and reviewed · next: PR, merge, then Phase 3 (release 5.0.1). Panel: backend, lang:rust, tui, unix (opus-5-5), codex (gpt).
 **Changed by review:** doctor prints one command per line (its sanitiser escaped `\n`); the leak hunt catches a write into the canary and passes features per package; previews and already-migrated machines are judged against the side they will write.
 📄 Full reviews: [the sidecar](2026-11-16-greenpiste-tells-claude-codes-registry.reviews.md).
 **Verdicts:** round 1 approve-with-changes 4; round 2 approve 1, approve-with-changes 3; Codex rework (2 high applied); final backend bind approve-with-changes; 0 rework left; 9 carried into implementation.
@@ -104,20 +104,27 @@ test target of the workspace.
   - `migrate` (explicit runs only; a hook never prints): `run_migrate` emits
     registry diagnostics after successful settlement, including `AlreadyDone`,
     `Reversed` and `ReversedAlready`; diagnostics do not depend on executing
-    the plugin step or retaining its note. `Stale` prints `Claude Code still
-    lists ...; run:` followed by one command per line. `Unknown` prints the
-    could-not-read explanation with no commands. `--dry-run` evaluates the
-    intended destination and prints commands as `would: ` lines.
-  - `install --write`: after `enabled clear-relay@greenpiste`, the same lines
-    on stderr when the state is not `Current`; `install` without `--write`
-    prints them as `would then need:` lines, also on stderr.
+    the plugin step or retaining its note. `Stale` prints `Claude Code's plugin
+    registry still lists ...; run:` followed by one command per line. `Unknown`
+    prints `could not read <full path>: <why>` and its hint on an indented
+    second line, with no commands. `--dry-run` evaluates the intended
+    destination (`registry_state_after`: `NotUsed` when settings.json
+    registers no plugin, as the run would say) and prints the commands on
+    stderr as `would then need:` lines; its stdout says `nothing to move`
+    rather than `nothing to do` while the registry still needs them.
+  - `install --write`: the same lines on stderr when the state is not
+    `Current`, under the same condition as its preview (also when the plugin
+    files are already placed); `install` without `--write` prints them as
+    `would then need:` lines, also on stderr.
   - `doctor`, migration section: a failing finding `Claude Code's plugin
     registry still lists clear-relay@amont-agent` (or `has not registered
     clear-relay@greenpiste`), with the commands as its detail, one per line
     (`doctor::report` splits `detail` on newlines and sanitizes and indents
-    each line, since `ui::sanitize` escapes `\n` as `\x0a`); `Unknown` is a
-    failing `could not read Claude Code's plugin registry: <file>: <why>;
-    check the file, or run claude plugin list`.
+    each line, since `ui::sanitize` escapes `\n` as `\x0a`), the finding line
+    ending `; run:`; `Unknown` is a failing `could not read Claude Code's
+    plugin registry <full path>: <why>` with `check the file, or run claude
+    plugin list` as its detail; an unreadable settings.json is one finding
+    (the registration's), not a second registry one.
     `NotUsed` and `Current` add nothing. Failing although greenpiste cannot
     fix it (the plugin is off until it is fixed); the comment at
     `doctor.rs:379-381` is reworded to say so.
@@ -160,7 +167,9 @@ test target of the workspace.
   command list for each, including a path with a space.
   `tests/migrate.rs`: on a scratch machine whose `plugins/*.json` hold the old
   ids, `migrate` exits 0 and its stderr names the four commands in order;
-  `migrate --dry-run` says them as `would:` lines; after `--reverse` the note
+  `migrate --dry-run` says them as `would then need:` lines on stderr (and
+  `nothing to move` on an already-migrated machine), and names none when
+  settings.json registers no plugin; after `--reverse` the note
   names the commands back; a hook run prints nothing extra; a `migrate` on an
   already-migrated machine and a repeated `--reverse` still print the
   diagnostics; an install preview, fresh and with `--project`/`--local`, names
@@ -187,16 +196,33 @@ test target of the workspace.
 
 Observed before the push (2026-11-16):
 
-- Phase 1: `cargo test` green on the branch (a514bd75); `tests/migrate.rs` and
-  `tests/doctor.rs` cover the stale, current, unreadable and preview cases.
+- Phase 1: `cargo test --workspace --features test-hooks --no-fail-fast` at
+  9dc29a2f → 45 targets `test result: ok`, 0 failed.
+- Phase 1, piloted at 9dc29a2f on a scratch old-style machine (pretty JSON
+  settings registering `clear-relay@amont-agent`, a registry shaped like
+  Claude Code's naming the old ids): `migrate` → rc 0, stderr `Claude Code's
+  plugin registry still lists clear-relay@amont-agent; run:` and the four
+  commands in order; `migrate --dry-run` → stdout `nothing to move: already
+  migrated` only, stderr the four `would then need:` lines; `doctor` → `✗`
+  finding ending `; run:` with one indented command per line; registry files'
+  checksum unchanged across all three.
 - Phase 2, planted unit test calling `journal::record` with no scratch dir →
   expected `LEAK` → `LEAK lib:greenpiste-guard: the canary changed
   (> claude/amont-agent/journal.log …)`, twice; the plant removed (`cmp` with
   the clean copy, 0 `planted_leak` lines).
 - Phase 2, two clean runs of every target → expected all `ok` → 43 `ok`, rc 0,
-  both runs.
+  both runs; again at 9dc29a2f (TEST-FAIL and the trap added): planted →
+  `LEAK lib:greenpiste-guard`, rc 1, plant removed; clean → 43 `ok`, rc 0.
 - `LEAK_HUNT_SNAPSHOT_FAIL=1 scripts/leak-hunt.sh migrate` → `SNAPSHOT-FAIL`,
   rc 1; `scripts/leak-hunt.sh lib:nope migrate` → usage on stderr, rc 2, nothing run.
+
+## Implementation review
+
+- implementation-review: round 1 approve-with-changes (91k, 123 s), Delta approve-with-changes (55k, 44 s); renames fixed; plan text brought up to the code; deliberate: doctor's report stays on stdout (it is the output asked for), install judged against the machine-level registry.
+- backend: approve-with-changes (71k, 80 s), Delta approve (40k, 37 s); preview/--write condition, four-command tests per scope, TEST-FAIL, one finding for unreadable settings fixed.
+- lang:rust: approve-with-changes (72k, 56 s), Delta approve-with-changes (36k, 12 s); docs, same_path, probe, must_use, sanitize fixed; deliberate: typed registry errors and a pure classify (follow-ups; the reason is only printed).
+- unix: approve-with-changes (58k, 44 s), Delta approve-with-changes (38k, 10 s); dry-run NotUsed, nothing to move, trap fixed; deliberate: the dry run's lead-in plus per-line prefix (both greppable).
+- tui: approve-with-changes (60k, 55 s), Delta approve-with-changes (38k, 11 s); full paths, `; run:`, hint lines fixed; deliberate: an unreadable file reads the same in a dry run (it is true now). Follow-up seen while piloting: `ui::colors_enabled` paints signs on a pipe (pre-existing).
 
 ## Decision log
 
