@@ -806,22 +806,37 @@ fn new_id() -> String {
     format!("{PLUGIN}@{}", names::DATA_DIR)
 }
 
+/// A path as the commands print it: bare when it holds only characters a
+/// shell leaves alone, else in single quotes (a Windows path has backslashes).
+/// Written out here, not taken from the code under test.
+fn quoted(path: std::path::PathBuf) -> String {
+    let text = path.display().to_string();
+    let plain = text
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c));
+    if plain {
+        text
+    } else {
+        format!("'{}'", text.replace('\'', "'\\''"))
+    }
+}
+
 fn new_dir(machine: &Machine) -> String {
-    machine
-        .state()
-        .join(names::DATA_DIR)
-        .join("claude-marketplace")
-        .display()
-        .to_string()
+    quoted(
+        machine
+            .state()
+            .join(names::DATA_DIR)
+            .join("claude-marketplace"),
+    )
 }
 
 fn old_dir(machine: &Machine) -> String {
-    machine
-        .state()
-        .join(old::DATA_DIR)
-        .join("claude-marketplace")
-        .display()
-        .to_string()
+    quoted(
+        machine
+            .state()
+            .join(old::DATA_DIR)
+            .join("claude-marketplace"),
+    )
 }
 
 /// The four commands, forward, in the order to run them.
@@ -1044,6 +1059,7 @@ fn an_install_without_a_home_prints_no_registry_lines() {
         .command()
         .arg("install")
         .env_remove("HOME")
+        .env_remove("USERPROFILE")
         .env_remove("CLAUDE_CONFIG_DIR")
         .env_remove("XDG_STATE_HOME")
         .env_remove("XDG_CONFIG_HOME")
