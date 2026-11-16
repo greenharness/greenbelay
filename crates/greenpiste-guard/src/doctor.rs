@@ -376,8 +376,11 @@ fn migration() -> Vec<Finding> {
 
 fn migration_findings(env: Option<&crate::migrate::Env>, variables: &[String]) -> Vec<Finding> {
     let fix = format!("{} migrate", names::PRODUCT);
-    // Findings greenpiste can fix: not advisory, doctor exits non-zero.
+    // Findings that fail doctor: not advisory, doctor exits non-zero. Most are
+    // what greenpiste can fix; a stale Claude Code plugin registry fails too,
+    // because the plugin stays off until it is fixed (by the person's commands).
     let mut blocking: Vec<String> = Vec::new();
+    let mut registry: Vec<Finding> = Vec::new();
     // Names greenpiste cannot fix (the person's own environment): advisory.
     let mut advisory: Vec<String> = Vec::new();
     if let Some(env) = env {
@@ -416,6 +419,9 @@ fn migration_findings(env: Option<&crate::migrate::Env>, variables: &[String]) -
             Ok(None) => {}
             Err(why) => blocking.push(format!("could not read the plugin registration: {why}")),
         }
+        registry.extend(registry_finding(&crate::migrate_plugin::registry_state(
+            env,
+        )));
     }
     for name in variables {
         let rest = name.strip_prefix(names::old::ENV_PREFIX).unwrap_or(name);
@@ -425,7 +431,7 @@ fn migration_findings(env: Option<&crate::migrate::Env>, variables: &[String]) -
         ));
     }
     let done = env.and_then(|env| crate::migrate::marker_state(env).done);
-    if blocking.is_empty() && advisory.is_empty() {
+    if blocking.is_empty() && advisory.is_empty() && registry.is_empty() {
         return vec![Finding::good(match done {
             Some(wall) => format!("migration: done in {wall} ms, nothing left"),
             None => "migration: nothing left over".to_string(),
@@ -443,6 +449,7 @@ fn migration_findings(env: Option<&crate::migrate::Env>, variables: &[String]) -
         line,
         detail: None,
     }));
+    out.extend(registry);
     out.extend(advisory.into_iter().map(|line| Finding {
         ok: false,
         advisory: true,
@@ -450,6 +457,25 @@ fn migration_findings(env: Option<&crate::migrate::Env>, variables: &[String]) -
         detail: None,
     }));
     out
+}
+
+/// Claude Code's plugin registry against settings.json: a failing finding
+/// that names the commands to run, one per detail line.
+fn registry_finding(state: &crate::migrate_plugin::RegistryState) -> Option<Finding> {
+    use crate::migrate_plugin::RegistryState;
+    match state {
+        RegistryState::Current | RegistryState::NotUsed => None,
+        RegistryState::Stale(stale) => Some(Finding::bad(
+            format!("Claude Code's plugin registry {}", stale.what()),
+            stale.commands().join("\n"),
+        )),
+        RegistryState::Unknown(_) => state.report().map(|report| Finding {
+            ok: false,
+            advisory: false,
+            line: report.what,
+            detail: None,
+        }),
+    }
 }
 
 /// Whether no finding is a failure; advisories do not count.
@@ -916,7 +942,9 @@ pub fn report(findings: &[Finding]) -> bool {
         };
         println!("  {sign} {}", ui::sanitize(&f.line));
         if let Some(d) = &f.detail {
-            println!("    {}", ui::sanitize(d));
+            for line in d.split('\n') {
+                println!("    {}", ui::sanitize(line));
+            }
         }
     }
     healthy

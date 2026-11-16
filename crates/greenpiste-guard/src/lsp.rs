@@ -203,33 +203,13 @@ fn fleet_lsp_enabled_in(text: &str) -> Option<bool> {
         .and_then(|(_, on)| on.as_bool())
 }
 
-/// What `<config>/plugins/installed_plugins.json` holds.
-pub enum InstalledPlugins {
-    /// No such file: nothing is installed through the manifest.
-    Missing,
-    /// The file exists and cannot be read or parsed.
-    Unreadable,
-    Document(serde_json::Value),
-}
-
-/// The one reader of the installed-plugins manifest, for every consumer.
-pub fn installed_plugins(config: &Path) -> InstalledPlugins {
-    match std::fs::read_to_string(config.join("plugins/installed_plugins.json")) {
-        Ok(raw) => match serde_json::from_str(&raw) {
-            Ok(doc) => InstalledPlugins::Document(doc),
-            Err(_) => InstalledPlugins::Unreadable,
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => InstalledPlugins::Missing,
-        Err(_) => InstalledPlugins::Unreadable,
-    }
-}
-
 /// Where the manifest says a plugin is installed: the last entry of the
 /// first key named `<plugin>@…`.
 fn plugin_install_path(plugin: &str) -> Option<PathBuf> {
-    match installed_plugins(&crate::settings::config_dir()?) {
-        InstalledPlugins::Document(doc) => install_path_in(&doc, plugin),
-        InstalledPlugins::Missing | InstalledPlugins::Unreadable => None,
+    match crate::settings::installed_plugins(&crate::settings::config_dir()?) {
+        crate::settings::InstalledPlugins::Document(doc) => install_path_in(&doc, plugin),
+        crate::settings::InstalledPlugins::Missing
+        | crate::settings::InstalledPlugins::Unreadable(_) => None,
     }
 }
 

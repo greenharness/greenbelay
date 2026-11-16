@@ -31,6 +31,7 @@ use greenpiste_guard::git;
 use greenpiste_guard::graduate;
 use greenpiste_guard::guidance;
 use greenpiste_guard::harness_review;
+use greenpiste_guard::migrate_plugin;
 use greenpiste_guard::names::BIN;
 use greenpiste_process::attestations;
 use greenpiste_process::block_fingerprint;
@@ -481,6 +482,10 @@ fn run_migrate(args: &[OsString]) -> ExitCode {
                         }
                     }
                 }
+                print_registry(
+                    &migrate_plugin::registry_state_for(&env, direction),
+                    RegistryVoice::WouldStdout,
+                );
                 if refused {
                     eprintln!("migrate would stop: fix what is named above first");
                     return ExitCode::FAILURE;
@@ -514,7 +519,54 @@ fn run_migrate(args: &[OsString]) -> ExitCode {
         return ExitCode::FAILURE;
     }
     eprintln!("{verdict}");
+    print_registry(&migrate_plugin::registry_state(&env), RegistryVoice::Run);
     ExitCode::SUCCESS
+}
+
+/// How the registry diagnostics are phrased and where they go.
+#[derive(Clone, Copy)]
+enum RegistryVoice {
+    /// An explicit run that settled: say what to run, on stderr.
+    Run,
+    /// A dry run: `would:` lines on stdout, beside the other `would:` lines.
+    WouldStdout,
+    /// An install preview: `would then need:` lines on stderr.
+    WouldThenNeed,
+}
+
+/// Say what Claude Code's plugin registry needs, never doing it.
+fn print_registry(state: &migrate_plugin::RegistryState, voice: RegistryVoice) {
+    let Some(report) = state.report() else {
+        return;
+    };
+    match voice {
+        RegistryVoice::Run => {
+            if report.commands.is_empty() {
+                eprintln!("{}", report.what);
+            } else {
+                eprintln!("{}; run:", report.what);
+                for command in &report.commands {
+                    eprintln!("  {command}");
+                }
+            }
+        }
+        RegistryVoice::WouldStdout => {
+            if report.commands.is_empty() {
+                eprintln!("{}", report.what);
+            }
+            for command in &report.commands {
+                println!("would: {command}");
+            }
+        }
+        RegistryVoice::WouldThenNeed => {
+            if report.commands.is_empty() {
+                eprintln!("{}", report.what);
+            }
+            for command in &report.commands {
+                eprintln!("would then need: {command}");
+            }
+        }
+    }
 }
 
 /// What a finished state is called in a "nothing to do" line.
@@ -3341,6 +3393,9 @@ fn run_install(args: &[OsString], adding: bool) -> ExitCode {
         }
         println!("Nothing written. Re-run with --write to apply:\n");
         print!("{}", plan.after);
+        if adding && plugin.is_some() {
+            print_install_registry(RegistryVoice::WouldThenNeed);
+        }
         return ExitCode::SUCCESS;
     }
     if matches!(plan.change, settings::Change::WouldReformat) {
@@ -3363,6 +3418,7 @@ fn run_install(args: &[OsString], adding: bool) -> ExitCode {
                     eprintln!(
                         "  clears the session after 10 s, then submits <prompt> (type or /stay to keep it); remove: {BIN} uninstall --write"
                     );
+                    print_install_registry(RegistryVoice::Run);
                 }
             }
             if let Some(dir) = &plan.remove_dir {
@@ -3377,6 +3433,20 @@ fn run_install(args: &[OsString], adding: bool) -> ExitCode {
             );
             ExitCode::from(2)
         }
+    }
+}
+
+/// The registry lines of an install: judged against the side the plugin is
+/// installed under, from the Claude config directory whatever the scope.
+fn print_install_registry(voice: RegistryVoice) {
+    if let Some(env) = greenpiste_guard::migrate::Env::from_process() {
+        print_registry(
+            &migrate_plugin::registry_state_for(
+                &env,
+                greenpiste_guard::migrate::Direction::Forward,
+            ),
+            voice,
+        );
     }
 }
 

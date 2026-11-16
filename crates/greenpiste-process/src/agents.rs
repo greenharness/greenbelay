@@ -183,7 +183,7 @@ fn subdirs(dir: &Path) -> Option<Vec<PathBuf>> {
 /// names, and the version directories of the plugin cache. `None` when the
 /// manifest exists and cannot be understood.
 fn plugin_roots(config: &Path) -> Option<Vec<PathBuf>> {
-    use greenpiste_guard::lsp::{installed_plugins, InstalledPlugins};
+    use greenpiste_guard::settings::{installed_plugins, InstalledPlugins};
     let mut roots = Vec::new();
     match installed_plugins(config) {
         InstalledPlugins::Document(doc) => {
@@ -197,7 +197,7 @@ fn plugin_roots(config: &Path) -> Option<Vec<PathBuf>> {
             }
         }
         InstalledPlugins::Missing => {}
-        InstalledPlugins::Unreadable => return None,
+        InstalledPlugins::Unreadable(_) => return None,
     }
     // cache/<marketplace>/<plugin>/<version>
     let mut layer = vec![config.join("plugins").join("cache")];

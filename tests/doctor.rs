@@ -124,6 +124,8 @@ fn a_fresh_install_is_healthy() {
     h.with_a_session();
     let (code, out) = h.run(&["install", "--write"]);
     assert_eq!(code, 0, "{out}");
+    // Claude Code registers the plugin itself; greenpiste only reads that.
+    h.registry(names::DATA_DIR);
     let (code, out) = h.run(&["doctor"]);
     assert_eq!(code, 0, "a fresh install should be healthy:\n{out}");
     assert!(out.contains("pipe-to-tail"), "names what is armed: {out}");
@@ -919,6 +921,35 @@ impl Home {
         self
     }
 
+    /// Claude Code's registry holding the plugin of `marketplace`, shaped like
+    /// the real files.
+    fn registry(&self, marketplace: &str) {
+        let plugins = self.0.join("plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+        let dir = self
+            .0
+            .join("state")
+            .join(marketplace)
+            .join("claude-marketplace")
+            .display()
+            .to_string();
+        std::fs::write(
+            plugins.join("known_marketplaces.json"),
+            serde_json::json!({ marketplace: { "source": { "source": "directory", "path": dir },
+                "installLocation": dir, "lastUpdated": "2026-11-15T10:00:00.000Z" } })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            plugins.join("installed_plugins.json"),
+            serde_json::json!({ "version": 2, "plugins": {
+                format!("clear-relay@{marketplace}"): [{ "scope": "user",
+                    "installPath": dir, "version": "1.0.0" }] } })
+            .to_string(),
+        )
+        .unwrap();
+    }
+
     fn doctor_with_old_variable(&self) -> (i32, String) {
         let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
             .arg("doctor")
@@ -1014,6 +1045,7 @@ fn doctor_on_a_migrated_tree_has_nothing_to_report() {
         .output()
         .unwrap();
     assert!(migrated.status.success(), "{migrated:?}");
+    h.registry(names::DATA_DIR);
     let (_, out) = h.run(&["doctor"]);
     let line = out
         .lines()
@@ -1084,4 +1116,87 @@ fn a_settings_file_that_does_not_parse_is_said_not_assumed_clean() {
         !out.contains("migration: nothing left over"),
         "doctor claimed a clean machine it could not read:\n{out}"
     );
+}
+
+fn snapshot(h: &Home) -> BTreeMap<String, Vec<u8>> {
+    let mut t = BTreeMap::new();
+    tree(&h.0, &mut t);
+    t
+}
+
+#[test]
+fn a_stale_registry_is_a_failing_finding_with_one_command_per_line() {
+    let h = Home::new("registry-stale");
+    h.old_style();
+    h.registry(old::DATA_DIR);
+    let migrated = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        .arg("migrate")
+        .current_dir(&h.0)
+        .env("CLAUDE_CONFIG_DIR", &h.0)
+        .env("HOME", h.0.join("home"))
+        .env("XDG_CONFIG_HOME", h.0.join("xdg-config"))
+        .env("XDG_STATE_HOME", h.0.join("state"))
+        .env("GIT_CONFIG_GLOBAL", h.0.join("home").join(".gitconfig"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env_remove("GREENPISTE_OFF")
+        .output()
+        .unwrap();
+    assert!(migrated.status.success(), "{migrated:?}");
+    let before = snapshot(&h);
+    let (_, out) = h.run(&["doctor"]);
+    assert_eq!(snapshot(&h), before, "doctor wrote to the tree");
+    let line = line_with(&out, "plugin registry still lists");
+    assert!(line.contains('✗'), "{line}");
+    assert!(!out.contains("\\x0a"), "{out}");
+    let lines: Vec<&str> = out.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.contains("plugin registry still lists"))
+        .unwrap();
+    let commands = [
+        "claude plugin marketplace add ".to_string(),
+        format!("claude plugin install clear-relay@{}", names::DATA_DIR),
+        format!("claude plugin uninstall clear-relay@{}", old::DATA_DIR),
+        format!("claude plugin marketplace remove {}", old::DATA_DIR),
+    ];
+    for (offset, command) in commands.iter().enumerate() {
+        let detail = lines[at + 1 + offset];
+        assert!(
+            detail.starts_with("    ") && detail.trim_start().starts_with(command),
+            "{detail}"
+        );
+    }
+}
+
+#[test]
+fn a_current_registry_adds_no_finding() {
+    let h = Home::new("registry-current");
+    h.old_style();
+    h.registry(names::DATA_DIR);
+    let id = format!("clear-relay@{}", names::DATA_DIR);
+    std::fs::write(
+        h.settings(),
+        serde_json::json!({"enabledPlugins": {id: true}}).to_string(),
+    )
+    .unwrap();
+    let (_, out) = h.run(&["doctor"]);
+    assert!(!out.contains("plugin registry"), "{out}");
+}
+
+#[test]
+fn an_unreadable_registry_file_says_could_not_read() {
+    let h = Home::new("registry-unreadable");
+    h.old_style();
+    h.registry(old::DATA_DIR);
+    let file = h.0.join("plugins/known_marketplaces.json");
+    std::fs::remove_file(&file).unwrap();
+    std::fs::create_dir(&file).unwrap();
+    let before = snapshot(&h);
+    let (_, out) = h.run(&["doctor"]);
+    let line = line_with(&out, "could not read Claude Code's plugin registry");
+    assert!(
+        line.contains('✗') && line.contains("known_marketplaces.json"),
+        "{line}"
+    );
+    assert_eq!(snapshot(&h), before, "doctor wrote to the tree");
 }

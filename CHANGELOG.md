@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Claude Code keeps its own plugin registry, which greenpiste does not change: `migrate`, `install` and `doctor` now read it and print the `claude plugin` commands to run when it does not match the clear-relay plugin registered in `settings.json`; `doctor` reports a stale registry as a failing finding.
+
 ## v5.0.0
 
 greenpiste 5.0.0 writes only its own data names. The first command after

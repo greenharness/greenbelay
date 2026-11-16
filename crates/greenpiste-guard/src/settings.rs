@@ -31,6 +31,50 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Map, Value};
 
+/// What one of Claude Code's plugin registry files holds.
+pub enum InstalledPlugins {
+    /// No such file: nothing is installed through the manifest.
+    Missing,
+    /// The file exists and cannot be read or parsed; the reason says why.
+    Unreadable(String),
+    Document(Value),
+}
+
+/// What `<config>/plugins/known_marketplaces.json` holds.
+pub enum KnownMarketplaces {
+    Missing,
+    Unreadable(String),
+    Document(Value),
+}
+
+fn read_registry(path: &Path) -> Result<Option<Value>, String> {
+    match std::fs::read_to_string(path) {
+        Ok(raw) => serde_json::from_str(&raw)
+            .map(Some)
+            .map_err(|e| format!("does not parse: {e}")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// The one reader of the installed-plugins manifest, for every consumer.
+pub fn installed_plugins(config: &Path) -> InstalledPlugins {
+    match read_registry(&config.join("plugins/installed_plugins.json")) {
+        Ok(Some(doc)) => InstalledPlugins::Document(doc),
+        Ok(None) => InstalledPlugins::Missing,
+        Err(why) => InstalledPlugins::Unreadable(why),
+    }
+}
+
+/// The one reader of Claude Code's known-marketplaces file.
+pub fn known_marketplaces(config: &Path) -> KnownMarketplaces {
+    match read_registry(&config.join("plugins/known_marketplaces.json")) {
+        Ok(Some(doc)) => KnownMarketplaces::Document(doc),
+        Ok(None) => KnownMarketplaces::Missing,
+        Err(why) => KnownMarketplaces::Unreadable(why),
+    }
+}
+
 /// The Claude Code config directory.
 ///
 /// `$CLAUDE_CONFIG_DIR` wins because that is the override Claude Code itself
