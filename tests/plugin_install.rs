@@ -6,14 +6,14 @@ use std::process::Command;
 
 use serde_json::{json, Value};
 
-const ID: &str = "clear-relay@greenpiste";
+const ID: &str = "clear-relay@greenbelay";
 
 struct Home(PathBuf);
 
 impl Home {
     fn new(name: &str) -> Home {
         let dir =
-            std::env::temp_dir().join(format!("greenpiste-plugin-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenbelay-plugin-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir); // a home left by a killed run, if any
         std::fs::create_dir_all(&dir).expect("scratch dir");
         Home(dir)
@@ -25,10 +25,10 @@ impl Home {
         self.0.join("xdg")
     }
     fn marketplace(&self) -> PathBuf {
-        self.state().join("greenpiste").join("claude-marketplace")
+        self.state().join("greenbelay").join("claude-marketplace")
     }
     fn run(&self, args: &[&str]) -> (i32, String, String) {
-        let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let out = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
             .args(args)
             .env("CLAUDE_CONFIG_DIR", &self.0)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -124,7 +124,7 @@ fn write_places_the_plugin_and_twice_gives_one_entry_each() {
         .expect("markets");
     assert_eq!(markets.len(), 1);
     assert_eq!(
-        markets["greenpiste"]["source"],
+        markets["greenbelay"]["source"],
         json!({ "source": "directory", "path": home.marketplace().display().to_string() })
     );
     let enabled = settings["enabledPlugins"].as_object().expect("enabled");
@@ -132,7 +132,7 @@ fn write_places_the_plugin_and_twice_gives_one_entry_each() {
     assert_eq!(enabled[ID], json!(true));
     assert_eq!(
         settings["pluginConfigs"][ID]["options"]["stateDir"],
-        json!(home.state().join("greenpiste").display().to_string())
+        json!(home.state().join("greenbelay").display().to_string())
     );
     assert!(home
         .marketplace()

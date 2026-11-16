@@ -107,13 +107,13 @@ fn post_bash(command: &str, cwd: &Path) -> String {
 
 fn send(payload: &str) -> Reply {
     let home = scratch("home");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
         .arg("hook")
         .env("CLAUDE_CONFIG_DIR", &home)
         .env_remove("XDG_STATE_HOME")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env_remove("GREENPISTE_OFF")
+        .env_remove("GREENBELAY_OFF")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -138,7 +138,7 @@ fn send(payload: &str) -> Reply {
 fn send_speaking(payload: &str) -> Reply {
     let home = scratch("speak-home");
     let cfg = home.join("gitconfig");
-    // Written BY git, not by hand: `greenpiste.push-landed.stance` is a
+    // Written BY git, not by hand: `greenbelay.push-landed.stance` is a
     // three-part key whose middle part is a subsection, and the file syntax for
     // that is not what you would guess. Let git spell its own config.
     std::fs::write(&cfg, "").unwrap();
@@ -147,19 +147,19 @@ fn send_speaking(payload: &str) -> Reply {
             "config",
             "--file",
             &cfg.display().to_string(),
-            "greenpiste.push-landed.stance",
+            "greenbelay.push-landed.stance",
             "advise",
         ])
         .output()
         .expect("git config runs");
     assert!(out.status.success(), "could not set the stance");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
         .arg("hook")
         .env("CLAUDE_CONFIG_DIR", &home)
         .env_remove("XDG_STATE_HOME")
         .env("GIT_CONFIG_GLOBAL", &cfg)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env_remove("GREENPISTE_OFF")
+        .env_remove("GREENBELAY_OFF")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

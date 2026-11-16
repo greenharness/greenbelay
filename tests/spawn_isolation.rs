@@ -22,7 +22,7 @@ const REQUIRED: [&str; 4] = [
 /// The variables `source` starts the binary without mentioning; empty when it
 /// does not start the binary at all.
 fn missing_isolation(source: &str) -> Vec<&'static str> {
-    if !source.contains("CARGO_BIN_EXE_greenpiste") {
+    if !source.contains("CARGO_BIN_EXE_greenbelay") {
         return Vec::new();
     }
     REQUIRED
@@ -68,7 +68,7 @@ fn every_test_file_that_starts_the_binary_isolates_the_machine() {
 
 #[test]
 fn the_checker_flags_a_source_that_starts_the_binary_without_the_variables() {
-    let bare = r#"Command::new(env!("CARGO_BIN_EXE_greenpiste")).arg("doctor")"#;
+    let bare = r#"Command::new(env!("CARGO_BIN_EXE_greenbelay")).arg("doctor")"#;
     assert_eq!(missing_isolation(bare), REQUIRED.to_vec());
     let partial = format!("{bare} // CLAUDE_CONFIG_DIR");
     assert_eq!(

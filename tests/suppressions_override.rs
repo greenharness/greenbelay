@@ -4,12 +4,12 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-const DENY_TEXT: &str = "greenpiste/suppressions-override: this override is the person's \
+const DENY_TEXT: &str = "greenbelay/suppressions-override: this override is the person's \
 (general.no-disabled-safety). Fix the finding, or stop and tell the person which hits the \
 gate printed.";
 
 fn pre_bash(command: &str) -> (String, String) {
-    let home = std::env::temp_dir().join(format!("greenpiste-override-{}", std::process::id()));
+    let home = std::env::temp_dir().join(format!("greenbelay-override-{}", std::process::id()));
     std::fs::create_dir_all(&home).expect("scratch dir");
     let payload = serde_json::json!({
         "hook_event_name": "PreToolUse",
@@ -21,13 +21,13 @@ fn pre_bash(command: &str) -> (String, String) {
         "tool_input": {"command": command},
     })
     .to_string();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
         .arg("hook")
         .env("CLAUDE_CONFIG_DIR", &home)
         .env_remove("XDG_STATE_HOME")
         .env("GIT_CONFIG_GLOBAL", home.join("no-global-gitconfig"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env_remove("GREENPISTE_OFF")
+        .env_remove("GREENBELAY_OFF")
         .env_remove("GREENHARNESS_HOST_SLOT")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -63,25 +63,25 @@ fn denied_with_the_plans_text(command: &str) {
 
 #[test]
 fn a_dash_c_override_is_denied() {
-    denied_with_the_plans_text("git -c greenpiste.suppressions=allow commit -m x");
+    denied_with_the_plans_text("git -c greenbelay.suppressions=allow commit -m x");
 }
 
 #[test]
 fn git_config_of_the_override_is_denied() {
-    denied_with_the_plans_text("git config greenpiste.suppressions allow");
+    denied_with_the_plans_text("git config greenbelay.suppressions allow");
 }
 
 #[test]
 fn git_config_key_n_is_denied() {
     denied_with_the_plans_text(
-        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=greenpiste.suppressions GIT_CONFIG_VALUE_0=allow git commit -m x",
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=greenbelay.suppressions GIT_CONFIG_VALUE_0=allow git commit -m x",
     );
 }
 
 #[test]
 fn git_config_parameters_is_denied() {
     denied_with_the_plans_text(
-        "GIT_CONFIG_PARAMETERS=\"'greenpiste.suppressions'='allow'\" git commit -m x",
+        "GIT_CONFIG_PARAMETERS=\"'greenbelay.suppressions'='allow'\" git commit -m x",
     );
 }
 
@@ -99,7 +99,7 @@ fn an_amont_severity_lowering_is_denied() {
 
 #[test]
 fn a_stance_write_is_denied() {
-    denied_with_the_plans_text("git config greenpiste.lint-suppression-added.stance observe");
+    denied_with_the_plans_text("git config greenbelay.lint-suppression-added.stance observe");
 }
 
 #[test]
@@ -114,6 +114,6 @@ fn a_whole_pre_commit_skip_and_an_ordinary_commit_are_allowed() {
 #[test]
 fn a_read_in_an_earlier_command_does_not_excuse_the_write() {
     denied_with_the_plans_text(
-        "bash -c 'git config --get user.name; git config greenpiste.suppressions allow'",
+        "bash -c 'git config --get user.name; git config greenbelay.suppressions allow'",
     );
 }

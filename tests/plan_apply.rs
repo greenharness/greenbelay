@@ -31,7 +31,7 @@ fn patches(list: &[(u32, &str, &str)]) -> String {
 impl World {
     fn new(name: &str) -> World {
         let root = std::env::temp_dir().join(format!(
-            "greenpiste-plan-apply-{name}-{}",
+            "greenbelay-plan-apply-{name}-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);
@@ -60,13 +60,13 @@ impl World {
     }
 
     fn bin(&self) -> Command {
-        let mut c = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+        let mut c = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
         c.env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
             .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GREENPISTE_PLAN_ROOT", self.root.join("repos"))
-            .env_remove("GREENPISTE_OFF");
+            .env("GREENBELAY_PLAN_ROOT", self.root.join("repos"))
+            .env_remove("GREENBELAY_OFF");
         c
     }
 
@@ -185,7 +185,7 @@ impl World {
     fn rows(&self) -> Vec<serde_json::Value> {
         std::fs::read_to_string(
             self.root
-                .join("claude/greenpiste/plan-review/outcomes.jsonl"),
+                .join("claude/greenbelay/plan-review/outcomes.jsonl"),
         )
         .unwrap_or_default()
         .lines()
@@ -222,7 +222,7 @@ fn a_unique_match_applies_and_writes_one_command_row() {
     assert!(!w.text().contains("alpha beta"));
     let rows = w.rows();
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0]["schema"], "greenpiste-review-merge-v1");
+    assert_eq!(rows[0]["schema"], "greenbelay-review-merge-v1");
     assert_eq!(rows[0]["mode"], "command");
     assert_eq!(rows[0]["applied"], 1);
     assert_eq!(rows[0]["accepted"], 1);
@@ -331,7 +331,7 @@ fn a_mixed_run_writes_the_matched_and_ends_stdout_with_the_apply_block() {
         )
     );
     assert!(
-        said.contains("\nnext: apply the unmatched edits, then run greenpiste plan-apply --check")
+        said.contains("\nnext: apply the unmatched edits, then run greenbelay plan-apply --check")
     );
     // The `next:` line is copied and the APPLY block is machine-read: both
     // carry the path unclipped. Every other line fits 80 columns.
@@ -584,11 +584,11 @@ fn record_fallback_without_a_launch_exits_one() {
 fn merge_rows_do_not_enter_the_review_dedupe_set() {
     let mut w = World::new("dedupe");
     w.review("backend", "a1", &patches(&[(1, "alpha beta", "ALPHA")]));
-    let store = w.root.join("claude/greenpiste/plan-review");
+    let store = w.root.join("claude/greenbelay/plan-review");
     std::fs::create_dir_all(&store).unwrap();
     std::fs::write(
         store.join("outcomes.jsonl"),
-        "{\"schema\":\"greenpiste-review-merge-v1\",\"agent_id\":\"a1\",\"mode\":\"subagent\"}\n",
+        "{\"schema\":\"greenbelay-review-merge-v1\",\"agent_id\":\"a1\",\"mode\":\"subagent\"}\n",
     )
     .unwrap();
     let t = w.transcript();
@@ -731,7 +731,7 @@ fn stdin_on_a_terminal_is_a_usage_error() {
     {
         return;
     }
-    let bin = env!("CARGO_BIN_EXE_greenpiste");
+    let bin = env!("CARGO_BIN_EXE_greenbelay");
     let log = w.root.join("script.log");
     let mut c = Command::new("script");
     if cfg!(target_os = "macos") {
@@ -750,8 +750,8 @@ fn stdin_on_a_terminal_is_a_usage_error() {
         .env_remove("XDG_STATE_HOME")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GREENPISTE_PLAN_ROOT", w.root.join("repos"))
-        .env_remove("GREENPISTE_OFF")
+        .env("GREENBELAY_PLAN_ROOT", w.root.join("repos"))
+        .env_remove("GREENBELAY_OFF")
         .stdin(Stdio::null())
         .output()
         .unwrap();

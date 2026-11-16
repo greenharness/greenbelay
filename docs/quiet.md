@@ -1,7 +1,7 @@
-# `greenpiste quiet`
+# `greenbelay quiet`
 
 ```
-greenpiste quiet [--max-bytes N[k]] -- <cmd…>
+greenbelay quiet [--max-bytes N[k]] -- <cmd…>
 ```
 
 Runs `<cmd>` directly (a pipeline is the caller's `sh -c`) with its output in
@@ -67,5 +67,5 @@ Golden fixtures for the heuristic live in `tests/fixtures/excerpt/`, pinned by
 ## Tests
 
 `cargo test --features test-hooks --test quiet`. The `test-hooks` feature adds
-failure injection (`GREENPISTE_TEST_LOG_FAIL_AFTER=<bytes>` and a few
+failure injection (`GREENBELAY_TEST_LOG_FAIL_AFTER=<bytes>` and a few
 reporting variables) that a normal build does not contain.

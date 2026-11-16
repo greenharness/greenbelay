@@ -12,7 +12,7 @@ struct Home(PathBuf);
 impl Home {
     fn new(name: &str) -> Home {
         let dir =
-            std::env::temp_dir().join(format!("greenpiste-settings-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenbelay-settings-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("scratch dir");
         Home(dir)
@@ -27,7 +27,7 @@ impl Home {
         std::fs::read_to_string(self.settings()).unwrap_or_default()
     }
     fn run(&self, args: &[&str]) -> (i32, String, String) {
-        let out = greenpiste_command()
+        let out = greenbelay_command()
             .args(args)
             .env("CLAUDE_CONFIG_DIR", &self.0)
             // The plugin's state goes beside the scratch config, never to a real XDG state home.
@@ -273,7 +273,7 @@ fn project_settings(root: &Path) -> PathBuf {
 }
 
 fn run_in(root: &Path, args: &[&str]) -> (i32, String, String) {
-    let out = greenpiste_command()
+    let out = greenbelay_command()
         .args(args)
         .current_dir(root)
         // The plugin's state directory, never the person's real one.
@@ -364,12 +364,12 @@ fn uninstall_leaves_an_authors_empty_object_alone() {
     );
 }
 
-/// The greenpiste binary pointed at scratch directories, so the migration every
+/// The greenbelay binary pointed at scratch directories, so the migration every
 /// subcommand runs first never touches the real home of whoever runs the tests.
 /// A caller that sets one of these variables itself overrides it afterwards.
-fn greenpiste_command() -> Command {
+fn greenbelay_command() -> Command {
     let scratch = fresh_scratch("settings_merge");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
     command
         .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
         .env("XDG_STATE_HOME", scratch.join("state"))

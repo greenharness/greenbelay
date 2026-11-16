@@ -269,14 +269,14 @@ test('two sessions each keep all their log lines', OPTIONS, async ($, on) => {
   expect(events(world, 'other')).toEqual(['arm', 'disarm'])
 })
 
-// Without a `stateDir` option the log goes where greenpiste keeps its state,
+// Without a `stateDir` option the log goes where greenbelay keeps its state,
 // found the way its settings::state_root() finds it.
 const logPaths = (world: World) => [...world.files.keys()].filter(path => path.endsWith('.jsonl'))
 
-test('no stateDir: the log is under ~/.local/state/greenpiste', { options: {} }, async ($, on) => {
+test('no stateDir: the log is under ~/.local/state/greenbelay', { options: {} }, async ($, on) => {
   const world = stage($, on)
   await answer($, LINE)
-  expect(logPaths(world)).toEqual(['/home/person/.local/state/greenpiste/clear-relay/s1.jsonl'])
+  expect(logPaths(world)).toEqual(['/home/person/.local/state/greenbelay/clear-relay/s1.jsonl'])
 })
 
 test('no stateDir: XDG_STATE_HOME wins', { options: {} }, async ($, on) => {
@@ -284,28 +284,28 @@ test('no stateDir: XDG_STATE_HOME wins', { options: {} }, async ($, on) => {
   world.env.set('XDG_STATE_HOME', '/xdg/state')
   world.env.set('CLAUDE_CONFIG_DIR', '/relocated')
   await answer($, LINE)
-  expect(logPaths(world)).toEqual(['/xdg/state/greenpiste/clear-relay/s1.jsonl'])
+  expect(logPaths(world)).toEqual(['/xdg/state/greenbelay/clear-relay/s1.jsonl'])
 })
 
 test('no stateDir: a relocated Claude config keeps its state beside it', { options: {} }, async ($, on) => {
   const world = stage($, on)
   world.env.set('CLAUDE_CONFIG_DIR', '/relocated')
   await answer($, LINE)
-  expect(logPaths(world)).toEqual(['/relocated/state/greenpiste/clear-relay/s1.jsonl'])
+  expect(logPaths(world)).toEqual(['/relocated/state/greenbelay/clear-relay/s1.jsonl'])
 })
 
 test('no stateDir: an empty XDG_STATE_HOME is ignored', { options: {} }, async ($, on) => {
   const world = stage($, on)
   world.env.set('XDG_STATE_HOME', '')
   await answer($, LINE)
-  expect(logPaths(world)).toEqual(['/home/person/.local/state/greenpiste/clear-relay/s1.jsonl'])
+  expect(logPaths(world)).toEqual(['/home/person/.local/state/greenbelay/clear-relay/s1.jsonl'])
 })
 
 test('no stateDir: an empty CLAUDE_CONFIG_DIR is ignored', { options: {} }, async ($, on) => {
   const world = stage($, on)
   world.env.set('CLAUDE_CONFIG_DIR', '')
   await answer($, LINE)
-  expect(logPaths(world)).toEqual(['/home/person/.local/state/greenpiste/clear-relay/s1.jsonl'])
+  expect(logPaths(world)).toEqual(['/home/person/.local/state/greenbelay/clear-relay/s1.jsonl'])
 })
 
 test('no stateDir: USERPROFILE stands in for a missing HOME', { options: {} }, async ($, on) => {
@@ -313,7 +313,7 @@ test('no stateDir: USERPROFILE stands in for a missing HOME', { options: {} }, a
   world.env.delete('HOME')
   world.env.set('USERPROFILE', '/users/person')
   await answer($, LINE)
-  expect(logPaths(world)).toEqual(['/users/person/.local/state/greenpiste/clear-relay/s1.jsonl'])
+  expect(logPaths(world)).toEqual(['/users/person/.local/state/greenbelay/clear-relay/s1.jsonl'])
 })
 
 test('no stateDir and no home at all: no log, no path at the root, and the relay still arms', { options: {} }, async ($, on) => {
@@ -329,5 +329,5 @@ test('no stateDir: an empty HOME falls through to USERPROFILE', { options: {} },
   world.env.set('HOME', '')
   world.env.set('USERPROFILE', '/users/person')
   await answer($, LINE)
-  expect(logPaths(world)).toEqual(['/users/person/.local/state/greenpiste/clear-relay/s1.jsonl'])
+  expect(logPaths(world)).toEqual(['/users/person/.local/state/greenbelay/clear-relay/s1.jsonl'])
 })

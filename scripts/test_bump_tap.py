@@ -67,10 +67,10 @@ class BumpTap(unittest.TestCase):
         self.formula = self.dir / "amont-agent.rb"
         self.formula.write_text(FORMULA)
         self.sums = self.dir / "SHA256SUMS"
-        # A real release lists both archive sets; only greenpiste-* feeds the
+        # A real release lists both archive sets; only greenbelay-* feeds the
         # formula, the amont-agent-* ones carry other (alias) bytes.
         self.sums.write_text(
-            "".join(f"{'a' * 64}  greenpiste-2.0.0-{t}.tar.gz\n" for t in TARGETS)
+            "".join(f"{'a' * 64}  greenbelay-2.0.0-{t}.tar.gz\n" for t in TARGETS)
             + "".join(f"{'b' * 64}  amont-agent-2.0.0-{t}.tar.gz\n" for t in TARGETS)
         )
 
@@ -128,9 +128,9 @@ class BumpTap(unittest.TestCase):
 
 
     def assert_on_new_home(self, text: str) -> None:
-        self.assertEqual(text.count("greenharness/greenpiste"), 5, text)
+        self.assertEqual(text.count("greenharness/greenbelay"), 5, text)
         self.assertNotIn("fredericrous/amont-agent", text)
-        self.assertIn('homepage "https://github.com/greenharness/greenpiste"', text)
+        self.assertIn('homepage "https://github.com/greenharness/greenbelay"', text)
 
     def test_an_old_owner_formula_moves_to_the_new_home(self) -> None:
         r = self.run_script([rule("pipe-to-tail", "deny")])
@@ -138,7 +138,7 @@ class BumpTap(unittest.TestCase):
         self.assert_on_new_home(self.formula.read_text())
 
     def test_a_new_owner_formula_stays_on_the_new_home(self) -> None:
-        self.formula.write_text(formula("greenharness/greenpiste"))
+        self.formula.write_text(formula("greenharness/greenbelay"))
         r = self.run_script([rule("pipe-to-tail", "deny")])
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assert_on_new_home(self.formula.read_text())
@@ -151,19 +151,19 @@ class BumpTap(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("no homepage line", r.stderr)
 
-    def test_both_url_prefixes_are_accepted_and_greenpiste_is_written(self) -> None:
+    def test_both_url_prefixes_are_accepted_and_greenbelay_is_written(self) -> None:
         old = FORMULA
-        new = FORMULA.replace("/amont-agent-1.0.0-", "/greenpiste-1.0.0-")
-        for prefix, text in (("amont-agent", old), ("greenpiste", new)):
+        new = FORMULA.replace("/amont-agent-1.0.0-", "/greenbelay-1.0.0-")
+        for prefix, text in (("amont-agent", old), ("greenbelay", new)):
             with self.subTest(prefix=prefix):
                 self.formula.write_text(text)
                 r = self.run_script([rule("pipe-to-tail", "deny")])
                 self.assertEqual(r.returncode, 0, r.stderr)
                 out = self.formula.read_text()
-                self.assertEqual(out.count("/greenpiste-2.0.0-"), 4, out)
+                self.assertEqual(out.count("/greenbelay-2.0.0-"), 4, out)
                 self.assertNotIn("amont-agent-", out)
 
-    def test_the_sha256s_come_from_greenpiste_archives_only(self) -> None:
+    def test_the_sha256s_come_from_greenbelay_archives_only(self) -> None:
         self.run_script([rule("pipe-to-tail", "deny")])
         out = self.formula.read_text()
         self.assertEqual(out.count("a" * 64), 4)
@@ -175,18 +175,18 @@ class BumpTap(unittest.TestCase):
         )
         r = self.run_script([rule("pipe-to-tail", "deny")])
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn("no greenpiste checksums", r.stderr)
+        self.assertIn("no greenbelay checksums", r.stderr)
 
-    def test_a_greenpiste_archive_of_another_version_is_refused(self) -> None:
+    def test_a_greenbelay_archive_of_another_version_is_refused(self) -> None:
         self.sums.write_text(
-            self.sums.read_text() + f"{'c' * 64}  greenpiste-1.9.0-{TARGETS[0]}.tar.gz\n"
+            self.sums.read_text() + f"{'c' * 64}  greenbelay-1.9.0-{TARGETS[0]}.tar.gz\n"
         )
         r = self.run_script([rule("pipe-to-tail", "deny")])
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("wrong release", r.stderr)
 
     def test_a_stale_version_in_either_prefix_is_refused(self) -> None:
-        for prefix in ("amont-agent", "greenpiste"):
+        for prefix in ("amont-agent", "greenbelay"):
             with self.subTest(prefix=prefix):
                 self.formula.write_text(FORMULA + f"  # {prefix}-0.9.0-x\n")
                 r = self.run_script([rule("pipe-to-tail", "deny")])

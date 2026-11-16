@@ -6,7 +6,7 @@ use std::process::{Command, Output};
 
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "greenpiste-review-brief-{name}-{}-{:?}",
+        "greenbelay-review-brief-{name}-{}-{:?}",
         std::process::id(),
         std::thread::current().id()
     ));
@@ -22,15 +22,15 @@ fn scratch(name: &str) -> PathBuf {
 /// Runs the binary with the fake `aval` in `bin` first on PATH, so no test
 /// reaches the machine's own `aval`.
 fn run(args: &[&str], bin: &std::path::Path) -> Output {
-    let mut cmd = greenpiste_command();
+    let mut cmd = greenbelay_command();
     cmd.args(args);
     let inherited = std::env::var_os("PATH").unwrap_or_default();
     let mut dirs = vec![bin.to_path_buf()];
     dirs.extend(std::env::split_paths(&inherited));
     cmd.env("PATH", std::env::join_paths(dirs).unwrap());
     // No test reaches the machine's own `adr-lint`: a fake in `bin`, or none.
-    cmd.env("GREENPISTE_ADR_LINT", bin.join("adr-lint"));
-    cmd.output().expect("greenpiste runs")
+    cmd.env("GREENBELAY_ADR_LINT", bin.join("adr-lint"));
+    cmd.output().expect("greenbelay runs")
 }
 
 /// The fake is a `#!/bin/sh` script: Windows resolves `Command::new("aval")`
@@ -351,7 +351,7 @@ fn the_brief_carries_adr_lints_candidates_right_after_the_rules_line() {
     let (out, brief) = brief_text(&bin, &repo);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert!(out.stderr.is_empty(), "{out:?}");
-    let sha = greenpiste_guard::sha256::hex(&greenpiste_guard::sha256::sha256(document.as_bytes()));
+    let sha = greenbelay_guard::sha256::hex(&greenbelay_guard::sha256::sha256(document.as_bytes()));
     let lines: Vec<&str> = brief.lines().collect();
     let rules = lines
         .iter()
@@ -396,7 +396,7 @@ fn no_candidates_is_an_empty_block_and_no_ruling_is_needed() {
     let repo = two_commit_repo("cand-zero-repo");
     let (out, brief) = brief_text(&bin, &repo);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    let sha = greenpiste_guard::sha256::hex(&greenpiste_guard::sha256::sha256(document.as_bytes()));
+    let sha = greenbelay_guard::sha256::hex(&greenbelay_guard::sha256::sha256(document.as_bytes()));
     assert!(
         brief.contains(&format!(
             "<<<CANDIDATES sha={sha} n=0>>>\n<<<END CANDIDATES>>>\n"
@@ -511,15 +511,15 @@ fn run_without_aval(args: &[&str], dir: &std::path::Path, aval: Option<&str>) ->
     if !link.exists() {
         std::os::unix::fs::symlink(git_path.trim(), &link).unwrap();
     }
-    let mut cmd = greenpiste_command();
+    let mut cmd = greenbelay_command();
     cmd.args(args);
     cmd.env("PATH", std::env::join_paths([dir, &only]).unwrap());
-    cmd.env("GREENPISTE_ADR_LINT", dir.join("adr-lint"));
-    cmd.env_remove("GREENPISTE_AVAL");
+    cmd.env("GREENBELAY_ADR_LINT", dir.join("adr-lint"));
+    cmd.env_remove("GREENBELAY_AVAL");
     if let Some(program) = aval {
-        cmd.env("GREENPISTE_AVAL", program);
+        cmd.env("GREENBELAY_AVAL", program);
     }
-    cmd.output().expect("greenpiste runs")
+    cmd.output().expect("greenbelay runs")
 }
 
 #[cfg(unix)]
@@ -930,7 +930,7 @@ fn interdiff_with(
     head: &str,
     more: &[&str],
 ) -> Output {
-    let mut cmd = greenpiste_command();
+    let mut cmd = greenbelay_command();
     cmd.args([
         "review-brief",
         "-C",
@@ -945,9 +945,9 @@ fn interdiff_with(
     let mut dirs = vec![bin.to_path_buf()];
     dirs.extend(std::env::split_paths(&inherited));
     cmd.env("PATH", std::env::join_paths(dirs).unwrap());
-    cmd.env("GREENPISTE_ADR_LINT", bin.join("adr-lint"));
+    cmd.env("GREENBELAY_ADR_LINT", bin.join("adr-lint"));
     cmd.env("CLAUDE_CONFIG_DIR", bin.join("config"));
-    cmd.output().expect("greenpiste runs")
+    cmd.output().expect("greenbelay runs")
 }
 
 #[cfg(unix)]
@@ -1003,10 +1003,10 @@ fn an_interdiff_from_another_head_than_the_last_pass_is_refused() {
     fake_aval(&bin, BRIEF_AVAL);
     let (repo, reviewed) = delta_repo("interdiff-branch", &[("a.txt", "three\n")]);
     let name = repo.file_name().unwrap().to_string_lossy().to_string();
-    let key = greenpiste_guard::sha256::hex(&greenpiste_guard::sha256::sha256(b"refs/heads/feat"));
+    let key = greenbelay_guard::sha256::hex(&greenbelay_guard::sha256::sha256(b"refs/heads/feat"));
     let dir = bin
         .join("config")
-        .join("greenpiste")
+        .join("greenbelay")
         .join("implementation-review")
         .join("by-branch")
         .join(&name)
@@ -1403,7 +1403,7 @@ impl PinWorld {
         )
         .unwrap();
         git(&repo, &["commit", "-qam", "pin"]);
-        let fingerprint = greenpiste_process::block_fingerprint::fingerprint(
+        let fingerprint = greenbelay_process::block_fingerprint::fingerprint(
             &repo,
             "HEAD~1",
             "HEAD",
@@ -1413,14 +1413,14 @@ impl PinWorld {
         .unwrap()
         .full()
         .to_string();
-        greenpiste_process::block_registry::register_entry(
-            &bin.join("config/greenpiste"),
+        greenbelay_process::block_registry::register_entry(
+            &bin.join("config/greenbelay"),
             &fingerprint,
-            &greenpiste_process::block_registry::Generation {
+            &greenbelay_process::block_registry::Generation {
                 rules_sha: "c".repeat(64),
                 agent_digest: "d".repeat(64),
             },
-            &greenpiste_process::block_registry::EntryData {
+            &greenbelay_process::block_registry::EntryData {
                 roles: vec!["backend".into()],
                 agents: vec![],
                 source_branch: "topic".into(),
@@ -1449,21 +1449,21 @@ impl PinWorld {
     /// `review-brief`, with `gh` as the override or, for `None`, a PATH that
     /// holds git and the fake aval and nothing else.
     fn brief(&self, gh: Option<&std::path::Path>, deadline_ms: &str) -> Output {
-        let mut cmd = greenpiste_command();
+        let mut cmd = greenbelay_command();
         cmd.args(["review-brief", "-C"])
             .arg(&self.repo)
             .args(["--base", "HEAD~1"]);
-        cmd.env("GREENPISTE_ADR_LINT", self.bin.join("adr-lint"));
+        cmd.env("GREENBELAY_ADR_LINT", self.bin.join("adr-lint"));
         cmd.env("CLAUDE_CONFIG_DIR", self.bin.join("config"));
-        cmd.env("GREENPISTE_GH_DEADLINE_MS", deadline_ms);
-        cmd.env_remove("GREENPISTE_GH");
+        cmd.env("GREENBELAY_GH_DEADLINE_MS", deadline_ms);
+        cmd.env_remove("GREENBELAY_GH");
         match gh {
             Some(gh) => {
                 let inherited = std::env::var_os("PATH").unwrap_or_default();
                 let mut dirs = vec![self.bin.clone()];
                 dirs.extend(std::env::split_paths(&inherited));
                 cmd.env("PATH", std::env::join_paths(dirs).unwrap());
-                cmd.env("GREENPISTE_GH", gh);
+                cmd.env("GREENBELAY_GH", gh);
             }
             None => {
                 let only = self.bin.join("only-git");
@@ -1481,10 +1481,10 @@ impl PinWorld {
         cmd.output().unwrap()
     }
 
-    fn recorded(&self) -> Option<greenpiste_process::block_registry::PinRecord> {
-        let tree = greenpiste_process::content_id::content_id(&self.repo, "HEAD").unwrap();
-        greenpiste_process::block_registry::read_pin(
-            &self.bin.join("config/greenpiste"),
+    fn recorded(&self) -> Option<greenbelay_process::block_registry::PinRecord> {
+        let tree = greenbelay_process::content_id::content_id(&self.repo, "HEAD").unwrap();
+        greenbelay_process::block_registry::read_pin(
+            &self.bin.join("config/greenbelay"),
             &self.fingerprint,
             &tree,
         )
@@ -1522,13 +1522,13 @@ fn a_missing_journal_directory_is_said_in_the_pin_section() {
     let inherited = std::env::var_os("PATH").unwrap_or_default();
     let mut dirs = vec![world.bin.clone()];
     dirs.extend(std::env::split_paths(&inherited));
-    let out = greenpiste_command()
+    let out = greenbelay_command()
         .args(["review-brief", "-C"])
         .arg(&world.repo)
         .args(["--base", "HEAD~1"])
-        .env("GREENPISTE_ADR_LINT", world.bin.join("adr-lint"))
+        .env("GREENBELAY_ADR_LINT", world.bin.join("adr-lint"))
         .env("PATH", std::env::join_paths(dirs).unwrap())
-        .env("GREENPISTE_GH", &gh)
+        .env("GREENBELAY_GH", &gh)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .env_remove("CLAUDE_CONFIG_DIR")
@@ -1610,12 +1610,12 @@ fn a_branch_that_is_not_a_registered_block_has_no_pin_section() {
     assert!(world.recorded().is_none());
 }
 
-/// The greenpiste binary pointed at scratch directories, so the migration every
+/// The greenbelay binary pointed at scratch directories, so the migration every
 /// subcommand runs first never touches the real home of whoever runs the tests.
 /// A caller that sets one of these variables itself overrides it afterwards.
-fn greenpiste_command() -> Command {
+fn greenbelay_command() -> Command {
     let scratch = fresh_scratch("review_brief");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
     command
         .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
         .env("XDG_STATE_HOME", scratch.join("state"))

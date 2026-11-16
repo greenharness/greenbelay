@@ -3,7 +3,7 @@
 //! because it holds the guard's rules and the work process's `push-preview`.
 //! The guard's readers take it as a parameter, never name it.
 
-use greenpiste_guard::rules::Rule;
+use greenbelay_guard::rules::Rule;
 
 pub const RULES: &[Rule] = &[
     crate::rules::pipe_to_tail::RULE,
@@ -67,13 +67,13 @@ pub const RULES: &[Rule] = &[
 #[cfg(test)]
 mod tests {
     use super::RULES;
-    use greenpiste_guard::corpus;
+    use greenbelay_guard::corpus;
 
     /// ADR-0042: every part names the failure it prevents, in one sentence.
     #[test]
     fn every_rule_and_assertion_names_its_failure() {
         let parts = super::RULES.iter().map(|r| (r.id, r.prevents)).chain(
-            greenpiste_guard::assertions::ASSERTIONS
+            greenbelay_guard::assertions::ASSERTIONS
                 .iter()
                 .map(|a| (a.id, a.prevents)),
         );
@@ -135,7 +135,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("rule `{}` has no entry in EMBEDDED", rule.id));
             assert!(
                 text.starts_with(corpus::HEADER)
-                    || text.starts_with(greenpiste_guard::names::old::CORPUS_HEADER),
+                    || text.starts_with(greenbelay_guard::names::old::CORPUS_HEADER),
                 "embedded corpus for `{}` lacks the header",
                 rule.id
             );
@@ -159,7 +159,7 @@ mod tests {
         for r in RULES {
             assert!(r.evidence.per_1000.is_finite(), "{}", r.id);
         }
-        for a in greenpiste_guard::assertions::ASSERTIONS {
+        for a in greenbelay_guard::assertions::ASSERTIONS {
             assert!(a.evidence.per_1000.is_finite(), "{}", a.id);
         }
     }

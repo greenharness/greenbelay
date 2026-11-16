@@ -23,7 +23,7 @@ struct World {
 impl World {
     fn new(name: &str) -> World {
         let root =
-            std::env::temp_dir().join(format!("greenpiste-adrlint-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenbelay-adrlint-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("repo/src")).unwrap();
         std::fs::create_dir_all(root.join("bin")).unwrap();
@@ -97,15 +97,15 @@ impl World {
             std::env::var("PATH").unwrap_or_default()
         );
         let started = std::time::Instant::now();
-        let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
             .arg("hook")
             .env("CLAUDE_CONFIG_DIR", self.root.join("config"))
             .env_remove("XDG_STATE_HOME")
             .env("PATH", path)
-            .env("GREENPISTE_ADR_LINT", self.bin("adr-lint"))
+            .env("GREENBELAY_ADR_LINT", self.bin("adr-lint"))
             .env("GIT_CONFIG_GLOBAL", self.root.join("no-global-gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("GREENPISTE_OFF")
+            .env_remove("GREENBELAY_OFF")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -131,7 +131,7 @@ impl World {
     }
 
     fn journal(&self, session: &str) -> Vec<String> {
-        std::fs::read_to_string(self.root.join("config/greenpiste/journal.log"))
+        std::fs::read_to_string(self.root.join("config/greenbelay/journal.log"))
             .unwrap_or_default()
             .lines()
             .filter(|l| l.contains(session))
@@ -305,7 +305,7 @@ fn observing_journals_the_findings_and_says_nothing() {
     // stance by writing one.
     std::fs::write(
         w.root.join("no-global-gitconfig"),
-        "[greenpiste]\n\tstance = observe\n",
+        "[greenbelay]\n\tstance = observe\n",
     )
     .unwrap();
     let (stdout, _) = w.edit("adr-i", "src/a.rs");

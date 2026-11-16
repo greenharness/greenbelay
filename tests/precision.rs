@@ -29,7 +29,7 @@ fn owned_directory() -> std::path::PathBuf {
 
 fn check_with(flags: &[&str], command: &str) -> String {
     let dir = owned_directory();
-    let out = greenpiste_command()
+    let out = greenbelay_command()
         .arg("check")
         .arg("--cwd")
         .arg(&dir)
@@ -265,18 +265,18 @@ fn the_smaller_rules_catch_their_own_shapes() {
         "gh-pr-merge-auto"
     ));
     assert!(fires_rule(
-        "greenpiste block reinstate fp:0123456789ab",
+        "greenbelay block reinstate fp:0123456789ab",
         "block-reinstate"
     ));
     assert!(fires_rule(
         &format!(
             "{} block reinstate fp:0123456789ab",
-            greenpiste_guard::names::ALIAS
+            greenbelay_guard::names::ALIAS
         ),
         "block-reinstate"
     ));
     assert!(!fires_rule(
-        "greenpiste block revoke fp:0123456789ab --because x",
+        "greenbelay block revoke fp:0123456789ab --because x",
         "block-reinstate"
     ));
     assert!(fires_rule("git commit --no-verify -m x", "no-verify"));
@@ -368,7 +368,7 @@ fn every_finding_carries_a_remedy() {
 #[test]
 fn every_listing_keeps_its_columns_apart() {
     for verb in [vec!["status"], vec!["rules"], vec!["corpus", "check"]] {
-        let out = greenpiste_command()
+        let out = greenbelay_command()
             .args(&verb)
             .output()
             .expect("the binary runs");
@@ -398,7 +398,7 @@ fn every_listing_keeps_its_columns_apart() {
 fn known_id(word: &str) -> bool {
     static IDS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     IDS.get_or_init(|| {
-        let out = greenpiste_command()
+        let out = greenbelay_command()
             .arg("rules")
             .output()
             .expect("the binary runs");
@@ -411,12 +411,12 @@ fn known_id(word: &str) -> bool {
     .any(|id| id == word)
 }
 
-/// The greenpiste binary pointed at scratch directories, so the migration every
+/// The greenbelay binary pointed at scratch directories, so the migration every
 /// subcommand runs first never touches the real home of whoever runs the tests.
 /// A caller that sets one of these variables itself overrides it afterwards.
-fn greenpiste_command() -> Command {
+fn greenbelay_command() -> Command {
     let scratch = fresh_scratch("precision");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
     command
         .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
         .env("XDG_STATE_HOME", scratch.join("state"))

@@ -15,7 +15,7 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 fn check(dir: &Path, extra: &[&str], command: &str) -> (bool, String) {
-    let out = greenpiste_command()
+    let out = greenbelay_command()
         .arg("check")
         .arg("--cwd")
         .arg(dir)
@@ -130,18 +130,18 @@ fn a_confirmed_stale_base_prints_its_remedy() {
     );
     git(&clone, &["config", "user.email", "t@example.invalid"]);
     git(&clone, &["config", "user.name", "t"]);
-    git(&clone, &["config", "greenpiste.fetch", "true"]);
+    git(&clone, &["config", "greenbelay.fetch", "true"]);
     assert_prints_remedy(&clone, "stale-base", "git switch -c feat/z");
     let _ = std::fs::remove_dir_all(&origin); // best-effort cleanup of a temp directory; a leftover is harmless
     let _ = std::fs::remove_dir_all(&clone); // best-effort cleanup of a temp directory; a leftover is harmless
 }
 
-/// The greenpiste binary pointed at scratch directories, so the migration every
+/// The greenbelay binary pointed at scratch directories, so the migration every
 /// subcommand runs first never touches the real home of whoever runs the tests.
 /// A caller that sets one of these variables itself overrides it afterwards.
-fn greenpiste_command() -> Command {
+fn greenbelay_command() -> Command {
     let scratch = fresh_scratch("check_confirm");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
     command
         .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
         .env("XDG_STATE_HOME", scratch.join("state"))

@@ -21,17 +21,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
-name = "greenpiste"
-version = "5.1.0"
+name = "greenbelay"
+version = "6.0.0"
 dependencies = [
- "greenpiste-guard",
- "greenpiste-process",
+ "greenbelay-guard",
+ "greenbelay-process",
  "serde_json",
 ]
 
 [[package]]
-name = "greenpiste-guard"
-version = "5.1.0"
+name = "greenbelay-guard"
+version = "6.0.0"
 dependencies = [
  "amont-quiet",
  "serde",
@@ -39,10 +39,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "greenpiste-process"
-version = "5.1.0"
+name = "greenbelay-process"
+version = "6.0.0"
 dependencies = [
- "greenpiste-guard",
+ "greenbelay-guard",
  "pulldown-cmark",
  "serde_json",
 ]

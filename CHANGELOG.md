@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## v6.0.0
+
+greenpiste is now greenbelay (ADR-0071): one name for the product, the
+repository (`greenharness/greenbelay`), the binary, the crates (greenbelay,
+greenbelay-guard, greenbelay-process), the Homebrew formula, the environment
+variables (`GREENBELAY_*`), the git config keys (`greenbelay.*`), the state
+directories (`~/.claude/greenbelay`, `$XDG_STATE_HOME/greenbelay`), the row
+headers and schemas (`greenbelay-v1`, `greenbelay-review-*-v1`) and the
+plugin id (`clear-relay@greenbelay`). Hook messages read `greenbelay/<rule>`.
+
+- **No alias.** No `greenpiste` or `amont-agent` binary is installed, by the
+  formula, the installers or `make install`; the release ships no alias
+  archive, and `scripts/release-manifest.py` refuses a manifest declaring
+  `bin_aliases`. Hook entries calling an old path fail until
+  `greenbelay install --write` rewrites them.
+- **No migration from greenpiste names.** greenbelay reads only its own names
+  (and, until the 2026-12-13 census, the amont-agent ones). The only machine
+  that ran greenpiste is switched once by a script outside this repository.
+- The tap records `greenpiste` → `greenbelay` in `formula_renames.json`, so
+  `brew upgrade fredericrous/tap/greenpiste` moves an installed keg (after
+  `brew trust --formula fredericrous/tap/greenbelay`).
+
 ## v5.1.0
 
 greenpiste 5.1.0 counts the steps a person must take, so a plan shows them.

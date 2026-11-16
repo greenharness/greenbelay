@@ -5,13 +5,13 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-const BIN: &str = env!("CARGO_BIN_EXE_greenpiste");
+const BIN: &str = env!("CARGO_BIN_EXE_greenbelay");
 const PROV: &str = "refs/notes/amont-provenance";
 const ATTEST: &str = "refs/notes/amont-attest";
 
 fn run(dir: &Path, prog: &str, args: &[&str]) -> String {
     let mut command = if prog == BIN {
-        greenpiste_command()
+        greenbelay_command()
     } else {
         Command::new(prog)
     };
@@ -133,7 +133,7 @@ impl World {
             s.push_str(&format!("patch {p}\n"));
         }
         s.push_str(&format!(
-            "plan docs/plans/p.md {plan_sha}\nreview reviewed c0ffee\npreview not-required\nproducer greenpiste 0\n"
+            "plan docs/plans/p.md {plan_sha}\nreview reviewed c0ffee\npreview not-required\nproducer greenbelay 0\n"
         ));
         s
     }
@@ -183,17 +183,17 @@ impl World {
 
     fn shipped_with_gh(&self, extra: &[&str], gh: &str) -> (String, String, i32) {
         let plan = self.plan_file();
-        let out = greenpiste_command()
+        let out = greenbelay_command()
             .current_dir(&self.top)
             .arg("shipped")
             .arg(&plan)
             .args(extra)
-            .env("GREENPISTE_PLAN_ROOT", self.top.join("root"))
+            .env("GREENBELAY_PLAN_ROOT", self.top.join("root"))
             .env("CLAUDE_CONFIG_DIR", self.top.join("claude"))
             .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .env("GREENPISTE_GH", gh)
+            .env("GREENBELAY_GH", gh)
             .stdin(Stdio::null())
             .output()
             .expect("runs");
@@ -281,8 +281,8 @@ fn a_squash_with_only_green_notes_is_verified_under_the_green_namespace() {
 
 #[test]
 fn a_record_the_writer_builds_is_verified_under_greengate_provenance() {
-    use greenpiste_guard::notes_names::GREEN;
-    use greenpiste_process::provenance::{payload, Record, Review};
+    use greenbelay_guard::notes_names::GREEN;
+    use greenbelay_process::provenance::{payload, Record, Review};
     let world = World::new("written");
     let head = world.feature();
     let merge = world.squash("feat: a (#7)");
@@ -298,7 +298,7 @@ fn a_record_the_writer_builds_is_verified_under_greengate_provenance() {
         review: Review::Reviewed,
         review_content: "c0ffee",
         profiles: &[],
-        preview: greenpiste_process::preview::Outcome::NotRequired,
+        preview: greenbelay_process::preview::Outcome::NotRequired,
         version: "0",
     });
     assert!(
@@ -721,25 +721,25 @@ fn usage_errors_and_help() {
     let w = World::new("usage");
     let (_, _, code) = w.shipped(&["--nope"]);
     assert_eq!(code, 2);
-    let help = greenpiste_command()
+    let help = greenbelay_command()
         .args(["shipped", "--help"])
         .output()
         .unwrap();
     assert!(help.status.success());
-    assert!(String::from_utf8_lossy(&help.stdout).contains("usage: greenpiste shipped"));
-    let main_help = greenpiste_command().arg("--help").output().unwrap();
+    assert!(String::from_utf8_lossy(&help.stdout).contains("usage: greenbelay shipped"));
+    let main_help = greenbelay_command().arg("--help").output().unwrap();
     assert!(String::from_utf8_lossy(&main_help.stdout).contains("shipped <plan.md>"));
-    let missing = greenpiste_command()
+    let missing = greenbelay_command()
         .args(["shipped", "/nonexistent/plan.md"])
         .output()
         .unwrap();
     assert_eq!(missing.status.code(), Some(2));
 }
 
-/// The greenpiste binary pointed at scratch directories, so the migration every
+/// The greenbelay binary pointed at scratch directories, so the migration every
 /// subcommand runs first never touches the real home of whoever runs the tests.
 /// A caller that sets one of these variables itself overrides it afterwards.
-fn greenpiste_command() -> Command {
+fn greenbelay_command() -> Command {
     let scratch = fresh_scratch("shipped");
     let mut command = Command::new(BIN);
     command

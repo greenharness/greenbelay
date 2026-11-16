@@ -1,9 +1,9 @@
-//! `greenpiste migrate` and the preflight every command runs, driven through
+//! `greenbelay migrate` and the preflight every command runs, driven through
 //! the real binary on a scratch copy of an old-style machine. Nothing here
 //! touches the real `~/.claude`, `~/.local/state` or `~/.gitconfig`: every
 //! location the binary reads is pointed into the scratch directory.
 
-use greenpiste_guard::names::{self, old};
+use greenbelay_guard::names::{self, old};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::fs;
@@ -138,7 +138,7 @@ impl Machine {
     }
 
     fn command(&self) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
         command
             .current_dir(&self.root)
             .env("HOME", self.home())
@@ -147,7 +147,7 @@ impl Machine {
             .env("CLAUDE_CONFIG_DIR", self.claude())
             .env("GIT_CONFIG_GLOBAL", self.gitconfig())
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("GREENPISTE_OFF")
+            .env_remove("GREENBELAY_OFF")
             .env_remove("GREENHARNESS_HOST_SLOT");
         command
     }
@@ -233,7 +233,7 @@ fn walk(base: &Path, dir: &Path) -> Snapshot {
 fn without_markers(snapshot: &Snapshot) -> Snapshot {
     snapshot
         .iter()
-        .filter(|(key, _)| !key.starts_with("greenpiste-migrate"))
+        .filter(|(key, _)| !key.starts_with("greenbelay-migrate"))
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect()
 }
@@ -530,7 +530,7 @@ fn a_hook_on_a_migrated_machine_writes_into_the_new_root() {
 fn a_hook_with_the_lock_held_decides_and_moves_nothing() {
     let machine = Machine::old_style("locked");
     fs::create_dir_all(machine.claude()).unwrap();
-    let held = greenpiste_guard::lock::lock_within(
+    let held = greenbelay_guard::lock::lock_within(
         &machine.claude().join(names::MIGRATE_LOCK_FILE),
         Duration::ZERO,
     )
@@ -579,7 +579,7 @@ fn a_failing_step_is_attempted_once_by_fifty_hooks() {
     let other = machine.run(&["rules"]);
     assert!(
         stderr(&other).contains(
-            "greenpiste: migration failed (see greenpiste doctor); run greenpiste migrate"
+            "greenbelay: migration failed (see greenbelay doctor); run greenbelay migrate"
         ),
         "{}",
         stderr(&other)
@@ -774,7 +774,7 @@ fn install_migrates_first() {
 fn install_with_the_lock_held_refuses_and_writes_nothing() {
     let machine = Machine::old_style("install-locked");
     fs::create_dir_all(machine.claude()).unwrap();
-    let held = greenpiste_guard::lock::lock_within(
+    let held = greenbelay_guard::lock::lock_within(
         &machine.claude().join(names::MIGRATE_LOCK_FILE),
         Duration::ZERO,
     )
@@ -784,7 +784,7 @@ fn install_with_the_lock_held_refuses_and_writes_nothing() {
     let output = machine
         .command()
         .args(["install", "--write"])
-        .env("GREENPISTE_TEST_MIGRATE_WAIT_MS", "200")
+        .env("GREENBELAY_TEST_MIGRATE_WAIT_MS", "200")
         .output()
         .expect("the binary runs");
     assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));

@@ -39,7 +39,7 @@ every entry under `docs/plans/` left out, 64 hex in any object format,
 computed read-only (attest SPEC, "Content id"). Recording the review in the
 plan, or adding a plan, therefore never makes it stale; a code change does.
 It is not attest's canonical tree, canon(T), which counts whether a plan
-file exists; `greenpiste tree-sha` prints the content id.
+file exists; `greenbelay tree-sha` prints the content id.
 
 A pass also holds for another tree with the same **branch patch**, when the
 repository's rule files are unchanged (ADR-0034,
@@ -64,7 +64,7 @@ patch); journalled `overruled-by-patch`. When the patch cannot be computed,
 the held message says why.
 
 ```sh
-greenpiste tree-sha [--block] [-C <dir>] [--] [<rev>]
+greenbelay tree-sha [--block] [-C <dir>] [--] [<rev>]
 ```
 
 `--block` prints the block the reviewer's prompt carries:
@@ -91,7 +91,7 @@ on stderr); 2 on a usage error.
 3. Computes the content id of the pushed commit.
 4. Looks for a binding: a completed `implementation-review` agent in this
    session's transcript whose block names this repository and tree, or a
-   pass remembered under `~/.claude/greenpiste/implementation-review/by-tree/`.
+   pass remembered under `~/.claude/greenbelay/implementation-review/by-tree/`.
    Completion is read from structured fields only, as the review panel
    reads it; a notification echoed inside a tool result never counts. A
    reviewer **resumed** with `SendMessage` on a new block counts as a
@@ -124,7 +124,7 @@ on stderr); 2 on a usage error.
 Every note ends with the next step:
 
 ```
-greenpiste/implementation-review: no implementation review of greenpiste tree 5085edae1d66 is in this session. worktree-task F4b: `greenpiste tree-sha --block`, then launch the implementation-review agent …
+greenbelay/implementation-review: no implementation review of greenbelay tree 5085edae1d66 is in this session. worktree-task F4b: `greenbelay tree-sha --block`, then launch the implementation-review agent …
 ```
 
 ## A resumed review
@@ -154,7 +154,7 @@ A resumed reviewer brings its whole first round with it, 50-80k tokens
 each time. A delta after a rebase or a small fix can instead be a fresh
 launch that reads only what changed:
 
-    greenpiste review-brief --interdiff <head> [--profile <role>]
+    greenbelay review-brief --interdiff <head> [--profile <role>]
 
 prints the same `<<<TREE>>>`, `<<<RULES>>>` and `<<<CANDIDATES>>>` headers
 as the full brief, then what changed since `<head>`, `docs/plans/` left
@@ -174,7 +174,7 @@ journalled `interdiff-brief` with the head, its size and its shape.
 The head comes from the stale line. Each fresh pass records, per role, the
 head, merge-base and tree it read under `by-branch/<repo>/<role>/<sha256
 of the remote ref>.json` (last writer wins). A push whose review is stale
-then says "A delta reads only what changed: `greenpiste review-brief
+then says "A delta reads only what changed: `greenbelay review-brief
 --interdiff <head>` (a profile seat adds `--profile <role>`)" when that
 record matches the stale review's tree. The brief looks the record up
 under the branch of the same name, which is what `git push` and `amont
@@ -195,7 +195,7 @@ bound nothing says so in the model's context.
 ## Only the hook writes a pass file
 
 Under `deny` a pass file is a trust boundary. A Write, Edit or MultiEdit
-under `~/.claude/greenpiste/implementation-review/` is refused, with `.`
+under `~/.claude/greenbelay/implementation-review/` is refused, with `.`
 and `..` folded before the comparison; a Bash command that would write
 there — a redirect into it, or `rm`, `cp`, `tee`, `python`, `chezmoi` and
 the like with a word naming it — is refused too, whatever the rule's
@@ -203,13 +203,13 @@ stance. Reading the record (`ls`, `cat`, `find`, `grep`) is allowed. The
 Bash half is best-effort by nature: a parser cannot see inside `python -c`
 beyond its words.
 
-`~/.claude/greenpiste/provenance/` is guarded the same way (below).
+`~/.claude/greenbelay/provenance/` is guarded the same way (below).
 
 ## The provenance record
 
 When the hook passes a push that carries a plan, it writes the unsigned
 `amont-provenance-v1` payload to
-`~/.claude/greenpiste/provenance/<repo>/<pushed sha>`. The format is attest
+`~/.claude/greenbelay/provenance/<repo>/<pushed sha>`. The format is attest
 SPEC `amont-provenance-v1`; the decision is ADR-0036. One datum per line:
 `amont-provenance-v1`, `commit`, `tree` (the full tree), `patch` (only when
 the branch patch could be computed), `plan <path> <body sha>` (the plan
@@ -217,14 +217,14 @@ under `docs/plans/` changed on the branch, read from the pushed tree),
 `review <reviewed|by-patch|overruled> <content id the review read>`,
 `preview <approved|evidence|not-required>` and `producer amont-agent
 <version>`. There is no `canon` line: attest's canonical tree is a tree fact
-greenpiste does not own, and the signer, amont, computes it and inserts it
+greenbelay does not own, and the signer, amont, computes it and inserts it
 before signing. A payload that carries one is refused by the signer.
 
 After the `review` line, one `code-review <role> <how> <content id>` line
 records each code-review profile the plan declares for the repository, in
 declaration order: `how` is `reviewed`, `by-patch`, `carried` or `overruled`,
 and the content id is the tree that profile's review read. A push with no
-declared profile writes no such line. `greenpiste doctor` (and `doctor
+declared profile writes no such line. `greenbelay doctor` (and `doctor
 --json`) reports one gap for each code-review agent file
 (`code-review-<role>.md`, `code-review-language.md`, `interface-review.md`)
 that no agents directory carries, and says nothing when all eight are there.
@@ -247,7 +247,7 @@ directory is hook-only: Write, Edit and Bash writes are refused.
 ## What the journal records
 
 Every push writes its decision line, under the rule's id, in the buckets
-`greenpiste status` counts: a declined push as `unconfirmed` with the reason
+`greenbelay status` counts: a declined push as `unconfirmed` with the reason
 (`reviewed`, `reviewed-by-patch`, `reviewed-by-patch-notes-moved`,
 `overruled`, `overruled-by-patch`, `overruled-by-patch-notes-moved`,
 `no-plan`, `dry-run`, `no-branch`, `unresolvable`), a spoken one as
@@ -279,9 +279,9 @@ the judgment, and `status` counts it in no bucket.
 
 ## Candidates and rulings
 
-`greenpiste review-brief` runs `adr-lint candidates --base <merge-base>
+`greenbelay review-brief` runs `adr-lint candidates --base <merge-base>
 --json --max 40` in the repository (`adr-lint` from PATH, or the program
-named by `GREENPISTE_ADR_LINT`; a bounded wait; stdin from /dev/null). A
+named by `GREENBELAY_ADR_LINT`; a bounded wait; stdin from /dev/null). A
 candidate is a line adr-lint marked on a line the branch adds, for the
 reviewer to rule on; adr-lint owns the document (`adr-lint.candidates/1`)
 and the ruling record (`adr-lint.ruling/1`). The reader refuses any other
@@ -310,7 +310,7 @@ On a passing review (the transcript, the tree memory and the patch memory
 alike; the pass file keeps what the prompt listed and the result ruled) the
 push check journals the `candidates-checked` line above and appends, for each
 ruling, one `adr-lint.ruling/1` line to
-`~/.claude/greenpiste/rulings/<repo>.jsonl` (created 0600 in a 0700
+`~/.claude/greenbelay/rulings/<repo>.jsonl` (created 0600 in a 0700
 directory, appended to and never rewritten): `format`, `review` (the
 reviewer's agent id), `tool` (`amont-agent`), `repo`, `tree` (the content
 id), `candidate`, `rule`, `pattern_id`, `pattern` (the message from the
@@ -322,13 +322,13 @@ validates the file.
 A repository with no `.adr.yaml` gets a brief with no RULES line and a
 `# Code rules` section saying that no decided code rules apply (stderr says
 so in one line); `rules-sha` there still exits 3.
-A repository with `.adr.yaml` where aval is not installed (`GREENPISTE_AVAL`
+A repository with `.adr.yaml` where aval is not installed (`GREENBELAY_AVAL`
 unset and no `aval` on PATH, not even a non-executable file or a dangling
 symlink) also gets the brief, with no RULES line and a `# Code rules` section
 saying the decided code rules were not read; stderr says so in one line. The
 `review-brief` exit codes: 0 the brief was printed (aval not installed
 included), 1 a repository error, 3 an installed aval failed or
-`GREENPISTE_AVAL` points nowhere. A row of `aval relevant`
+`GREENBELAY_AVAL` points nowhere. A row of `aval relevant`
 without a string `key` is an aval error (exit 3) naming the row.
 
 Away from a push: `overruled`, `answered`, `unbound`, `unknown`,
@@ -336,12 +336,12 @@ Away from a push: `overruled`, `answered`, `unbound`, `unknown`,
 refused write. The soak reads them with:
 
 ```sh
-grep -E ' implementation-review ' ~/.claude/greenpiste/journal.log
+grep -E ' implementation-review ' ~/.claude/greenbelay/journal.log
 ```
 
 ## Stance
 
-Ships `advise`. `git config --global greenpiste.implementation-review.stance
+Ships `advise`. `git config --global greenbelay.implementation-review.stance
 deny` holds a push whose review is missing, stale, `rework` or unknown;
 `observe` journals and says nothing. The 2026-10-06 soak review, alongside
 `push-preview`, decides between `deny`, `advise` and retiring the gate from
@@ -351,11 +351,11 @@ the journal's `review=` counts and the first real cycles' finding quality.
 
 ```
 echo '[{"severity":"high","disposition":"fixed","section":"Verification"}]' |
-  greenpiste implementation-review record <plan.md> --verdict approve-with-changes
+  greenbelay implementation-review record <plan.md> --verdict approve-with-changes
 ```
 
-Appends one `greenpiste-impl-review-outcome-v1` row per invocation to
-`~/.claude/greenpiste/implementation-review-outcomes/outcomes.jsonl` (outside
+Appends one `greenbelay-impl-review-outcome-v1` row per invocation to
+`~/.claude/greenbelay/implementation-review-outcomes/outcomes.jsonl` (outside
 the hook-only store): `recorded_at`,
 `tree` (the content id of HEAD, as `tree-sha`), `round` (one more than the rows
 already kept for the plan: a per-plan count, unlike the plan-review ledger's
@@ -370,13 +370,13 @@ verdict exits 2 and appends nothing; an unreadable stdin exits 1. When a pass
 is remembered for the tree and its verdict differs from `--verdict` (a remembered
 `overruled` counts as agreeing with `rework`), a warning
 goes to stderr. The command writes only `outcomes.jsonl`
-and its lock file, never a pass file. `greenpiste plan-review stats` reads
+and its lock file, never a pass file. `greenbelay plan-review stats` reads
 this ledger and reports it as role `implementation-review`, `fixed` counting as
 accepted.
 
 ## Per-profile briefs
 
-`greenpiste review-brief --profile <role>` (`backend`, `platform`, `unix`,
+`greenbelay review-brief --profile <role>` (`backend`, `platform`, `unix`,
 `tui`, `react`, `ui-design`, `architect` or `lang:<x>`) adds a
 `Profile: <role>` line after the TREE, RULES and CANDIDATES lines and, after
 the code rules, a `## Judge rules for <role>` section: the full text of each
@@ -416,9 +416,9 @@ repository's line:
 - <repo>: none — copy of fp:<12 hex>
 ```
 
-`greenpiste plan-panel --code-review <plan.md> -C <dir> --base <ref>`
+`greenbelay plan-panel --code-review <plan.md> -C <dir> --base <ref>`
 proposes that line. The hook does not trust the sentence: it recomputes the
-fingerprint of the pushed branch (`greenpiste block sha`) and rechecks the
+fingerprint of the pushed branch (`greenbelay block sha`) and rechecks the
 registry. A hit requires the implementation review alone and journals
 `profiles-copy-matched`; a miss requires the full declared profiles, with no
 question to the person, and journals `profiles-copy-missed`.
@@ -428,11 +428,11 @@ block's file types has its own `approve` on that exact tree. The entry keeps
 that profile set and the rules sha. A miss names its cause: `no entry for
 fp:<id>`, `revoked: <because>`, `role <r> not covered`, `rules changed since
 registration`, `agent <a> changed since registration`, `no passed pin check;
-run greenpiste review-brief -C <dir>` (no record), `pin check failed:
+run greenbelay review-brief -C <dir>` (no record), `pin check failed:
 <detail>` (the record's own detail), `the pin record was made with
-GREENPISTE_GH set; run review-brief without it`, `binary diff`, `git failed`.
+GREENBELAY_GH set; run review-brief without it`, `binary diff`, `git failed`.
 
-`greenpiste block` manages the registry:
+`greenbelay block` manages the registry:
 
 - `block sha [-C <dir>] [--base <ref>]` prints the fingerprint of the branch.
 - `block list [--json]` lists the registered blocks, with the repository each came from (`-` and
@@ -447,7 +447,7 @@ GREENPISTE_GH set; run review-brief without it`, `binary diff`, `git failed`.
 A review recorded with `implementation-review record` carries `copy: true`
 when the hook journalled `profiles-copy-matched` for its tree, and `copy:
 false` otherwise; a row written before the key existed reads as not a copy.
-`greenpiste plan-review stats` counts, per seat, the copy-tagged reviews
+`greenbelay plan-review stats` counts, per seat, the copy-tagged reviews
 (`copies`) and the blocking or high findings fixed in them (`copy-defects`),
 which is how the rule is revisited at the first defect found in a copy or at
 30 copies.

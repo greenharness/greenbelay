@@ -2,7 +2,7 @@
 //! `work.plan-review-panel`).
 //!
 //! Each test builds its repositories under an isolated root
-//! (`GREENPISTE_PLAN_ROOT`), writes a plan and a transcript in the shapes
+//! (`GREENBELAY_PLAN_ROOT`), writes a plan and a transcript in the shapes
 //! captured from real sessions on 2026-09-29 — a foreground `Agent` result
 //! carries `toolUseResult.status: "completed"` and `agentType`; a background
 //! one reports through a `user` entry with `origin.kind:
@@ -63,7 +63,7 @@ fn install_agents(config: &Path) {
 impl World {
     fn new(name: &str) -> World {
         let root = std::env::temp_dir().join(format!(
-            "greenpiste-plan-review-{name}-{}-{:?}",
+            "greenbelay-plan-review-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -121,13 +121,13 @@ impl World {
     }
 
     fn bin(&self) -> Command {
-        let mut c = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+        let mut c = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
         c.env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
             .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", self.root.join("global"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GREENPISTE_PLAN_ROOT", self.root.join("repos"))
-            .env_remove("GREENPISTE_OFF");
+            .env("GREENBELAY_PLAN_ROOT", self.root.join("repos"))
+            .env_remove("GREENBELAY_OFF");
         c
     }
 
@@ -227,7 +227,7 @@ impl World {
     fn store(&self) -> PathBuf {
         self.root
             .join("claude")
-            .join("greenpiste")
+            .join("greenbelay")
             .join("plan-review")
     }
 }
@@ -424,7 +424,7 @@ fn a_plan_with_no_review_is_refused_with_its_panel() {
     };
     assert!(
         why.starts_with(
-            "greenpiste/plan-review-panel: missing for repos=tool: backend, lang:rust, tui, unix"
+            "greenbelay/plan-review-panel: missing for repos=tool: backend, lang:rust, tui, unix"
         ),
         "{why}"
     );
@@ -1088,7 +1088,7 @@ fn a_formatted_copy_keeps_its_review() {
         "formatting is not an edit"
     );
     let journal =
-        std::fs::read_to_string(w.root.join("claude").join("greenpiste").join("journal.log"))
+        std::fs::read_to_string(w.root.join("claude").join("greenbelay").join("journal.log"))
             .unwrap();
     let line = journal
         .lines()
@@ -1173,7 +1173,7 @@ fn a_review_bound_before_2_25_still_passes_and_is_journalled() {
         assert!(out.status.success());
         assert_eq!(
             String::from_utf8_lossy(&out.stderr).trim(),
-            "greenpiste: --legacy is removed after the transition"
+            "greenbelay: --legacy is removed after the transition"
         );
         let s = String::from_utf8(out.stdout).unwrap();
         assert_eq!(s.lines().count(), 1, "one line on stdout");
@@ -1208,7 +1208,7 @@ fn a_review_bound_before_2_25_still_passes_and_is_journalled() {
     }
     assert_eq!(w.present(&plan, &t), Said::Silent);
     let journal =
-        std::fs::read_to_string(w.root.join("claude").join("greenpiste").join("journal.log"))
+        std::fs::read_to_string(w.root.join("claude").join("greenbelay").join("journal.log"))
             .unwrap();
     let line = journal
         .lines()
@@ -1382,13 +1382,13 @@ fn a_plan_without_a_code_review_section_warns_and_keeps_its_stdout() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
         err.lines().next().unwrap_or(""),
-        "greenpiste: plan-panel: no ## Code review section; run plan-panel --code-review and add it after ## Non-goals"
+        "greenbelay: plan-panel: no ## Code review section; run plan-panel --code-review and add it after ## Non-goals"
     );
     // The only other line is the plan-id it assigned.
     assert!(
         err.lines()
             .skip(1)
-            .all(|l| l.starts_with("greenpiste: plan-panel: assigned plan-id p-")),
+            .all(|l| l.starts_with("greenbelay: plan-panel: assigned plan-id p-")),
         "{err}"
     );
 
@@ -1400,7 +1400,7 @@ fn a_plan_without_a_code_review_section_warns_and_keeps_its_stdout() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
         err.lines()
-            .all(|l| l.starts_with("greenpiste: plan-panel: assigned plan-id p-")),
+            .all(|l| l.starts_with("greenbelay: plan-panel: assigned plan-id p-")),
         "{err}"
     );
 }
@@ -1523,7 +1523,7 @@ fn a_plan_is_seated_from_the_files_its_phases_name_not_every_area() {
     }
     assert!(!out.contains("name the files"), "{out}");
     assert!(
-        err.lines().any(|l| l == "greenpiste: plan-panel: name the files each phase touches in backticks under ## Phases; this panel was seated from the repositories' areas"),
+        err.lines().any(|l| l == "greenbelay: plan-panel: name the files each phase touches in backticks under ## Phases; this panel was seated from the repositories' areas"),
         "{err}"
     );
 
@@ -1539,7 +1539,7 @@ fn a_plan_is_seated_from_the_files_its_phases_name_not_every_area() {
     );
     assert!(out.lines().any(|l| l == "plan-review-ux-research"), "{out}");
     assert!(
-        err.lines().any(|l| l == "greenpiste: plan-panel: Phase 2 names no file; name the files each phase touches in backticks under ## Phases; this panel was seated from the repositories' areas"),
+        err.lines().any(|l| l == "greenbelay: plan-panel: Phase 2 names no file; name the files each phase touches in backticks under ## Phases; this panel was seated from the repositories' areas"),
         "{err}"
     );
 }
@@ -1549,7 +1549,7 @@ fn a_plan_naming_no_file_is_advised_and_still_allowed() {
     let w = World::new("no-paths");
     rust_cli(&w);
     let journal = || {
-        std::fs::read_to_string(w.root.join("claude").join("greenpiste").join("journal.log"))
+        std::fs::read_to_string(w.root.join("claude").join("greenbelay").join("journal.log"))
             .unwrap()
     };
 
@@ -1561,11 +1561,11 @@ fn a_plan_naming_no_file_is_advised_and_still_allowed() {
     };
     assert!(
         why.starts_with(
-            "greenpiste/plan-review-panel: missing for repos=tool: backend, lang:rust, tui, unix"
+            "greenbelay/plan-review-panel: missing for repos=tool: backend, lang:rust, tui, unix"
         ),
         "{why}"
     );
-    assert!(why.ends_with("greenpiste/plan-names-no-paths: name the files each phase touches in backticks under ## Phases; this panel was seated from the repositories' areas"), "{why}");
+    assert!(why.ends_with("greenbelay/plan-names-no-paths: name the files each phase touches in backticks under ## Phases; this panel was seated from the repositories' areas"), "{why}");
 
     // Reviewed: ExitPlanMode goes through, with the advice as context.
     let mut t = Transcript::default();
@@ -1573,7 +1573,7 @@ fn a_plan_naming_no_file_is_advised_and_still_allowed() {
     let said = w.present(&plan, &t);
     assert_eq!(
         said,
-        Said::Advise("greenpiste/plan-names-no-paths: name the files each phase touches in backticks under ## Phases; this panel was seated from the repositories' areas".into())
+        Said::Advise("greenbelay/plan-names-no-paths: name the files each phase touches in backticks under ## Phases; this panel was seated from the repositories' areas".into())
     );
     let line = journal()
         .lines()
@@ -1596,13 +1596,13 @@ fn a_plan_naming_no_file_is_advised_and_still_allowed() {
     full_panel(&w, &mut t, &plan);
     assert_eq!(
         w.present(&plan, &t),
-        Said::Advise("greenpiste/plan-names-no-paths: Phase 2 names no file; name the files each phase touches in backticks under ## Phases; this panel was seated from the repositories' areas".into())
+        Said::Advise("greenbelay/plan-names-no-paths: Phase 2 names no file; name the files each phase touches in backticks under ## Phases; this panel was seated from the repositories' areas".into())
     );
 
     // Its stance is the person's: observed, it is journalled and silent.
     std::fs::write(
         w.root.join("global"),
-        "[greenpiste \"plan-names-no-paths\"]\n\tstance = observe\n",
+        "[greenbelay \"plan-names-no-paths\"]\n\tstance = observe\n",
     )
     .unwrap();
     assert_eq!(w.present(&plan, &t), Said::Silent);
@@ -1785,7 +1785,7 @@ fn a_delta_to_one_language_phase_re_requires_that_seat_alone() {
     let Said::Deny(why) = &said else {
         panic!("{said:?}")
     };
-    assert!(why.contains("stale (its slice changed: Phase 2) for repos=tool: lang:typescript; re-run: `greenpiste plan-sha --block --lang typescript --slice lang:typescript"), "{why}");
+    assert!(why.contains("stale (its slice changed: Phase 2) for repos=tool: lang:typescript; re-run: `greenbelay plan-sha --block --lang typescript --slice lang:typescript"), "{why}");
     assert!(
         !why.contains("lang:rust"),
         "the Rust seat stays current: {why}"
@@ -1853,7 +1853,7 @@ fn plan_sha_takes_the_equals_forms_and_help_wins() {
         .unwrap();
     assert!(
         help.status.success()
-            && String::from_utf8_lossy(&help.stdout).starts_with("usage: greenpiste plan-sha")
+            && String::from_utf8_lossy(&help.stdout).starts_with("usage: greenbelay plan-sha")
     );
 }
 
@@ -1957,8 +1957,8 @@ impl CopyWorld {
     }
 
     fn register(&self) {
-        use greenpiste_process::block_registry::{register_entry, EntryData, Generation};
-        let fingerprint = greenpiste_process::block_fingerprint::fingerprint(
+        use greenbelay_process::block_registry::{register_entry, EntryData, Generation};
+        let fingerprint = greenbelay_process::block_fingerprint::fingerprint(
             &self.repo,
             "origin/main",
             "HEAD",
@@ -1966,7 +1966,7 @@ impl CopyWorld {
         )
         .unwrap()
         .unwrap();
-        let roles = greenpiste_process::implementation_review::roles_needed(
+        let roles = greenbelay_process::implementation_review::roles_needed(
             &self.repo,
             "origin/main",
             "HEAD",
@@ -1974,18 +1974,18 @@ impl CopyWorld {
         .unwrap();
         let agents: Vec<(String, String)> = roles
             .iter()
-            .filter_map(|role| greenpiste_process::code_review::agent_for(role))
+            .filter_map(|role| greenbelay_process::code_review::agent_for(role))
             .map(|(agent, _)| agent)
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .map(|agent| (agent, "-".to_string()))
             .collect();
         register_entry(
-            &self.w.root.join("claude/greenpiste"),
+            &self.w.root.join("claude/greenbelay"),
             fingerprint.full(),
             &Generation {
-                rules_sha: greenpiste_process::review_brief::sha_of(COPY_RULES.as_bytes()),
-                agent_digest: greenpiste_process::implementation_review::agents_digest(&agents),
+                rules_sha: greenbelay_process::review_brief::sha_of(COPY_RULES.as_bytes()),
+                agent_digest: greenbelay_process::implementation_review::agents_digest(&agents),
             },
             &EntryData {
                 roles: roles.into_iter().collect(),
@@ -2005,7 +2005,7 @@ impl CopyWorld {
                 "config",
                 "--file",
                 &self.w.root.join("global").display().to_string(),
-                "greenpiste.implementation-review.stance",
+                "greenbelay.implementation-review.stance",
                 "deny",
             ],
         );
@@ -2026,12 +2026,12 @@ impl CopyWorld {
             .arg(&self.repo)
             .args(["--base", "origin/main"])
             .arg(&self.plan)
-            .env("GREENPISTE_GH_DEADLINE_MS", deadline_ms)
-            .env_remove("GREENPISTE_GH");
+            .env("GREENBELAY_GH_DEADLINE_MS", deadline_ms)
+            .env_remove("GREENBELAY_GH");
         match gh {
             Some(gh) => {
                 cmd.env("PATH", std::env::join_paths(dirs).unwrap());
-                cmd.env("GREENPISTE_GH", gh);
+                cmd.env("GREENBELAY_GH", gh);
             }
             None => {
                 // A PATH with git and the fake aval and no gh at all.
@@ -2093,7 +2093,7 @@ fn plan_panel_proposes_a_copy_when_the_asset_is_listed_and_the_hook_enforces() {
     // plan-panel writes no record: the record belongs to a pushed tree.
     let pins =
         c.w.root
-            .join("claude/greenpiste/implementation-review/by-block");
+            .join("claude/greenbelay/implementation-review/by-block");
     let wrote_pin = walk(&pins)
         .iter()
         .any(|p| p.to_string_lossy().contains("/pins/"));
@@ -2128,7 +2128,7 @@ fn plan_panel_prints_no_copy_line_while_the_hook_does_not_enforce() {
     assert_eq!(stdout_of(&out), PROFILES_LINE);
     assert_eq!(
         stderr_of(&out).trim(),
-        "greenpiste: plan-panel: the implementation-review hook does not enforce; the profiles are proposed"
+        "greenbelay: plan-panel: the implementation-review hook does not enforce; the profiles are proposed"
     );
 }
 
@@ -2161,7 +2161,7 @@ fn plan_panel_proposes_the_profiles_when_the_pin_check_fails() {
             .lines()
             .find(|l| l.contains("is a registered copy but the pin check failed"))
             .unwrap_or_else(|| panic!("{why}: {err}"));
-        assert!(line.starts_with("greenpiste: plan-panel: fp:"), "{line}");
+        assert!(line.starts_with("greenbelay: plan-panel: fp:"), "{line}");
         assert!(line.contains(why), "{line}");
         assert!(line.ends_with("; the profiles are proposed"), "{line}");
     }
@@ -2492,7 +2492,7 @@ fn an_approval_is_recorded_while_the_ledger_is_locked() {
             .join(format!("{first_id}.json")),
     )
     .expect("approval written");
-    assert!(record.contains("greenpiste-plan-approval-v1"), "{record}");
+    assert!(record.contains("greenbelay-plan-approval-v1"), "{record}");
 }
 
 #[cfg(unix)]
@@ -2508,7 +2508,7 @@ fn a_busy_ledger_is_refused_without_touching_the_plan() {
     assert!(!ok);
     assert!(out.is_empty(), "{out}");
     assert!(
-        err.contains("plan-panel: ledger busy; nothing written. Run again: greenpiste plan-panel "),
+        err.contains("plan-panel: ledger busy; nothing written. Run again: greenbelay plan-panel "),
         "{err}"
     );
     assert_eq!(std::fs::read(&plan).unwrap(), before);
@@ -2529,7 +2529,7 @@ fn a_read_only_plan_file_is_refused_with_nothing_on_stdout() {
     assert!(out.is_empty(), "{out}");
     assert!(err.contains("plan-panel: cannot write plan-id:"), "{err}");
     assert!(
-        err.contains("make it writable, then run: greenpiste plan-panel "),
+        err.contains("make it writable, then run: greenbelay plan-panel "),
         "{err}"
     );
     assert!(plan_id_of(&plan).is_none());

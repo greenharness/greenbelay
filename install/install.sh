@@ -1,20 +1,20 @@
 #!/bin/sh
-# Install the greenpiste binary (and amont-agent, its old name, as a copy). Nothing else.
+# Install the greenbelay binary. Nothing else.
 #
-#   curl -fsSL https://raw.githubusercontent.com/greenharness/greenpiste/main/install/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/greenharness/greenbelay/main/install/install.sh | sh
 #
 # This script deliberately does NOT wire the guard into Claude Code. It
 # downloads a verified binary, puts it on your PATH, and tells you what to run
 # next. That restraint is the point: a program that can REFUSE the commands
 # your agent runs should not install itself into your settings.json as a side
-# effect of you fetching it. `greenpiste install --write` is a separate,
+# effect of you fetching it. `greenbelay install --write` is a separate,
 # deliberate act, and it prints the block before it writes anything.
 #
 # POSIX sh, no bashisms: this has to run wherever curl does.
 set -eu
 
-REPO="greenharness/greenpiste"
-# `$HOME/.local/bin` by default. `greenpiste install` writes the ABSOLUTE
+REPO="greenharness/greenbelay"
+# `$HOME/.local/bin` by default. `greenbelay install` writes the ABSOLUTE
 # path of this binary into settings.json, so the directory matters only for
 # whether you can type the command yourself.
 
@@ -26,19 +26,19 @@ ok()   { printf "  ${GREEN}✓${OFF} %s\n" "$1"; }
 warn() { printf "  ${YELLOW}!${OFF} %s\n" "$1" >&2; }
 die()  { printf "  ${RED}✗${OFF} %s\n" "$1" >&2; exit 1; }
 
-# The settings are GREENPISTE_BIN_DIR and GREENPISTE_VERSION. Their old names,
+# The settings are GREENBELAY_BIN_DIR and GREENBELAY_VERSION. Their old names,
 # AMONT_AGENT_BIN_DIR and AMONT_AGENT_VERSION, still work while the new one is
 # unset, with one warning naming the new one.
-BIN_DIR="${GREENPISTE_BIN_DIR:-}"
+BIN_DIR="${GREENBELAY_BIN_DIR:-}"
 if [ -z "$BIN_DIR" ] && [ -n "${AMONT_AGENT_BIN_DIR:-}" ]; then
     BIN_DIR="$AMONT_AGENT_BIN_DIR"
-    warn "AMONT_AGENT_BIN_DIR is the old name: set GREENPISTE_BIN_DIR instead"
+    warn "AMONT_AGENT_BIN_DIR is the old name: set GREENBELAY_BIN_DIR instead"
 fi
 BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
-VERSION="${GREENPISTE_VERSION:-}"
+VERSION="${GREENBELAY_VERSION:-}"
 if [ -z "$VERSION" ] && [ -n "${AMONT_AGENT_VERSION:-}" ]; then
     VERSION="$AMONT_AGENT_VERSION"
-    warn "AMONT_AGENT_VERSION is the old name: set GREENPISTE_VERSION instead"
+    warn "AMONT_AGENT_VERSION is the old name: set GREENBELAY_VERSION instead"
 fi
 VERSION="${VERSION:-latest}"
 
@@ -69,7 +69,7 @@ target() {
             if ldd --version 2>&1 | grep -qi musl; then libc=musl; else libc=gnu; fi
             case "$arch" in
                 x86_64|amd64)  echo "x86_64-unknown-linux-$libc" ;;
-                aarch64|arm64) [ "$libc" = "musl" ] && die "no aarch64 musl build yet — build from source with cargo install greenpiste"
+                aarch64|arm64) [ "$libc" = "musl" ] && die "no aarch64 musl build yet — build from source with cargo install greenbelay"
                                echo "aarch64-unknown-linux-gnu" ;;
                 *) die "unsupported architecture: $arch" ;;
             esac
@@ -103,16 +103,16 @@ resolve_version() {
     # handing you a tarball full of HTML.
     tag=$(fetch "https://api.github.com/repos/$REPO/releases/latest" \
         | sed -n 's/.*"tag_name" *: *"\([^"]*\)".*/\1/p' | head -n 1)
-    [ -n "$tag" ] || die "could not determine the latest release (rate limited? set GREENPISTE_VERSION=vX.Y.Z)"
+    [ -n "$tag" ] || die "could not determine the latest release (rate limited? set GREENBELAY_VERSION=vX.Y.Z)"
     echo "${tag#v}"
 }
 
 main() {
-    printf '\n  greenpiste installer\n\n'
+    printf '\n  greenbelay installer\n\n'
 
     t=$(target)
     v=$(resolve_version)
-    name="greenpiste-${v}-${t}"
+    name="greenbelay-${v}-${t}"
     base="https://github.com/$REPO/releases/download/v${v}"
 
     say "version:  $v"
@@ -126,12 +126,12 @@ main() {
     trap 'exit 130' INT
     trap 'exit 143' TERM
 
-    if [ -n "${GREENPISTE_ARCHIVE_DIR:-}" ]; then
+    if [ -n "${GREENBELAY_ARCHIVE_DIR:-}" ]; then
         # A local archive (the release's standalone check): the same checks
         # as a download, read from a directory instead of the release.
-        say "from:     $GREENPISTE_ARCHIVE_DIR"
-        cp "$GREENPISTE_ARCHIVE_DIR/${name}.tar.gz" "$tmp/${name}.tar.gz" \
-            || die "no ${name}.tar.gz in $GREENPISTE_ARCHIVE_DIR"
+        say "from:     $GREENBELAY_ARCHIVE_DIR"
+        cp "$GREENBELAY_ARCHIVE_DIR/${name}.tar.gz" "$tmp/${name}.tar.gz" \
+            || die "no ${name}.tar.gz in $GREENBELAY_ARCHIVE_DIR"
     else
         say "downloading…"
         fetch_to "$base/${name}.tar.gz" "$tmp/${name}.tar.gz" \
@@ -142,8 +142,8 @@ main() {
     # your credentials and reads every staged file; verifying what it is before
     # putting it in that position is the whole argument the project makes about
     # its own dependencies, applied to itself.
-    if if [ -n "${GREENPISTE_ARCHIVE_DIR:-}" ]; then
-        cp "$GREENPISTE_ARCHIVE_DIR/SHA256SUMS" "$tmp/SHA256SUMS" 2> /dev/null
+    if if [ -n "${GREENBELAY_ARCHIVE_DIR:-}" ]; then
+        cp "$GREENBELAY_ARCHIVE_DIR/SHA256SUMS" "$tmp/SHA256SUMS" 2> /dev/null
     else
         fetch_to "$base/SHA256SUMS" "$tmp/SHA256SUMS" 2> /dev/null
     fi; then
@@ -172,49 +172,38 @@ main() {
     # Whether this is an upgrade decides what to say at the end: the
     # first-install steps are wrong advice the second time.
     upgrading=0
-    [ -x "$BIN_DIR/greenpiste" ] && upgrading=1
-    from_old=0
-    [ "$upgrading" -eq 0 ] && [ -x "$BIN_DIR/amont-agent" ] && from_old=1
+    [ -x "$BIN_DIR/greenbelay" ] && upgrading=1
     mkdir -p "$BIN_DIR"
-    b=greenpiste
+    b=greenbelay
     [ -f "$tmp/$name/$b" ] || die "the archive holds no $b"
     # Write to a temporary name and rename over the destination: replacing
     # a RUNNING binary in place fails on some platforms, and rename is
-    # atomic, so a half-copied binary never exists. The old name,
-    # amont-agent, is placed the same way as a copy (never a symlink: an
-    # older installer writing over it would write through to greenpiste),
-    # so hook entries baked to its path keep working.
-    for dest in greenpiste amont-agent; do
-        cp "$tmp/$name/$b" "$BIN_DIR/.$dest.new"
-        chmod 755 "$BIN_DIR/.$dest.new"
-        mv "$BIN_DIR/.$dest.new" "$BIN_DIR/$dest"
-    done
-    ok "installed $BIN_DIR/greenpiste (and amont-agent, a copy)"
+    # atomic, so a half-copied binary never exists. No old-name binary is
+    # placed (ADR-0071).
+    cp "$tmp/$name/$b" "$BIN_DIR/.$b.new"
+    chmod 755 "$BIN_DIR/.$b.new"
+    mv "$BIN_DIR/.$b.new" "$BIN_DIR/$b"
+    ok "installed $BIN_DIR/greenbelay"
 
     printf '\n'
     case ":$PATH:" in
         *":$BIN_DIR:"*) ;;
-        *) warn "$BIN_DIR is not on your PATH — add it, or you will not be able to run greenpiste yourself" ;;
+        *) warn "$BIN_DIR is not on your PATH — add it, or you will not be able to run greenbelay yourself" ;;
     esac
 
     if [ "$upgrading" -eq 1 ]; then
         printf '  Upgraded. The settings.json entry points at this path, so\n'
         printf '  nothing needs rewiring. Confirm it still fires:\n\n'
-        printf '    greenpiste doctor\n\n'
-    elif [ "$from_old" -eq 1 ]; then
-        printf '  Upgraded from amont-agent, which stays as a copy, so the hooks\n'
-        printf '  keep firing. Move them to the new name once:\n\n'
-        printf '    greenpiste install --write\n'
-        printf '    greenpiste doctor\n\n'
+        printf '    greenbelay doctor\n\n'
     else
         printf '  Installed, and wired into nothing. The guard does not run until\n'
         printf '  Claude Code is told about it:\n\n'
-        printf '    greenpiste install          # print the settings block, write nothing\n'
-        printf '    greenpiste install --write  # merge it into ~/.claude/settings.json\n'
-        printf '    greenpiste doctor           # installed, runnable, and actually firing?\n\n'
+        printf '    greenbelay install          # print the settings block, write nothing\n'
+        printf '    greenbelay install --write  # merge it into ~/.claude/settings.json\n'
+        printf '    greenbelay doctor           # installed, runnable, and actually firing?\n\n'
         printf '  Every rule but pipe-to-tail ships as observe, so nothing is\n'
         printf '  refused until you have seen what it would have caught:\n\n'
-        printf '    greenpiste status\n\n'
+        printf '    greenbelay status\n\n'
     fi
 }
 

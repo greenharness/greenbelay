@@ -95,20 +95,20 @@ function describe(failure: RelayFailure): string {
   }
 }
 
-// The directory greenpiste keeps its state in when `stateDir` is not set, the
+// The directory greenbelay keeps its state in when `stateDir` is not set, the
 // way its settings::state_root() finds it: the XDG state home, else a `state`
 // directory beside a relocated Claude config, else ~/.local/state under HOME or
 // USERPROFILE. With none of them there is no place to keep a log: `undefined`.
 async function defaultStateDir($: Engine): Promise<string | undefined> {
   const xdg = (await $.env.get('XDG_STATE_HOME')) ?? ''
-  if (xdg !== '') return `${xdg}/greenpiste`
+  if (xdg !== '') return `${xdg}/greenbelay`
 
   const config = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? ''
-  if (config !== '') return `${config}/state/greenpiste`
+  if (config !== '') return `${config}/state/greenbelay`
 
   const nonEmpty = (value: string | undefined) => (value === '' ? undefined : value)
   const home = nonEmpty(await $.env.get('HOME')) ?? nonEmpty(await $.env.get('USERPROFILE')) ?? ''
-  return home !== '' ? `${home}/.local/state/greenpiste` : undefined
+  return home !== '' ? `${home}/.local/state/greenbelay` : undefined
 }
 
 async function logFile($: Engine, relayer: Relayer, sessionId: string): Promise<string | undefined> {

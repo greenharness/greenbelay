@@ -11,7 +11,7 @@ target the formula wants that the release did not build, a rewrite count
 other than what the formula carries, a stale version string surviving.
 
 It also writes the caveat's list of rules that refuse by default, from the
-released binary's own `greenpiste rules --json`: the `%w[...]` line inside
+released binary's own `greenbelay rules --json`: the `%w[...]` line inside
 the formula's `def refusing_by_default`. That list was hand-written once
 and went stale for four releases (it said only pipe-to-tail refuses, while
 plan-review-panel had shipped at deny since 2.22.0); the formula's `brew
@@ -21,7 +21,7 @@ Idempotent on purpose: re-run against a formula already at the version it
 produces byte-identical output, so the workflow's "nothing to commit" path
 is how a resumed release run no-ops.
 
-Usage: bump-tap.py <version> <SHA256SUMS> <rules.json> <Formula/greenpiste.rb>
+Usage: bump-tap.py <version> <SHA256SUMS> <rules.json> <Formula/greenbelay.rb>
 """
 
 import json
@@ -33,7 +33,7 @@ from typing import NoReturn
 
 # Where the release assets live. The formula may still name the old owner
 # (`fredericrous/amont-agent`); the patterns accept either and write this one.
-REPO = "greenharness/greenpiste"
+REPO = "greenharness/greenbelay"
 
 def fail(message: str) -> NoReturn:
     print(f"bump-tap: {message}", file=sys.stderr)
@@ -84,15 +84,15 @@ def main() -> None:
             continue
         sha, name = parts
         # The amont-agent-* alias archives are the same binary under the old
-        # name; only the greenpiste-* archives feed the formula.
-        m = re.fullmatch(r"greenpiste-([0-9.]+)-(.+?)\.(?:tar\.gz|zip)", name)
+        # name; only the greenbelay-* archives feed the formula.
+        m = re.fullmatch(r"greenbelay-([0-9.]+)-(.+?)\.(?:tar\.gz|zip)", name)
         if not m:
             continue
         if m.group(1) != version:
             fail(f"SHA256SUMS is for {m.group(1)}, not {version} — wrong release?")
         sums[m.group(2)] = (sha, name)
     if not sums:
-        fail(f"no greenpiste checksums parsed from {sums_path}")
+        fail(f"no greenbelay checksums parsed from {sums_path}")
 
     formula = pathlib.Path(formula_path)
     text = formula.read_text()
@@ -114,8 +114,8 @@ def main() -> None:
         )
 
     pair = re.compile(
-        r'url "https://github\.com/(?:fredericrous/amont-agent|greenharness/greenpiste)/releases/'
-        r'download/v[0-9.]+/(?:amont-agent|greenpiste)-[0-9.]+-(?P<target>[a-z0-9_-]+)\.tar\.gz"'
+        r'url "https://github\.com/(?:fredericrous/amont-agent|greenharness/greenbelay)/releases/'
+        r'download/v[0-9.]+/(?:amont-agent|greenbelay)-[0-9.]+-(?P<target>[a-z0-9_-]+)\.tar\.gz"'
         r'(?P<mid>\s+)sha256 "[0-9a-f]{64}"'
     )
     text, n = pair.subn(rewrite, text)
@@ -125,15 +125,15 @@ def main() -> None:
     # The repository moved (2026-11-08); a formula still on the old owner's
     # homepage is pointed at the new one, and a current one is left as it is.
     text, n_home = re.subn(
-        r'homepage "https://github\.com/(?:fredericrous/amont-agent|greenharness/greenpiste)"',
+        r'homepage "https://github\.com/(?:fredericrous/amont-agent|greenharness/greenbelay)"',
         f'homepage "https://github.com/{REPO}"',
         text,
         count=1,
     )
     if n_home != 1:
-        fail("the formula carries no homepage line naming fredericrous/amont-agent or greenharness/greenpiste")
+        fail("the formula carries no homepage line naming fredericrous/amont-agent or greenharness/greenbelay")
 
-    stale = set(re.findall(r"(?:amont-agent|greenpiste)-([0-9.]+)-", text)) - {version}
+    stale = set(re.findall(r"(?:amont-agent|greenbelay)-([0-9.]+)-", text)) - {version}
     if stale:
         fail(f"stale release versions survived the rewrite: {stale}")
 

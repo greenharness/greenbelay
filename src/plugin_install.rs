@@ -7,9 +7,9 @@
 
 use std::path::PathBuf;
 
-use greenpiste_guard::settings::{self, PluginPlacement};
+use greenbelay_guard::settings::{self, PluginPlacement};
 
-pub const MARKETPLACE: &str = greenpiste_guard::names::DATA_DIR;
+pub const MARKETPLACE: &str = greenbelay_guard::names::DATA_DIR;
 pub const PLUGIN: &str = "clear-relay";
 
 const MARKETPLACE_JSON: &str = r#"{

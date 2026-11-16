@@ -1,4 +1,4 @@
-# The verification harness for `crates/greenpiste-guard/src/analysis/`: a SEPARATE cargo workspace.
+# The verification harness for `crates/greenbelay-guard/src/analysis/`: a SEPARATE cargo workspace.
 #
 # It lives in the repository but outside the crate on purpose. amont-agent
 # ships with serde/serde_json only; this harness needs a third-party bash
@@ -9,7 +9,7 @@
 # the root `make check` never compiles it.
 #
 # It exercises the analyzer ONLY through the built binary
-# (`amont-agent analyze`): `GREENPISTE_BIN` if set, otherwise the tests
+# (`amont-agent analyze`): `GREENBELAY_BIN` if set, otherwise the tests
 # build the repository's own debug binary once and use that.
 #
 # Run (needs bash and zsh on PATH):

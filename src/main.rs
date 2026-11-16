@@ -18,64 +18,64 @@
 //! git remote named `install` once ran the installer mid-push; the same class
 //! of accident is available to anything that scans argv for a verb.
 
-use greenpiste_guard::activity;
-use greenpiste_guard::analysis;
-use greenpiste_guard::assertions;
-use greenpiste_guard::backtest;
-use greenpiste_guard::civil;
-use greenpiste_guard::compliance;
-use greenpiste_guard::corpus;
-use greenpiste_guard::decision;
-use greenpiste_guard::doctor;
-use greenpiste_guard::git;
-use greenpiste_guard::graduate;
-use greenpiste_guard::guidance;
-use greenpiste_guard::harness_review;
-use greenpiste_guard::migrate_plugin;
-use greenpiste_guard::names::BIN;
-use greenpiste_process::attestations;
-use greenpiste_process::block_fingerprint;
-use greenpiste_process::block_registry;
-use greenpiste_process::content_id;
+use greenbelay_guard::activity;
+use greenbelay_guard::analysis;
+use greenbelay_guard::assertions;
+use greenbelay_guard::backtest;
+use greenbelay_guard::civil;
+use greenbelay_guard::compliance;
+use greenbelay_guard::corpus;
+use greenbelay_guard::decision;
+use greenbelay_guard::doctor;
+use greenbelay_guard::git;
+use greenbelay_guard::graduate;
+use greenbelay_guard::guidance;
+use greenbelay_guard::harness_review;
+use greenbelay_guard::migrate_plugin;
+use greenbelay_guard::names::BIN;
+use greenbelay_process::attestations;
+use greenbelay_process::block_fingerprint;
+use greenbelay_process::block_registry;
+use greenbelay_process::content_id;
 mod hook;
 mod open;
 mod plugin_install;
-use greenpiste_guard::journal;
-use greenpiste_guard::json;
-use greenpiste_guard::lsp;
-use greenpiste_guard::mine;
-use greenpiste_guard::payload;
-use greenpiste_guard::push_target;
+use greenbelay_guard::journal;
+use greenbelay_guard::json;
+use greenbelay_guard::lsp;
+use greenbelay_guard::mine;
+use greenbelay_guard::payload;
+use greenbelay_guard::push_target;
 #[cfg(unix)]
-use greenpiste_guard::quiet;
-use greenpiste_process::clear_boundary;
-use greenpiste_process::code_review;
-use greenpiste_process::impl_review_outcomes;
-use greenpiste_process::implementation_review;
-use greenpiste_process::implementation_review_rule;
-use greenpiste_process::plan_apply;
-use greenpiste_process::plan_phases;
-use greenpiste_process::plan_review;
-use greenpiste_process::plan_text;
-use greenpiste_process::plans;
-use greenpiste_process::preview;
-use greenpiste_process::push_preview;
-use greenpiste_process::review_brief;
-use greenpiste_process::review_outcomes;
+use greenbelay_guard::quiet;
+use greenbelay_process::clear_boundary;
+use greenbelay_process::code_review;
+use greenbelay_process::impl_review_outcomes;
+use greenbelay_process::implementation_review;
+use greenbelay_process::implementation_review_rule;
+use greenbelay_process::plan_apply;
+use greenbelay_process::plan_phases;
+use greenbelay_process::plan_review;
+use greenbelay_process::plan_text;
+use greenbelay_process::plans;
+use greenbelay_process::preview;
+use greenbelay_process::push_preview;
+use greenbelay_process::review_brief;
+use greenbelay_process::review_outcomes;
 mod rule_table;
 mod suppressions;
-use greenpiste_guard::rules;
-use greenpiste_guard::session_state;
-use greenpiste_guard::settings;
-use greenpiste_guard::shape;
-use greenpiste_guard::shell;
-use greenpiste_guard::shim;
-use greenpiste_guard::stale;
-use greenpiste_guard::stance;
-use greenpiste_guard::transcript;
-use greenpiste_guard::ui;
-use greenpiste_process::board;
-use greenpiste_process::shipped;
+use greenbelay_guard::rules;
+use greenbelay_guard::session_state;
+use greenbelay_guard::settings;
+use greenbelay_guard::shape;
+use greenbelay_guard::shell;
+use greenbelay_guard::shim;
+use greenbelay_guard::stale;
+use greenbelay_guard::stance;
+use greenbelay_guard::transcript;
+use greenbelay_guard::ui;
+use greenbelay_process::board;
+use greenbelay_process::shipped;
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -84,7 +84,7 @@ use std::process::ExitCode;
 const USAGE: &str = concat!(
     "\
 usage: ",
-    greenpiste_guard::bin!(),
+    greenbelay_guard::bin!(),
     " <command>
 
   hook                  read a Claude Code payload on stdin, decide
@@ -132,7 +132,7 @@ usage: ",
   suppressions --staged judge the staged change: a lint suppression it adds
                         without a reason blocks (exit 1); the pre-commit gate
   open <url|path>       open a page for the person, through the opener in
-                        `git config --global greenpiste.opener`
+                        `git config --global greenbelay.opener`
   plan-sha [--short] [--block [--lang <l>]] [--legacy] [--] <file|->
                         the sha256 of a plan's canonical body, as reviewed
   plan-panel <plan.md>  the review agents a plan still needs, as the
@@ -152,7 +152,7 @@ usage: ",
                         apply the reviewers' Patches to a plan with no model
                         (accepted findings on stdin; exit 3 = some unmatched)
   attestations [--apply]
-                        what ~/.claude/greenpiste/attestations keeps and
+                        what ~/.claude/greenbelay/attestations keeps and
                         why; --apply moves the rest to a 7-day trash
   tree-sha [--block] [-C <dir>] [--] [<rev>]
                         the content id an implementation review and a
@@ -368,7 +368,7 @@ const MIGRATE_WAIT_CAP: std::time::Duration = std::time::Duration::from_secs(30)
 
 /// A test seam: how long `install` waits for the migration lock, in
 /// milliseconds.
-const ENV_MIGRATE_WAIT_MS: &str = greenpiste_guard::env_var!("TEST_MIGRATE_WAIT_MS");
+const ENV_MIGRATE_WAIT_MS: &str = greenbelay_guard::env_var!("TEST_MIGRATE_WAIT_MS");
 
 /// The migration mode of a subcommand. `migrate` and `doctor` report on the
 /// migration themselves; a command asked for help or the version, or asked
@@ -403,13 +403,13 @@ fn preflight_migration(name: &Sub, args: &[OsString]) -> Result<(), String> {
     match migration_mode(name, args) {
         MigrationMode::Skip => Ok(()),
         MigrationMode::Zero => {
-            let failed = greenpiste_guard::migrate::preflight();
+            let failed = greenbelay_guard::migrate::preflight();
             if failed && !matches!(name, Sub::Hook) {
                 eprintln!("{BIN}: migration failed (see {BIN} doctor); run {BIN} migrate");
             }
             Ok(())
         }
-        MigrationMode::Capped(wait) => greenpiste_guard::migrate::settle(wait).map_err(|error| {
+        MigrationMode::Capped(wait) => greenbelay_guard::migrate::settle(wait).map_err(|error| {
             format!(
                 "{error}\nnothing was installed; fix what it names, then run `{BIN} install` again"
             )
@@ -417,15 +417,15 @@ fn preflight_migration(name: &Sub, args: &[OsString]) -> Result<(), String> {
     }
 }
 
-/// What `greenpiste migrate` was asked to do.
+/// What `greenbelay migrate` was asked to do.
 struct MigrateRequest {
-    direction: greenpiste_guard::migrate::Direction,
+    direction: greenbelay_guard::migrate::Direction,
     dry_run: bool,
 }
 
 /// The request in `args`, or the exit code of `--help` or a usage error.
 fn parse_migrate(args: &[OsString]) -> Result<MigrateRequest, ExitCode> {
-    use greenpiste_guard::migrate::Direction;
+    use greenbelay_guard::migrate::Direction;
     let mut request = MigrateRequest {
         direction: Direction::Forward,
         dry_run: false,
@@ -437,7 +437,7 @@ fn parse_migrate(args: &[OsString]) -> Result<MigrateRequest, ExitCode> {
             "--help" | "-h" => {
                 println!(concat!(
                     "usage: ",
-                    greenpiste_guard::bin!(),
+                    greenbelay_guard::bin!(),
                     " migrate [--reverse] [--dry-run]"
                 ));
                 println!();
@@ -456,7 +456,7 @@ fn parse_migrate(args: &[OsString]) -> Result<MigrateRequest, ExitCode> {
 }
 
 fn run_migrate(args: &[OsString]) -> ExitCode {
-    use greenpiste_guard::migrate::{self, MigrateError};
+    use greenbelay_guard::migrate::{self, MigrateError};
     let request = match parse_migrate(args) {
         Ok(request) => request,
         Err(code) => return code,
@@ -504,9 +504,9 @@ fn run_migrate(args: &[OsString]) -> ExitCode {
     }
     // Say once that another process holds the lock before waiting for it; a
     // lock the probe gets is released at once.
-    let probe = greenpiste_guard::lock::lock_within(
+    let probe = greenbelay_guard::lock::lock_within(
         &env.config_dir
-            .join(greenpiste_guard::names::MIGRATE_LOCK_FILE),
+            .join(greenbelay_guard::names::MIGRATE_LOCK_FILE),
         std::time::Duration::ZERO,
     );
     if matches!(probe, Ok(None)) {
@@ -528,7 +528,7 @@ fn run_migrate(args: &[OsString]) -> ExitCode {
 }
 
 /// How the registry diagnostics are phrased. Both go to stderr: they are
-/// commands for the person to run, never something greenpiste does.
+/// commands for the person to run, never something greenbelay does.
 #[derive(Clone, Copy)]
 enum RegistryVoice {
     /// An explicit run that settled: say what to run.
@@ -539,7 +539,7 @@ enum RegistryVoice {
 
 /// Say what Claude Code's plugin registry needs, never doing it.
 fn print_registry(state: &migrate_plugin::RegistryState, voice: RegistryVoice) {
-    use greenpiste_guard::ui::sanitize;
+    use greenbelay_guard::ui::sanitize;
     let Some(report) = state.report() else {
         return;
     };
@@ -568,21 +568,21 @@ fn print_registry(state: &migrate_plugin::RegistryState, voice: RegistryVoice) {
 }
 
 /// What a finished state is called in a "nothing to do" line.
-fn already(direction: greenpiste_guard::migrate::Direction) -> &'static str {
+fn already(direction: greenbelay_guard::migrate::Direction) -> &'static str {
     match direction {
-        greenpiste_guard::migrate::Direction::Forward => "already migrated",
-        greenpiste_guard::migrate::Direction::Reverse => "already reversed",
+        greenbelay_guard::migrate::Direction::Forward => "already migrated",
+        greenbelay_guard::migrate::Direction::Reverse => "already reversed",
     }
 }
 
 /// The closing line of a run, after its step lines are printed; or the exit
 /// code of a run that did not finish, after its error is printed.
 fn settled_verdict(
-    env: &greenpiste_guard::migrate::Env,
-    direction: greenpiste_guard::migrate::Direction,
-    outcome: Result<greenpiste_guard::migrate::Outcome, greenpiste_guard::migrate::MigrateError>,
+    env: &greenbelay_guard::migrate::Env,
+    direction: greenbelay_guard::migrate::Direction,
+    outcome: Result<greenbelay_guard::migrate::Outcome, greenbelay_guard::migrate::MigrateError>,
 ) -> Result<String, ExitCode> {
-    use greenpiste_guard::migrate::{self, Direction, MigrateError, Outcome};
+    use greenbelay_guard::migrate::{self, Direction, MigrateError, Outcome};
     match outcome {
         Ok(Outcome::Migrated { steps, elapsed }) => {
             for step in &steps {
@@ -607,7 +607,7 @@ fn settled_verdict(
             eprintln!(
                 "{BIN}: another process holds the migration lock {}; retry when it finishes",
                 env.config_dir
-                    .join(greenpiste_guard::names::MIGRATE_LOCK_FILE)
+                    .join(greenbelay_guard::names::MIGRATE_LOCK_FILE)
                     .display()
             );
             Err(ExitCode::FAILURE)
@@ -640,8 +640,8 @@ fn settled_verdict(
 /// An explicit run inside a git repository also renames that repository's own
 /// config keys; never a hook's job.
 fn migrate_local_repository(
-    env: &greenpiste_guard::migrate::Env,
-    direction: greenpiste_guard::migrate::Direction,
+    env: &greenbelay_guard::migrate::Env,
+    direction: greenbelay_guard::migrate::Direction,
 ) -> Result<(), String> {
     let Ok(here) = std::env::current_dir() else {
         return Ok(());
@@ -654,7 +654,7 @@ fn migrate_local_repository(
     if !inside {
         return Ok(());
     }
-    greenpiste_guard::migrate_config::migrate_local(env, &here, direction)
+    greenbelay_guard::migrate_config::migrate_local(env, &here, direction)
         .map(drop)
         .map_err(|error| error.to_string())
 }
@@ -730,7 +730,7 @@ fn main() -> ExitCode {
         }
         Invocation::Version => {
             println!(
-                concat!(greenpiste_guard::bin!(), " {}"),
+                concat!(greenbelay_guard::bin!(), " {}"),
                 env!("CARGO_PKG_VERSION")
             );
             ExitCode::SUCCESS
@@ -759,7 +759,7 @@ fn main() -> ExitCode {
                 if args.iter().any(|a| a == "--help" || a == "-h") {
                     println!(concat!(
                         "usage: ",
-                        greenpiste_guard::bin!(),
+                        greenbelay_guard::bin!(),
                         " doctor [--json]"
                     ));
                     println!();
@@ -770,7 +770,7 @@ fn main() -> ExitCode {
                 if let Some(bad) = args.iter().find(|a| *a != "--json") {
                     eprintln!(
                         concat!(
-                            greenpiste_guard::bin!(),
+                            greenbelay_guard::bin!(),
                             ": doctor takes only --json, not {}"
                         ),
                         bad.to_string_lossy()
@@ -783,7 +783,7 @@ fn main() -> ExitCode {
                 findings.push(plan_root_finding());
                 findings.push(open::opener_finding());
                 if let Ok(project) = std::env::current_dir() {
-                    findings.extend(greenpiste_process::agents::review_gaps(&project));
+                    findings.extend(greenbelay_process::agents::review_gaps(&project));
                 }
                 let healthy = if args.iter().any(|a| a == "--json") {
                     println!(
@@ -832,7 +832,7 @@ fn main() -> ExitCode {
                     Err(e) => {
                         eprintln!(
                             "{}: plan-review: cannot write output: {e}",
-                            greenpiste_guard::names::BIN
+                            greenbelay_guard::names::BIN
                         );
                         ExitCode::from(1)
                     }
@@ -858,7 +858,7 @@ fn main() -> ExitCode {
             #[cfg(not(unix))]
             Sub::Quiet => {
                 eprintln!(concat!(
-                    greenpiste_guard::bin!(),
+                    greenbelay_guard::bin!(),
                     ": quiet is not supported on this platform"
                 ));
                 ExitCode::from(2)
@@ -1020,7 +1020,7 @@ fn run_backtest(args: &[OsString], explain: bool) -> ExitCode {
             1 => f.only.push(f.rest[0].clone()),
             _ => {
                 eprintln!(concat!(
-                    greenpiste_guard::bin!(),
+                    greenbelay_guard::bin!(),
                     ": explain needs exactly one rule"
                 ));
                 return ExitCode::from(2);
@@ -1037,7 +1037,7 @@ fn run_backtest(args: &[OsString], explain: bool) -> ExitCode {
     let roots = match transcript::roots(&f.transcripts) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!(concat!(greenpiste_guard::bin!(), ": {}"), e.explain());
+            eprintln!(concat!(greenbelay_guard::bin!(), ": {}"), e.explain());
             return ExitCode::from(2);
         }
     };
@@ -1058,7 +1058,7 @@ fn run_backtest(args: &[OsString], explain: bool) -> ExitCode {
         Some("novelty") if explain => true,
         Some("novelty") => {
             eprintln!(concat!(
-                greenpiste_guard::bin!(),
+                greenbelay_guard::bin!(),
                 ": --rank novelty is for `explain`, which prints the matches"
             ));
             return ExitCode::from(2);
@@ -1115,7 +1115,7 @@ fn run_backtest(args: &[OsString], explain: bool) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!(concat!(greenpiste_guard::bin!(), ": {}"), e.explain());
+            eprintln!(concat!(greenbelay_guard::bin!(), ": {}"), e.explain());
             ExitCode::from(2)
         }
     }
@@ -1155,7 +1155,7 @@ fn rank_by_novelty(report: &mut backtest::Report, n: usize) {
 /// that says a model has not been reviewed yet.
 fn run_harness_review(args: &[OsString]) -> ExitCode {
     if args.iter().any(|a| a == "--help" || a == "-h") {
-        println!(concat!("usage: ", greenpiste_guard::bin!(), " harness-review [--json] [--check] [--model <id>] [--transcripts <dir>] [--since <date>] [--out <dir>]"));
+        println!(concat!("usage: ", greenbelay_guard::bin!(), " harness-review [--json] [--check] [--model <id>] [--transcripts <dir>] [--since <date>] [--out <dir>]"));
         return ExitCode::SUCCESS;
     }
     let f = match flags(args) {
@@ -1171,7 +1171,7 @@ fn run_harness_review(args: &[OsString]) -> ExitCode {
     }
     let Some(journal_dir) = journal::dir() else {
         eprintln!(concat!(
-            greenpiste_guard::bin!(),
+            greenbelay_guard::bin!(),
             ": no home directory, so no journal directory"
         ));
         return ExitCode::from(2);
@@ -1179,7 +1179,7 @@ fn run_harness_review(args: &[OsString]) -> ExitCode {
     let roots = match transcript::roots(&f.transcripts) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!(concat!(greenpiste_guard::bin!(), ": {}"), e.explain());
+            eprintln!(concat!(greenbelay_guard::bin!(), ": {}"), e.explain());
             return ExitCode::from(2);
         }
     };
@@ -1200,7 +1200,7 @@ fn run_harness_review(args: &[OsString]) -> ExitCode {
                 ExitCode::FAILURE
             }
             Err(e) => {
-                eprintln!(concat!(greenpiste_guard::bin!(), ": {}"), e.explain());
+                eprintln!(concat!(greenbelay_guard::bin!(), ": {}"), e.explain());
                 ExitCode::from(2)
             }
         };
@@ -1223,7 +1223,7 @@ fn run_harness_review(args: &[OsString]) -> ExitCode {
     ) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!(concat!(greenpiste_guard::bin!(), ": {}"), e.explain());
+            eprintln!(concat!(greenbelay_guard::bin!(), ": {}"), e.explain());
             return ExitCode::from(2);
         }
     };
@@ -1264,7 +1264,7 @@ fn run_compliance(
         .collect();
     if rules.is_empty() {
         eprintln!(concat!(
-            greenpiste_guard::bin!(),
+            greenbelay_guard::bin!(),
             ": --compliance is about rules, and none were selected"
         ));
         return ExitCode::from(2);
@@ -1282,7 +1282,7 @@ fn run_compliance(
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!(concat!(greenpiste_guard::bin!(), ": {}"), e.explain());
+            eprintln!(concat!(greenbelay_guard::bin!(), ": {}"), e.explain());
             ExitCode::from(2)
         }
     }
@@ -1291,7 +1291,7 @@ fn run_compliance(
 const OUTPUT_AUDIT_USAGE: &str = concat!(
     "\
 usage: ",
-    greenpiste_guard::bin!(),
+    greenbelay_guard::bin!(),
     " output-audit --since <UTC> --until <UTC>
                                 [--transcripts <dir>]... [--json]
 
@@ -1320,7 +1320,7 @@ JSON `coverage.complete` say so); 1 when the transcripts cannot be found;
 );
 
 fn run_output_audit(args: &[OsString]) -> ExitCode {
-    use greenpiste_guard::output_audit::{self, Instant, Window};
+    use greenbelay_guard::output_audit::{self, Instant, Window};
     let args: Vec<String> = args
         .iter()
         .map(|a| a.to_string_lossy().into_owned())
@@ -1384,7 +1384,7 @@ fn run_output_audit(args: &[OsString]) -> ExitCode {
     let roots = match transcript::roots(&roots) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!(concat!(greenpiste_guard::bin!(), ": {}"), e.explain());
+            eprintln!(concat!(greenbelay_guard::bin!(), ": {}"), e.explain());
             return ExitCode::from(1);
         }
     };
@@ -1416,8 +1416,8 @@ fn scaled(count: u64) -> String {
 /// The aggregate as tables under 80 columns, largest result bytes first;
 /// exact integers are in `--json`.
 fn output_audit_text(
-    audit: &greenpiste_guard::output_audit::Audit,
-    window: &greenpiste_guard::output_audit::Window,
+    audit: &greenbelay_guard::output_audit::Audit,
+    window: &greenbelay_guard::output_audit::Window,
 ) -> String {
     let mut out = format!(
         "window {} .. {} (until excluded)\n{} sessions, {} agent launches\n",
@@ -1534,7 +1534,7 @@ fn run_mine(args: &[OsString]) -> ExitCode {
     };
     if !f.only.is_empty() {
         eprintln!(concat!(
-            greenpiste_guard::bin!(),
+            greenbelay_guard::bin!(),
             ": mine looks for what no rule names yet, so --rule means nothing"
         ));
         return ExitCode::from(2);
@@ -1549,7 +1549,7 @@ fn run_mine(args: &[OsString]) -> ExitCode {
     let roots = match transcript::roots(&f.transcripts) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!(concat!(greenpiste_guard::bin!(), ": {}"), e.explain());
+            eprintln!(concat!(greenbelay_guard::bin!(), ": {}"), e.explain());
             return ExitCode::from(2);
         }
     };
@@ -1587,7 +1587,7 @@ fn run_mine(args: &[OsString]) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!(concat!(greenpiste_guard::bin!(), ": {}"), e.explain());
+            eprintln!(concat!(greenbelay_guard::bin!(), ": {}"), e.explain());
             ExitCode::from(2)
         }
     }
@@ -1606,7 +1606,7 @@ fn run_analyze(args: &[OsString]) -> ExitCode {
     };
     if f.rest.len() != 1 {
         eprintln!(concat!(
-            greenpiste_guard::bin!(),
+            greenbelay_guard::bin!(),
             ": analyze needs exactly one command, quoted"
         ));
         return ExitCode::from(2);
@@ -1651,7 +1651,7 @@ fn run_analyze(args: &[OsString]) -> ExitCode {
 const PLAN_SHA_USAGE: &str = concat!(
     "\
 usage: ",
-    greenpiste_guard::bin!(),
+    greenbelay_guard::bin!(),
     " plan-sha [--short] [--block [--lang <language>] [--slice <role>]] [--legacy] [--] <file|->
 
 The sha256 of what a plan says, which its review binds to (ADR-0022,
@@ -1705,7 +1705,7 @@ fn slice_lang(role: &str, lang: Option<&str>) -> Result<Option<String>, String> 
             plan_review::NAMED_ROLES.join(", ")
         ));
     }
-    if greenpiste_process::file_types::profile_reads(role).is_none() {
+    if greenbelay_process::file_types::profile_reads(role).is_none() {
         return Err(format!("{role} binds the whole body; drop --slice"));
     }
     match (role.strip_prefix("lang:"), lang) {
@@ -1759,9 +1759,9 @@ fn run_plan_sha(args: &[OsString]) -> ExitCode {
             _ if operands_only || a == "-" || !a.starts_with('-') => {
                 if file.is_some() {
                     eprintln!(concat!(
-                        greenpiste_guard::bin!(),
+                        greenbelay_guard::bin!(),
                         ": plan-sha takes one file; try `",
-                        greenpiste_guard::bin!(),
+                        greenbelay_guard::bin!(),
                         " plan-sha --help`"
                     ));
                     return ExitCode::from(2);
@@ -1781,7 +1781,7 @@ fn run_plan_sha(args: &[OsString]) -> ExitCode {
                 match args.get(i) {
                     Some(v) => lang = Some(v.clone()),
                     None => {
-                        eprintln!(concat!(greenpiste_guard::bin!(), ": --lang needs a value"));
+                        eprintln!(concat!(greenbelay_guard::bin!(), ": --lang needs a value"));
                         return ExitCode::from(2);
                     }
                 }
@@ -1791,7 +1791,7 @@ fn run_plan_sha(args: &[OsString]) -> ExitCode {
                 match args.get(i) {
                     Some(v) if !v.starts_with('-') => slice = Some(v.clone()),
                     _ => {
-                        eprintln!(concat!(greenpiste_guard::bin!(), ": --slice needs a value"));
+                        eprintln!(concat!(greenbelay_guard::bin!(), ": --slice needs a value"));
                         return ExitCode::from(2);
                     }
                 }
@@ -1818,7 +1818,7 @@ fn run_plan_sha(args: &[OsString]) -> ExitCode {
     } else if slice.is_some() && !block {
         Some(concat!(
             "--slice needs --block: ",
-            greenpiste_guard::bin!(),
+            greenbelay_guard::bin!(),
             " plan-sha --block --slice <role> <plan.md>"
         ))
     } else {
@@ -1856,7 +1856,7 @@ fn run_plan_sha(args: &[OsString]) -> ExitCode {
     };
     let sha = if legacy {
         eprintln!(concat!(
-            greenpiste_guard::bin!(),
+            greenbelay_guard::bin!(),
             ": --legacy is removed after the transition"
         ));
         plan_text::legacy_sha(&text)
@@ -1910,16 +1910,16 @@ fn run_plan_sha(args: &[OsString]) -> ExitCode {
 const BLOCK_USAGE: &str = concat!(
     "\
 usage: ",
-    greenpiste_guard::bin!(),
+    greenbelay_guard::bin!(),
     " block sha [-C <dir>] [--base <ref>]
        ",
-    greenpiste_guard::bin!(),
+    greenbelay_guard::bin!(),
     " block list [--json]
        ",
-    greenpiste_guard::bin!(),
+    greenbelay_guard::bin!(),
     " block revoke <fp> --because <text>
        ",
-    greenpiste_guard::bin!(),
+    greenbelay_guard::bin!(),
     " block reinstate <fp>
 
 The fingerprint of a branch's change, which a copy of a reviewed block
@@ -1976,9 +1976,9 @@ fn run_block(args: &[OsString]) -> ExitCode {
         }
         None => {
             eprintln!(concat!(
-                greenpiste_guard::bin!(),
+                greenbelay_guard::bin!(),
                 ": block: needs a verb; try `",
-                greenpiste_guard::bin!(),
+                greenbelay_guard::bin!(),
                 " block --help`"
             ));
             eprint!("{BLOCK_USAGE}");
@@ -2001,7 +2001,7 @@ fn block_base() -> Option<std::path::PathBuf> {
     let base = journal::dir();
     if base.is_none() {
         eprintln!(concat!(
-            greenpiste_guard::bin!(),
+            greenbelay_guard::bin!(),
             ": block: no home or CLAUDE_CONFIG_DIR to find the registry in"
         ));
     }
@@ -2150,7 +2150,7 @@ fn run_block_revoke(args: &[String]) -> ExitCode {
         return ExitCode::from(1);
     }
     eprintln!(
-        concat!(greenpiste_guard::bin!(), ": block: fp:{} is revoked"),
+        concat!(greenbelay_guard::bin!(), ": block: fp:{} is revoked"),
         &fingerprint[..12]
     );
     if let Some(pilot) = block_registry::source_entry(&base, &fingerprint).or_else(|| {
@@ -2246,7 +2246,7 @@ fn run_block_sha(args: &[String]) -> ExitCode {
     let Some(repo) = push_target::toplevel(&dir) else {
         eprintln!(
             concat!(
-                greenpiste_guard::bin!(),
+                greenbelay_guard::bin!(),
                 ": block: {} is not inside a git repository"
             ),
             dir.display()
@@ -2258,7 +2258,7 @@ fn run_block_sha(args: &[String]) -> ExitCode {
             .map(|(reference, _)| reference)
     }) else {
         eprintln!(concat!(
-            greenpiste_guard::bin!(),
+            greenbelay_guard::bin!(),
             ": block: no default branch of `origin` is known; pass --base <ref>"
         ));
         return ExitCode::from(1);
@@ -2295,7 +2295,7 @@ fn run_block_sha(args: &[String]) -> ExitCode {
 const TREE_SHA_USAGE: &str = concat!(
     "\
 usage: ",
-    greenpiste_guard::bin!(),
+    greenbelay_guard::bin!(),
     " tree-sha [--block] [-C <dir>] [--] [<rev>]
 
 The content id an implementation review and a preview approval bind to
@@ -2329,9 +2329,9 @@ fn run_tree_sha(args: &[OsString]) -> ExitCode {
             _ if operands_only || !a.starts_with('-') => {
                 if rev.is_some() {
                     eprintln!(concat!(
-                        greenpiste_guard::bin!(),
+                        greenbelay_guard::bin!(),
                         ": tree-sha takes one rev; try `",
-                        greenpiste_guard::bin!(),
+                        greenbelay_guard::bin!(),
                         " tree-sha --help`"
                     ));
                     return ExitCode::from(2);
@@ -2349,7 +2349,7 @@ fn run_tree_sha(args: &[OsString]) -> ExitCode {
                 match args.get(i) {
                     Some(v) => dir = Some(std::path::PathBuf::from(v)),
                     None => {
-                        eprintln!(concat!(greenpiste_guard::bin!(), ": -C needs a directory"));
+                        eprintln!(concat!(greenbelay_guard::bin!(), ": -C needs a directory"));
                         return ExitCode::from(2);
                     }
                 }
@@ -2367,7 +2367,7 @@ fn run_tree_sha(args: &[OsString]) -> ExitCode {
     let Some(repo) = push_target::toplevel(&dir) else {
         eprintln!(
             concat!(
-                greenpiste_guard::bin!(),
+                greenbelay_guard::bin!(),
                 ": {} is not inside a git repository"
             ),
             dir.display()
@@ -2386,7 +2386,7 @@ fn run_tree_sha(args: &[OsString]) -> ExitCode {
         let Some(name) = implementation_review::repo_name(&repo) else {
             eprintln!(
                 concat!(
-                    greenpiste_guard::bin!(),
+                    greenbelay_guard::bin!(),
                     ": the repository at {} has no name (git rev-parse --git-common-dir failed)"
                 ),
                 repo.display()
@@ -2403,7 +2403,7 @@ fn run_tree_sha(args: &[OsString]) -> ExitCode {
 const RULES_SHA_USAGE: &str = concat!(
     "\
 usage: ",
-    greenpiste_guard::bin!(),
+    greenbelay_guard::bin!(),
     " rules-sha [-C <dir>]
 
 The lowercase sha256 hex of the stdout of
@@ -2417,7 +2417,7 @@ command on stderr, nothing on stdout); 2 on a usage error.
 );
 
 const REVIEW_BRIEF_USAGE: &str = concat!("\
-usage: ", greenpiste_guard::bin!(), " review-brief [-C <dir>] [--plan <path>] [--base <ref>] [--profile <role>]
+usage: ", greenbelay_guard::bin!(), " review-brief [-C <dir>] [--plan <path>] [--base <ref>] [--profile <role>]
                                 [--interdiff <head>]
 
 The markdown brief an implementation reviewer is launched with: the
@@ -2428,7 +2428,7 @@ candidates, the code rules in full (a --profile brief: its own judge rules
 and an index of the rest, ADR-0065), the constraint rules, the decisions that
 bear on the changed files, and the plan's Non-goals. A repository with no
 .adr.yaml gets no rules line and a note that no decided code rules apply.
-adr-lint is `adr-lint` from PATH, or $GREENPISTE_ADR_LINT; when it cannot
+adr-lint is `adr-lint` from PATH, or $GREENBELAY_ADR_LINT; when it cannot
 answer, the block is <<<CANDIDATES unavailable>>> and the brief goes on.
 
   -C <dir>        the repository (default: the current directory)
@@ -2638,7 +2638,7 @@ fn run_review_brief(args: &[OsString]) -> ExitCode {
 const PLAN_PANEL_USAGE: &str = concat!(
     "\
 usage: ",
-    greenpiste_guard::bin!(),
+    greenbelay_guard::bin!(),
     " plan-panel [--code-review [-C <dir>] [--base <ref>]]
                               <plan.md>
 
@@ -2690,7 +2690,7 @@ fn plan_panel_branch(lines: &str, dir: Option<&str>, base: Option<&str>) -> Resu
     if dir.is_none() && base.is_none() {
         return Ok(lines.to_string());
     }
-    let hook = greenpiste_guard::stance::resolve(&implementation_review_rule::RULE);
+    let hook = greenbelay_guard::stance::resolve(&implementation_review_rule::RULE);
     let branch =
         code_review::branch_proposal(std::path::Path::new(dir.unwrap_or(".")), base, hook)?;
     for notice in &branch.notices {
@@ -2781,7 +2781,7 @@ fn run_plan_panel(args: &[OsString]) -> ExitCode {
             return ExitCode::from(1);
         }
         Ok(None) if !proposing => eprintln!(
-            concat!(greenpiste_guard::bin!(), ": plan-panel: no ## Code review section; run plan-panel --code-review and add it after ## Non-goals")
+            concat!(greenbelay_guard::bin!(), ": plan-panel: no ## Code review section; run plan-panel --code-review and add it after ## Non-goals")
         ),
         Ok(_) => {}
     }
@@ -2854,14 +2854,14 @@ fn run_plan_panel(args: &[OsString]) -> ExitCode {
 const PREVIEW_USAGE: &str = concat!(
     "\
 usage: ",
-    greenpiste_guard::bin!(),
+    greenbelay_guard::bin!(),
     " preview register --url <url> --guide <file.md> [--repo <dir>] [--open]
 
 Validate a localhost preview of the repository's HEAD, for the person to
 approve before a UI-changing push (ADR-0023), and render its guide to a
 page (work.preview-is-guided). Run it in the foreground as the last
 command of its line (`cd <wt> && npm run build && ",
-    greenpiste_guard::bin!(),
+    greenbelay_guard::bin!(),
     " preview
 register …` is fine; nothing piped, redirected or after it): the Claude
 Code hook binds its output to the session.
@@ -2889,7 +2889,7 @@ Code hook binds its output to the session.
                       Mockup mode: when the branch (from its merge base
                       with the default branch) commits a picked mockup's
                       artboards (`*.dc.html` under docs/mockups/<screen>, or
-                      `git config greenpiste.preview.mockups`), the guide
+                      `git config greenbelay.preview.mockups`), the guide
                       must also show, under ## Reference, the screen path,
                       `Viewport: <width>px · <theme>`, and the artboard
                       beside the built screen as files next to it
@@ -2916,9 +2916,9 @@ valid, 1 when refused (the reason on stderr), 2 on a usage error.
 
 example:
   ",
-    greenpiste_guard::bin!(),
+    greenbelay_guard::bin!(),
     " preview register --url http://localhost:5173/settings \\
-    --guide ~/.claude/greenpiste/attestations/abc1234/guide.md
+    --guide ~/.claude/greenbelay/attestations/abc1234/guide.md
 "
 );
 
@@ -2938,9 +2938,9 @@ fn run_preview(args: &[OsString]) -> ExitCode {
     if args[0] != "register" {
         eprintln!(
             concat!(
-                greenpiste_guard::bin!(),
+                greenbelay_guard::bin!(),
                 ": unknown preview command `{}`; try `",
-                greenpiste_guard::bin!(),
+                greenbelay_guard::bin!(),
                 " preview --help`"
             ),
             args[0]
@@ -2989,27 +2989,27 @@ fn run_preview(args: &[OsString]) -> ExitCode {
         (Some(g), None) => g,
         (Some(g), Some(_)) => {
             eprintln!(concat!(
-                greenpiste_guard::bin!(),
+                greenbelay_guard::bin!(),
                 ": --attestation is deprecated and ignored beside --guide"
             ));
             g
         }
         (None, Some(a)) => {
             eprintln!(
-                concat!(greenpiste_guard::bin!(), ": --attestation is deprecated; use --guide. It is read as the guide, and refused unless it is one (see `", greenpiste_guard::bin!(), " preview --help`)")
+                concat!(greenbelay_guard::bin!(), ": --attestation is deprecated; use --guide. It is read as the guide, and refused unless it is one (see `", greenbelay_guard::bin!(), " preview --help`)")
             );
             a
         }
         (None, None) => {
             eprintln!(
-                concat!(greenpiste_guard::bin!(), ": preview register needs --guide <file.md>: the person is guided, not quizzed (see `", greenpiste_guard::bin!(), " preview --help`)")
+                concat!(greenbelay_guard::bin!(), ": preview register needs --guide <file.md>: the person is guided, not quizzed (see `", greenbelay_guard::bin!(), " preview --help`)")
             );
             return ExitCode::from(2);
         }
     };
     let Some(url) = url else {
         eprintln!(concat!(
-            greenpiste_guard::bin!(),
+            greenbelay_guard::bin!(),
             ": preview register needs --url"
         ));
         return ExitCode::from(2);
@@ -3024,7 +3024,7 @@ fn run_preview(args: &[OsString]) -> ExitCode {
     match preview::register(&dir, &url, std::path::Path::new(&guide)) {
         Ok(mut r) => {
             if r.unchanged {
-                eprintln!(concat!(greenpiste_guard::bin!(), ": before and after are byte-identical; the hook approves this preview as unchanged when it binds it, if they still are"));
+                eprintln!(concat!(greenbelay_guard::bin!(), ": before and after are byte-identical; the hook approves this preview as unchanged when it binds it, if they still are"));
             }
             if open {
                 r.opened = Some(open_page(std::path::Path::new(&r.page)));
@@ -3042,7 +3042,7 @@ fn run_preview(args: &[OsString]) -> ExitCode {
 /// Open the registered page through the same opener as `amont-agent open`.
 /// Whatever happens, the registration stands: the page is a convenience.
 fn open_page(page: &std::path::Path) -> bool {
-    match open::open_url(&greenpiste_process::guide::file_url(page)) {
+    match open::open_url(&greenbelay_process::guide::file_url(page)) {
         Ok(()) => true,
         Err(why) => {
             eprintln!("{BIN}: {why}");
@@ -3061,7 +3061,7 @@ fn run_check(args: &[OsString]) -> ExitCode {
     };
     if f.rest.len() != 1 {
         eprintln!(concat!(
-            greenpiste_guard::bin!(),
+            greenbelay_guard::bin!(),
             ": check needs exactly one command, quoted"
         ));
         return ExitCode::from(2);
@@ -3181,7 +3181,7 @@ fn stance_shown(now: rules::Stance, ships: rules::Stance) -> String {
     }
 }
 
-const RULES_USAGE: &str = concat!("usage: ", greenpiste_guard::bin!(), " rules [--json]\n");
+const RULES_USAGE: &str = concat!("usage: ", greenbelay_guard::bin!(), " rules [--json]\n");
 
 /// `rules` takes `--json` and nothing else. It matches its arguments itself:
 /// `flags()` accepts every flag any subcommand knows and keeps bare words,
@@ -3204,7 +3204,7 @@ fn run_rules(args: &[OsString]) -> ExitCode {
         [a, rest @ ..] if a == "--json" => {
             eprintln!(
                 concat!(
-                    greenpiste_guard::bin!(),
+                    greenbelay_guard::bin!(),
                     ": unexpected argument `{}`; `rules` takes only --json"
                 ),
                 rest[0]
@@ -3337,7 +3337,7 @@ fn run_install(args: &[OsString], adding: bool) -> ExitCode {
     let project = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let Some(path) = scope.path(&project) else {
         eprintln!(concat!(
-            greenpiste_guard::bin!(),
+            greenbelay_guard::bin!(),
             ": cannot find your Claude Code settings directory"
         ));
         return ExitCode::from(2);
@@ -3367,7 +3367,7 @@ fn run_install(args: &[OsString], adding: bool) -> ExitCode {
     let plan = match planned {
         Ok(p) => p,
         Err(e) => {
-            eprintln!(concat!(greenpiste_guard::bin!(), ": {}"), e.explain());
+            eprintln!(concat!(greenbelay_guard::bin!(), ": {}"), e.explain());
             if adding {
                 eprintln!("\n{}", settings::snippet(&bin));
             }
@@ -3446,11 +3446,11 @@ fn run_install(args: &[OsString], adding: bool) -> ExitCode {
 /// The registry lines of an install: judged against the side the plugin is
 /// installed under, from the Claude config directory whatever the scope.
 fn print_install_registry(voice: RegistryVoice) {
-    if let Some(env) = greenpiste_guard::migrate::Env::from_process() {
+    if let Some(env) = greenbelay_guard::migrate::Env::from_process() {
         print_registry(
             &migrate_plugin::registry_state_for(
                 &env,
-                greenpiste_guard::migrate::Direction::Forward,
+                greenbelay_guard::migrate::Direction::Forward,
             ),
             voice,
         );
@@ -3610,7 +3610,7 @@ fn run_graduate(args: &[OsString], promoting: bool) -> ExitCode {
         }
     };
     let Some(id) = f.rest.first() else {
-        eprintln!(concat!(greenpiste_guard::bin!(), ": name a rule"));
+        eprintln!(concat!(greenbelay_guard::bin!(), ": name a rule"));
         return ExitCode::from(2);
     };
     let Some(rule) = rules::by_id(rule_table::RULES, id) else {
@@ -3621,7 +3621,7 @@ fn run_graduate(args: &[OsString], promoting: bool) -> ExitCode {
     let to = if promoting {
         let Some(to) = f.to.as_deref().and_then(rules::Stance::parse) else {
             eprintln!(concat!(
-                greenpiste_guard::bin!(),
+                greenbelay_guard::bin!(),
                 ": graduate needs --to advise|deny"
             ));
             return ExitCode::from(2);
@@ -3651,8 +3651,8 @@ fn run_graduate(args: &[OsString], promoting: bool) -> ExitCode {
         } else {
             format!(
                 concat!(
-                    "crates/greenpiste-guard/tests/corpus/{}.cases   # in a checkout of ",
-                    greenpiste_guard::bin!()
+                    "crates/greenbelay-guard/tests/corpus/{}.cases   # in a checkout of ",
+                    greenbelay_guard::bin!()
                 ),
                 rule.id
             )
@@ -3662,7 +3662,7 @@ fn run_graduate(args: &[OsString], promoting: bool) -> ExitCode {
                 "\nrefusing to move {} to {}: not enough evidence.\n\
              Review its matches first:\n  \
              ",
-                greenpiste_guard::bin!(),
+                greenbelay_guard::bin!(),
                 " explain {} --format cases >> {}\n\
              then label each line and re-run. `--force` overrides and is recorded as forced."
             ),

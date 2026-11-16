@@ -29,7 +29,7 @@ struct World {
 impl World {
     fn new(name: &str) -> World {
         let root = std::env::temp_dir().join(format!(
-            "greenpiste-tree-sha-{name}-{}-{:?}",
+            "greenbelay-tree-sha-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -67,7 +67,7 @@ impl World {
     }
 
     fn run(&self, cwd: &Path, args: &[&str]) -> (i32, String, String) {
-        let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let out = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
             .arg("tree-sha")
             .args(args)
             .current_dir(cwd)
@@ -189,7 +189,7 @@ fn the_exit_codes_tell_the_failures_apart() {
 
     let (code, out, _) = w.run(&repo, &["--help"]);
     assert_eq!(code, 0);
-    assert!(out.starts_with("usage: greenpiste tree-sha"));
+    assert!(out.starts_with("usage: greenbelay tree-sha"));
 
     // `--` ends the flags: a rev that starts with a dash is still a rev.
     let (code, _, err) = w.run(&repo, &["--", "-bad"]);

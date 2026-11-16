@@ -1,6 +1,6 @@
 //! `amont-agent quiet`, driven through the real binary.
 //!
-//! The failure injections (`GREENPISTE_TEST_*`) exist only behind the
+//! The failure injections (`GREENBELAY_TEST_*`) exist only behind the
 //! `test-hooks` cargo feature, so the tests that need them are compiled only
 //! with it: `cargo test --features test-hooks --test quiet`.
 #![cfg(unix)]
@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-const BIN: &str = env!("CARGO_BIN_EXE_greenpiste");
+const BIN: &str = env!("CARGO_BIN_EXE_greenbelay");
 
 /// The sha256 of `tests/fixtures/excerpt/MANIFEST.sha256`. amont carries a
 /// copy of the fixtures and pins the same value; an edit to one copy only
@@ -19,7 +19,7 @@ const MANIFEST_PIN: &str = "a00c12dd56c47d7368f00b6cc4853832cf600cfa04fd90882fcb
 fn scratch(name: &str) -> PathBuf {
     static N: AtomicU32 = AtomicU32::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "greenpiste-quiet-{}-{}-{name}",
+        "greenbelay-quiet-{}-{}-{name}",
         std::process::id(),
         N.fetch_add(1, Ordering::SeqCst)
     ));
@@ -29,7 +29,7 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 fn logs(home: &Path) -> PathBuf {
-    home.join("greenpiste").join("logs")
+    home.join("greenbelay").join("logs")
 }
 
 fn active(home: &Path) -> PathBuf {
@@ -61,7 +61,7 @@ fn now_ms() -> u64 {
 
 fn plant(dir: &Path, name: &str, pid: u64, ended: Option<u64>) -> PathBuf {
     std::fs::create_dir_all(dir).unwrap();
-    let mut v = serde_json::json!({"v":1,"tool":"greenpiste","session":null,"check":"x",
+    let mut v = serde_json::json!({"v":1,"tool":"greenbelay","session":null,"check":"x",
         "repo":"/","log":"/x.log.tmp","pid":pid,"started":1});
     if let Some(e) = ended {
         v["exit"] = serde_json::json!(0);
@@ -101,7 +101,7 @@ fn quiet_cmd(home: &Path, args: &[&str]) -> Command {
 }
 
 fn quiet(home: &Path, args: &[&str]) -> Output {
-    quiet_cmd(home, args).output().expect("run greenpiste")
+    quiet_cmd(home, args).output().expect("run greenbelay")
 }
 
 fn text(b: &[u8]) -> String {
@@ -434,7 +434,7 @@ mod injected {
         let script =
             "i=0; while [ $i -lt 200 ]; do echo \"error: line $i\"; i=$((i+1)); done; exit 7";
         let out = quiet_cmd(&home, &["--", "sh", "-c", script])
-            .env("GREENPISTE_TEST_LOG_FAIL_AFTER", "100")
+            .env("GREENBELAY_TEST_LOG_FAIL_AFTER", "100")
             .output()
             .unwrap();
         assert_eq!(out.status.code(), Some(7));
@@ -450,7 +450,7 @@ mod injected {
     fn a_log_dir_that_cannot_be_created_still_runs_the_command() {
         let home = scratch("nodir");
         // `amont-agent` is a file, so `amont-agent/logs` cannot exist.
-        std::fs::write(home.join("greenpiste"), "not a dir").unwrap();
+        std::fs::write(home.join("greenbelay"), "not a dir").unwrap();
         let out = quiet(&home, &["--", "sh", "-c", "echo boom; exit 3"]);
         assert_eq!(out.status.code(), Some(3));
         let stdout = text(&out.stdout);
@@ -482,7 +482,7 @@ mod injected {
         let home = scratch("big");
         let script = "yes 'error: failure on a line that is not short at all, really' | head -c 50000000; exit 1";
         let out = quiet_cmd(&home, &["--", "sh", "-c", script])
-            .env("GREENPISTE_TEST_REPORT_PEAK", "1")
+            .env("GREENBELAY_TEST_REPORT_PEAK", "1")
             .output()
             .unwrap();
         assert_eq!(out.status.code(), Some(1));
@@ -501,7 +501,7 @@ mod injected {
     fn the_running_line_appears_only_after_the_delay() {
         let home = scratch("running");
         let out = quiet_cmd(&home, &["--", "sleep", "1"])
-            .env("GREENPISTE_TEST_RUNNING_AFTER_MS", "200")
+            .env("GREENBELAY_TEST_RUNNING_AFTER_MS", "200")
             .output()
             .unwrap();
         let stderr = text(&out.stderr);
@@ -523,7 +523,7 @@ fn an_active_entry_lives_through_the_run_and_stays_after_it() {
     let path = wait_for_entry(&dir);
     let v = read_entry(&path);
     assert_eq!(v["v"], 1);
-    assert_eq!(v["tool"], "greenpiste");
+    assert_eq!(v["tool"], "greenbelay");
     assert_eq!(v["session"], "sess-1");
     assert_eq!(v["check"], "sleep");
     assert!(v["repo"]
@@ -559,7 +559,7 @@ fn a_killed_writers_temp_file_is_swept_once_old() {
     std::fs::create_dir_all(&dir).unwrap();
     // Deliberately the old prefix: the sweep lives in the amont-quiet crate, which
     // knows only that one.
-    let old_prefix = greenpiste_guard::names::old::TEMP_PREFIX;
+    let old_prefix = greenbelay_guard::names::old::TEMP_PREFIX;
     let stale = dir.join(format!("{old_prefix}1-1-0.json"));
     std::fs::write(&stale, "{").unwrap();
     let old = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);

@@ -8,10 +8,10 @@ after the archives are built and BEFORE SHA256SUMS is computed, writes a copy
 that adds
 
     [tool.release]
-    repo = "greenharness/greenpiste"
+    repo = "greenharness/greenbelay"
     version = "<version>"
     [tool.release.sha256]
-    <target> = "<sha256 of greenpiste-<version>-<target>.tar.gz>"
+    <target> = "<sha256 of greenbelay-<version>-<target>.tar.gz>"
 
 for each unix target grh installs, so the published manifest is checksummed
 and attested with the archives it describes.
@@ -21,7 +21,7 @@ refuses: a version that is not the manifest's [extension] version, a
 manifest that already carries [tool.release], a missing tarball, or an
 output that does not read back with the same values.
 
-The amont-agent-* archives are the alias copies: never read here.
+Only the greenbelay-* archives are read.
 
 Usage: release-manifest.py <version> <dist-dir> <greenharness.toml> <out>
 Everything it says goes to stderr; it writes only the <out> file.
@@ -35,7 +35,7 @@ import sys
 import tomllib
 from typing import NoReturn
 
-REPO = "greenharness/greenpiste"
+REPO = "greenharness/greenbelay"
 USAGE = "usage: release-manifest.py <version> <dist-dir> <greenharness.toml> <out>"
 # The targets grh downloads: the unix tarballs. Windows ships a .zip that
 # grh does not install.
@@ -87,19 +87,14 @@ def main() -> None:
     if isinstance(tool, dict) and "release" in tool:
         fail(f"{source} already carries [tool.release]; the committed manifest holds no sums")
 
-    # The old binary name, kept as a copy until the census: grh places it
-    # from this declared list, so the committed manifest must keep it.
-    aliases = tool.get("bin_aliases") if isinstance(tool, dict) else None
-    if (
-        not isinstance(aliases, list)
-        or not aliases
-        or not all(isinstance(a, str) and re.fullmatch(r"[A-Za-z0-9._-]+", a) for a in aliases)
-    ):
-        fail(f"{source} must declare [tool] bin_aliases as a list of plain binary names")
+    # One name per tool, no alias binary (harness.bundle-names, ADR-0071):
+    # grh would place every declared alias, so the manifest declares none.
+    if isinstance(tool, dict) and "bin_aliases" in tool:
+        fail(f"{source} declares [tool] bin_aliases; greenbelay ships one binary name")
 
     sums = {}
     for target in TARGETS:
-        tarball = dist / f"greenpiste-{version}-{target}.tar.gz"
+        tarball = dist / f"greenbelay-{version}-{target}.tar.gz"
         if not tarball.is_file():
             fail(f"no {tarball.name} in {dist}")
         sums[target] = sha256_of(tarball)

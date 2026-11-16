@@ -1,36 +1,36 @@
 //! `amont-agent open <url|path>`: show a page to the person.
 //!
-//! The opener is a per-machine command template (`greenpiste.opener`, read
+//! The opener is a per-machine command template (`greenbelay.opener`, read
 //! from the user's global git config), because the platform opener can hand a
 //! page to a browser instance the person does not see. The template is split
 //! into words first, by the guard's shell lexer, and `{}` is substituted
 //! inside each word afterwards, so the page is always exactly one argv entry
 //! and no shell runs.
 
-use greenpiste_guard::names::BIN;
+use greenbelay_guard::names::BIN;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
-use greenpiste_guard::doctor;
-use greenpiste_guard::git;
-use greenpiste_guard::shell::{self, Opaque, Parsed};
-use greenpiste_process::guide;
+use greenbelay_guard::doctor;
+use greenbelay_guard::git;
+use greenbelay_guard::shell::{self, Opaque, Parsed};
+use greenbelay_process::guide;
 
-const SETTING: &str = greenpiste_guard::config_key!("opener");
-const USAGE: &str = concat!("usage: ", greenpiste_guard::bin!(), " open <url|path>");
+const SETTING: &str = greenbelay_guard::config_key!("opener");
+const USAGE: &str = concat!("usage: ", greenbelay_guard::bin!(), " open <url|path>");
 const LAUNCH_WAIT: Duration = Duration::from_secs(2);
 const CAPTURE_ATTEMPTS: u32 = 16;
 const POLL_EVERY: Duration = Duration::from_millis(20);
 
 const HELP: &str = concat!("\
-usage: ", greenpiste_guard::bin!(), " open <url|path>
+usage: ", greenbelay_guard::bin!(), " open <url|path>
 
 Open a page for the person, in a browser window they see. A path is made
 absolute, must exist, and is opened as a file:// URL.
 
-The opener is the command template in `git config --global greenpiste.opener`,
+The opener is the command template in `git config --global greenbelay.opener`,
 where `{}` stands for the page (the page is appended when there is no `{}`).
 Unset, it is `open` (macOS), `xdg-open` (Linux) or `rundll32 url.dll,FileProtocolHandler {}` (Windows).
 Silent on success. Exit 0 launched, 1 the page could not be opened, 2 usage.
@@ -210,7 +210,7 @@ fn capture_file() -> Result<(std::fs::File, PathBuf), OpenError> {
     let mut last = None;
     for attempt in 0..CAPTURE_ATTEMPTS {
         let path = std::env::temp_dir().join(format!(
-            "greenpiste-open-{}-{stamp}-{attempt}.err",
+            "greenbelay-open-{}-{stamp}-{attempt}.err",
             std::process::id()
         ));
         let mut options = std::fs::OpenOptions::new();
@@ -297,7 +297,7 @@ fn launch(
 
 fn unknown_option(word: &OsStr) -> ExitCode {
     eprintln!(
-        concat!(greenpiste_guard::bin!(), ": unknown option {}"),
+        concat!(greenbelay_guard::bin!(), ": unknown option {}"),
         word.to_string_lossy()
     );
     eprintln!("{USAGE}");
@@ -354,7 +354,7 @@ pub fn opener_finding() -> doctor::Finding {
             )
         }
     };
-    let remedy = "git config --global greenpiste.opener '<browser command> {}'";
+    let remedy = "git config --global greenbelay.opener '<browser command> {}'";
     let words = match split(&template) {
         Ok(words) => words,
         Err(why) => {

@@ -1,2 +1,2 @@
-# greenpiste: the lint suppressions a commit adds (general.no-disabled-safety)
-pre-commit  suppressions  *  block  greenpiste suppressions --staged
+# greenbelay: the lint suppressions a commit adds (general.no-disabled-safety)
+pre-commit  suppressions  *  block  greenbelay suppressions --staged

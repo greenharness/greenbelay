@@ -43,7 +43,7 @@ The tool has already run. A `deny` stance therefore speaks exactly like
 What an assertion *can* do is state a fact:
 
 ```
-greenpiste/push-landed: `git push` exited 0, but origin/main is at d0765d4f9
+greenbelay/push-landed: `git push` exited 0, but origin/main is at d0765d4f9
 while the local branch is at 8970c7ffb. The push did not land. Run the push
 again on its own and read its output, then confirm with `git ls-remote`.
 ```
@@ -75,7 +75,7 @@ must never be the reason a push becomes impossible.
 `examine` is pure, so the backtester replays it like any rule:
 
 ```console
-$ greenpiste backtest push-landed --since 2026-07-06
+$ greenbelay backtest push-landed --since 2026-07-06
 push-landed   1007   38.7   routine   observe
 ```
 
@@ -89,7 +89,7 @@ touches the world, and the world has moved since those commands ran. That number
 accumulates forward, in the journal:
 
 ```console
-$ grep push-landed ~/.claude/greenpiste/journal.log
+$ grep push-landed ~/.claude/greenbelay/journal.log
 ```
 
 `held` is a push that landed, `broken` one that did not, `unverified` one this

@@ -22,7 +22,7 @@ struct World {
 impl World {
     fn new(name: &str) -> World {
         let root =
-            std::env::temp_dir().join(format!("greenpiste-outcomes-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("greenbelay-outcomes-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         for d in ["claude", "plans", "repos"] {
             std::fs::create_dir_all(root.join(d)).unwrap();
@@ -45,13 +45,13 @@ impl World {
     }
 
     fn bin(&self) -> Command {
-        let mut c = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+        let mut c = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
         c.env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
             .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GREENPISTE_PLAN_ROOT", self.root.join("repos"))
-            .env_remove("GREENPISTE_OFF");
+            .env("GREENBELAY_PLAN_ROOT", self.root.join("repos"))
+            .env_remove("GREENBELAY_OFF");
         c
     }
 
@@ -184,7 +184,7 @@ impl World {
     fn store(&self) -> PathBuf {
         self.root
             .join("claude")
-            .join("greenpiste")
+            .join("greenbelay")
             .join("plan-review")
     }
 
@@ -305,7 +305,7 @@ fn a_row_has_every_field_and_the_files_are_private() {
     ] {
         assert!(r.get(k).is_some(), "missing {k}: {r}");
     }
-    assert_eq!(r["schema"], "greenpiste-review-outcome-v1");
+    assert_eq!(r["schema"], "greenbelay-review-outcome-v1");
     assert_eq!(r["round"], 1);
     assert_eq!(r["body_sha"], r["first_round_sha"]);
     assert_eq!(r["plan_path"], w.plan.to_string_lossy().as_ref());
@@ -427,7 +427,7 @@ fn a_launch_without_an_agent_id_is_reported_after_the_rest_are_written() {
     let o = w.record("[]");
     assert_eq!(o.status.code(), Some(1));
     assert!(
-        err(&o).contains("greenpiste: no agent id for architect in "),
+        err(&o).contains("greenbelay: no agent id for architect in "),
         "{}",
         err(&o)
     );
@@ -493,7 +493,7 @@ fn help_and_usage() {
         .output()
         .unwrap();
     assert_eq!(o.status.code(), Some(0));
-    assert!(out(&o).contains("usage: greenpiste plan-review record"));
+    assert!(out(&o).contains("usage: greenbelay plan-review record"));
     let o = w.bin().args(["plan-review", "--help"]).output().unwrap();
     assert_eq!(o.status.code(), Some(0));
     let o = w
@@ -750,9 +750,9 @@ fn stdin_for_a_recorded_reviewer_appends_disposition_rows_only() {
     assert_eq!(o.status.code(), Some(0), "{}", err(&o));
     let rows = w.rows();
     assert_eq!(rows.len(), 3, "{rows:?}");
-    assert_eq!(rows[0]["schema"], "greenpiste-review-outcome-v1");
+    assert_eq!(rows[0]["schema"], "greenbelay-review-outcome-v1");
     for (r, n, d) in [(&rows[1], 1, "accepted"), (&rows[2], 2, "rejected")] {
-        assert_eq!(r["schema"], "greenpiste-review-disposition-v1");
+        assert_eq!(r["schema"], "greenbelay-review-disposition-v1");
         assert_eq!(r["agent_id"], "ag-b");
         assert_eq!(r["body_sha"], rows[0]["body_sha"]);
         assert_eq!(r["role"], "backend");
@@ -799,7 +799,7 @@ impl World {
     }
 
     fn journal(&self) -> String {
-        std::fs::read_to_string(self.root.join("claude/greenpiste/journal.log")).unwrap_or_default()
+        std::fs::read_to_string(self.root.join("claude/greenbelay/journal.log")).unwrap_or_default()
     }
 }
 
