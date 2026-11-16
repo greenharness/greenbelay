@@ -15,7 +15,7 @@ rule that talks is intervening.** That is why the two are named differently
 and why `backtest` numbers from an `advise` rule are not comparable with the
 numbers that justified promoting it.
 
-That contamination is also what makes it measurable. `greenpiste backtest
+That contamination is also what makes it measurable. `greenbelay backtest
 --compliance` reads the two stances against each other: what a model did
 after an `advise` fired, beside what it did after an `observe` fired and
 said nothing. The second is the rate the habit corrects on its own, and an
@@ -27,14 +27,14 @@ said nothing. The second is the rate the habit corrects on its own, and an
 Takes effect on the next command; nothing to restart.
 
 ```sh
-git config --global greenpiste.pipe-to-tail.stance observe
-git config --global greenpiste.stance observe          # every rule
+git config --global greenbelay.pipe-to-tail.stance observe
+git config --global greenbelay.stance observe          # every rule
 ```
 
 The ladder, most specific first:
 
 ```
-rule.default_stance  <  greenpiste.stance  <  greenpiste.<id>.stance
+rule.default_stance  <  greenbelay.stance  <  greenbelay.<id>.stance
 ```
 
 then capped at the rule's own ceiling, and clamped to `observe` if the guard
@@ -49,13 +49,13 @@ estimate — "this loop may make hundreds of requests" — is capped at
 analysis does not have.
 
 The cap is applied after every configured key, so neither
-`greenpiste.stance deny` nor the rule's own key can pass it, and
-`graduate --to deny` refuses a capped rule with the reason. `greenpiste
+`greenbelay.stance deny` nor the rule's own key can pass it, and
+`graduate --to deny` refuses a capped rule with the reason. `greenbelay
 rules` prints each rule's ceiling beside its stance.
 
 ## Raising a stance for named agents
 
-`greenpiste.<id>.denyAgents` lifts one rule from `advise` to `deny` for the
+`greenbelay.<id>.denyAgents` lifts one rule from `advise` to `deny` for the
 subagent types it lists, and leaves every other agent, the main conversation
 included, at the configured stance. It never raises `observe` (a switched-off
 guard, a shadow session, a rule set to observe), and the rule's ceiling still
@@ -94,6 +94,6 @@ a process standing in one can write. A file your global config `include`s or
 and this reader asks. `graduate` and `demote` write `--global`
 for the same reason.
 
-One consequence worth stating plainly: `git config greenpiste.<rule>.stance`
+One consequence worth stating plainly: `git config greenbelay.<rule>.stance`
 run inside a repository writes `--local` by default, and this tool will not
 read it. Pass `--global`, which is what every example here does.

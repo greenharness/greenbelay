@@ -46,18 +46,14 @@ build:
 
 install: build
 	@mkdir -p $(INSTALL_BIN_DIR)
-	@install -m 0755 $(MAKEFILE_DIR)target/release/greenpiste $(INSTALL_BIN_DIR)/.greenpiste.tmp
-	@mv -f $(INSTALL_BIN_DIR)/.greenpiste.tmp $(INSTALL_BIN_DIR)/greenpiste
-	@# The old name stays as a copy (never a symlink: an old install over it
-	@# would write through to greenpiste), renamed into place like the binary.
-	@install -m 0755 $(MAKEFILE_DIR)target/release/greenpiste $(INSTALL_BIN_DIR)/.amont-agent.tmp
-	@mv -f $(INSTALL_BIN_DIR)/.amont-agent.tmp $(INSTALL_BIN_DIR)/amont-agent
-	@echo "installed $(INSTALL_BIN_DIR)/greenpiste (and amont-agent, a copy)"
-	@echo "  greenpiste install --write   add the hook to Claude Code settings"
-	@echo "  greenpiste doctor            is it installed, runnable, and firing?"
-	@echo "  greenpiste backtest          replay your transcripts through the rules"
+	@install -m 0755 $(MAKEFILE_DIR)target/release/greenbelay $(INSTALL_BIN_DIR)/.greenbelay.tmp
+	@mv -f $(INSTALL_BIN_DIR)/.greenbelay.tmp $(INSTALL_BIN_DIR)/greenbelay
+	@echo "installed $(INSTALL_BIN_DIR)/greenbelay"
+	@echo "  greenbelay install --write   add the hook to Claude Code settings"
+	@echo "  greenbelay doctor            is it installed, runnable, and firing?"
+	@echo "  greenbelay backtest          replay your transcripts through the rules"
 
 uninstall:
-	@rm -f $(INSTALL_BIN_DIR)/greenpiste $(INSTALL_BIN_DIR)/amont-agent
-	@echo "removed $(INSTALL_BIN_DIR)/greenpiste and $(INSTALL_BIN_DIR)/amont-agent"
-	@echo "  the settings.json entry is still there: greenpiste uninstall --write"
+	@rm -f $(INSTALL_BIN_DIR)/greenbelay
+	@echo "removed $(INSTALL_BIN_DIR)/greenbelay"
+	@echo "  the settings.json entry is still there: greenbelay uninstall --write"

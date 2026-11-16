@@ -6,7 +6,7 @@
 | `bare-stash-pop` | `observe` | `git stash pop` with no ref, where `refs/stash` is shared across worktrees |
 | `cd-carries-over` | `advise` | a Bash call that runs in a directory an earlier call of its own parallel batch moved the shell to with a top-level `cd` or `pushd` (the shell is no longer where the batch's first call ran, and the harness does not announce a carry between siblings); use `(cd X && …)`, `git -C X` or absolute paths |
 | `gh-pr-merge-auto` | `observe` | `--auto` on a repository with no required checks, which merges immediately |
-| `block-reinstate` | `deny` | an agent running `greenpiste block reinstate`, which lifts the revocation of a reviewed block and re-admits its copies; the person runs it in their own shell |
+| `block-reinstate` | `deny` | an agent running `greenbelay block reinstate`, which lifts the revocation of a reviewed block and re-admits its copies; the person runs it in their own shell |
 | `publish-without-skill` | `advise` | a `v*` tag pushed or a pull request merged with no call of the `tag-release` / `merge-when-green` skill in this turn or the one before, so the procedure ran from memory |
 | `forge-merge-by-hand` | `advise` | merging a pull request by POSTing to the forge's merge endpoint, which answers `200` whether the checks passed, failed or never started |
 | `no-verify` | `observe` | turning the whole commit gate off rather than one check |
@@ -19,7 +19,7 @@
 | `clear-at-boundary` | `advise` (max deny) | a turn ending at a boundary (a worktree removed, a `sweep.py --apply`, a plan commit) with nothing in flight and the main chain's context past 200k tokens; `deny` sends a `Stop` continuation asking for the handoff and one line starting with the marker `safe to /clear`, `advise` sends a note to the person naming the reply that asks for the handoff line, except at a lone plan commit, where `plan-phases-open` carries the plan on, `observe` journals only; a boundary under background work, relais in flight or an unclean repository is kept as pending and advised at the first idle `Stop` after it; at most 3 advices per session, then silence journalled `watched cap` |
 | `plan-phases-open` | `deny` | a turn ending while the plan this branch carries still has an open phase that is not a `🧑 decision:` — the agent is sent on to it |
 | `implementation-review` | `advise` | a push of a branch that carries a plan, whose diff no independent reviewer has read for the tree being pushed ([the implementation review](implementation-review.md)) |
-| `ask-unopened-page` | `deny` | an `AskUserQuestion` naming a local page (localhost URL, `file://` URL, `.html` path) that no `greenpiste open` showed the person since the last answered question about it; without a readable transcript it advises |
+| `ask-unopened-page` | `deny` | an `AskUserQuestion` naming a local page (localhost URL, `file://` URL, `.html` path) that no `greenbelay open` showed the person since the last answered question about it; without a readable transcript it advises |
 | `foreground-poll` | `advise` | a polling loop or `gh run watch` in the foreground, where the tool's ten-minute clock will kill it one poll short |
 | `unbounded-background-push` | `advise` | a `git push` sent to the background with its output kept in a file and no `timeout`, so the pre-push gate inside it can run for as long as it likes with nothing ending it or reporting it |
 | `gui-open-unbounded` | `advise` | a macOS app launch (`open -a <App>`, `open <x>.app`) with no `timeout`, sent in the background; silent on platforms where `open` is not a launcher: measured to hang twice on 2026-10-14, and the chain after it never ran |
@@ -51,16 +51,16 @@
 | `lint-suppression-added` | `advise` (ceiling `deny`) | an Edit, MultiEdit or Write that adds a lint suppression (`# type: ignore`, `# noqa`, `eslint-disable`, `@ts-ignore`, `#[allow]`, `//nolint`) or loosens a lint configuration (tsconfig, eslint, pyright, ruff, Cargo `[lints]`, golangci), where `general.no-disabled-safety` says to fix the finding instead; the file is compared before and after by marker, not by line |
 | `agent-guidance-written` | `advise` (ceiling `advise`) | an Edit, MultiEdit or Write to agent guidance (`SKILL.md`, `CLAUDE.md`, `CLAUDE.md.tmpl`, `AGENTS.md`, `MEMORY.md`, `.claude/agents/*.md`, `dot_claude/agents/*.md`), where the `guidance.*` and `prose.*` rules apply (ADR-0026, ADR-0032) and `aval relevant --path <file>` lists them; told once per session and file (per agent), later writes are journalled only. Other memory files are exempt |
 | `agent-guidance-shape` | `advise` (ceiling `advise`) | a write that leaves a `SKILL.md` without `disable-model-invocation: true` and without a one-line `description:` that says when to use it — a `Use <word> …` or `whenever …` clause (`guidance.pointer-names-when`), or grows a `CLAUDE.md`, `CLAUDE.md.tmpl`, `AGENTS.md` or `MEMORY.md` past 8,192 bytes (`guidance.always-on-is-an-index`; a ratchet: shrinking or equal size passes). Judged on the rebuilt whole file only; a fragment is journalled and silent; told once per session and file |
-| `work-overlap` | `advise` (ceiling `advise`) | a session's first Edit, MultiEdit, Write or NotebookEdit in a repository, when another session's latest activity line names the same repository and that session was last seen less than the window ago (2 h; `git config greenpiste.work-overlap.window`, e.g. `90m`). Names the other session, its worktree, its branch, the title of the active plan its branch added when there is one (none for a peer on the default branch), and how long ago it was last seen, and the remedy `greenpiste board --repo <repo>`; told once per session and repository, counted only once a live peer is found (a first write that meets nobody does not use it up; under `observe` the journalled firing counts), silent for the session's own activity. Answered from the session activity records, not the command ([the board](board.md)) |
-| `adr-lint-written` | `advise` (ceiling `advise`) | an Edit, MultiEdit or Write (a `PostToolUse`, once it has succeeded) of a `.rs`, `.ts`, `.tsx`, `.go` or `.py` file in a repository that vendors adr-lint's `check` row (decisions ADR-0044). The repository is the git root of the FILE's directory, not the payload cwd; the gate is open only when `amont list --json` run there prints `amont-list-v1` listing the check id `pre-commit-adr-lint-check`, trusted or not (amont lists an untrusted row with no `command`), asked once per session and repository, with a 5 s deadline. It then runs `adr-lint check --json -- <path>` (`GREENPISTE_ADR_LINT` names another program), killed at 1 s, and advises each finding as `path:line:col: rule-id: message` with one `aval rule <id>` line per rule and how to waive (`adr-lint: allow <rule-id> -- <reason>`). Journal: each finding as `rule path text` (`advised`, or `watched` under `observe`, which says nothing); `adr-lint-slow` on each kill; `adr-lint-unavailable`, `adr-lint-exit-2`, `adr-lint-exit-3`, `adr-lint-exit-other`, `adr-lint-unparsed`, `amont-list-failed` and `amont-list-unexpected` once per session, never shown to the agent |
-| `test-output-trimmed` | `advise` (ceiling `deny`) | a test, lint or typecheck runner (`cargo test`, `pytest`, `npm run test`, `tsc`, …) piped into `tail`/`head`/`grep` while `pipefail` is not definitely on, so a failing run exits 0 and the trimming can cut the failure off. The shell analysis tracks `pipefail` as yes/no/maybe, including zsh `setopt`/`unsetopt` and `set -o nopipefail`; only a definite yes exempts. Evidence: 33.7 per 1000 calls (2,790 of 82,857, `greenpiste backtest --rule test-output-trimmed --since 2026-09-11`, measured 2026-10-11; weekly 20.1 to 53.4, flat 4 weeks) |
+| `work-overlap` | `advise` (ceiling `advise`) | a session's first Edit, MultiEdit, Write or NotebookEdit in a repository, when another session's latest activity line names the same repository and that session was last seen less than the window ago (2 h; `git config greenbelay.work-overlap.window`, e.g. `90m`). Names the other session, its worktree, its branch, the title of the active plan its branch added when there is one (none for a peer on the default branch), and how long ago it was last seen, and the remedy `greenbelay board --repo <repo>`; told once per session and repository, counted only once a live peer is found (a first write that meets nobody does not use it up; under `observe` the journalled firing counts), silent for the session's own activity. Answered from the session activity records, not the command ([the board](board.md)) |
+| `adr-lint-written` | `advise` (ceiling `advise`) | an Edit, MultiEdit or Write (a `PostToolUse`, once it has succeeded) of a `.rs`, `.ts`, `.tsx`, `.go` or `.py` file in a repository that vendors adr-lint's `check` row (decisions ADR-0044). The repository is the git root of the FILE's directory, not the payload cwd; the gate is open only when `amont list --json` run there prints `amont-list-v1` listing the check id `pre-commit-adr-lint-check`, trusted or not (amont lists an untrusted row with no `command`), asked once per session and repository, with a 5 s deadline. It then runs `adr-lint check --json -- <path>` (`GREENBELAY_ADR_LINT` names another program), killed at 1 s, and advises each finding as `path:line:col: rule-id: message` with one `aval rule <id>` line per rule and how to waive (`adr-lint: allow <rule-id> -- <reason>`). Journal: each finding as `rule path text` (`advised`, or `watched` under `observe`, which says nothing); `adr-lint-slow` on each kill; `adr-lint-unavailable`, `adr-lint-exit-2`, `adr-lint-exit-3`, `adr-lint-exit-other`, `adr-lint-unparsed`, `amont-list-failed` and `amont-list-unexpected` once per session, never shown to the agent |
+| `test-output-trimmed` | `advise` (ceiling `deny`) | a test, lint or typecheck runner (`cargo test`, `pytest`, `npm run test`, `tsc`, …) piped into `tail`/`head`/`grep` while `pipefail` is not definitely on, so a failing run exits 0 and the trimming can cut the failure off. The shell analysis tracks `pipefail` as yes/no/maybe, including zsh `setopt`/`unsetopt` and `set -o nopipefail`; only a definite yes exempts. Evidence: 33.7 per 1000 calls (2,790 of 82,857, `greenbelay backtest --rule test-output-trimmed --since 2026-09-11`, measured 2026-10-11; weekly 20.1 to 53.4, flat 4 weeks) |
 | `heavy-build-unqueued` | `advise` (ceiling `advise`) | a readable Bash clause that runs a heavy build or test (the `test-output-trimmed` runners, plus `cargo build`, `cargo check`, `xcodebuild`, `swift build`) outside the host slot queue: not wrapped as `amont slot run -- <cmd>`, `amont run <check>` or `amont rehearse`, and `amont slot run --on-timeout=run` counts as unqueued. Confirmed only when `GREENHARNESS_HOST_SLOT` is unset (greengate 3.x's `AMONT_HOST_SLOT` is not read) and `amont --version` on PATH is 1.62.0 or newer (probed once per session, 1.5 s deadline). The advice names `amont slot run -- <cmd>`, its 90 s `--max-wait`, exit 75 (not launched) and `amont slots`; amont's slot files are never read |
 
 Two more checks run after a command rather than before it, on `PostToolUse`:
 `push-landed` and `push-published` verify what a push that reported success
 actually did. See [the assertions](assertions.md).
 
-`greenpiste rules` prints this with each rule's measured firing rate, and
+`greenbelay rules` prints this with each rule's measured firing rate, and
 with the stance in force on this machine rather than the shipped one: a rule
 you promoted in `~/.gitconfig` reads `deny (ships as observe)`, and a rule
 with a ceiling names it, `(max advise)`.
@@ -95,13 +95,13 @@ the turn end and tells the person, with a note only they see; their next
 prompt resets the count. Anything it cannot establish — no repository, a git
 failure, an unreadable plan, a session id it will not use as a file name —
 lets the turn end. To turn it off without uninstalling:
-`git config --global greenpiste.plan-phases-open.stance observe`.
+`git config --global greenbelay.plan-phases-open.stance observe`.
 
 `clear-at-boundary` fires on the same `Stop`. A turn that reached a boundary
 (`git worktree remove`, `sweep.py --apply`, or a `docs(plan): ` commit that is
 not a closing one) with the transcript's last main-chain context at 200,000
 tokens or more, no relais run still waiting on the session (read from the
-transcript only; greenpiste never runs `relais`), clean repositories and
+transcript only; greenbelay never runs `relais`), clean repositories and
 nothing unpushed outside `docs/plans/`, gets one note to the person with the
 reply to give: write the handoff, then end with that line; at `deny` the agent is sent on once to write the handoff and end
 with `safe to /clear; next: <the first prompt>`. It ships at `advise`: its
@@ -113,8 +113,8 @@ plan mode, with background tasks, when the last message asks a question, has a
 lone plan commit past 200k its Continue comes before `plan-phases-open`, which
 then stays silent for the rest of the turn; at `advise` it is silent there and
 `plan-phases-open` carries the plan on. To send the agent on:
-`git config --global greenpiste.clear-at-boundary.stance deny`. Rollback:
-`git config --global greenpiste.clear-at-boundary.stance observe`.
+`git config --global greenbelay.clear-at-boundary.stance deny`. Rollback:
+`git config --global greenbelay.clear-at-boundary.stance observe`.
 
 The `clear-relay` Claude Code plugin, which `install --write` places, acts on
 that line. When the main agent's answer ends with
@@ -125,7 +125,7 @@ prompt in the new session. Typing anything or running `/stay` keeps the
 session. It relays at most once per 2 minutes and never retries: a refused
 step shows a toast with the prompt, for pasting. Each arm, disarm, clear,
 submit and failure goes as one JSON line to
-`<state dir>/greenpiste/clear-relay/<session>.jsonl`, the plugin's
+`<state dir>/greenbelay/clear-relay/<session>.jsonl`, the plugin's
 `stateDir` setting, which `install` sets. To turn the relay off, set the plugin's
 `enabled` setting to false; at stance `observe` no continuation asks for the
 line, so the relay has nothing to act on; at `advise` it acts only when the
@@ -143,7 +143,7 @@ The remedy names the linked worktree the session touched last, but only when
 `git check-ignore` says a file of that name is ignored there (an untracked log
 would hold `worktree-sweep` forever), and otherwise the session's scratch
 directory, which `worktree-sweep --scratch` clears. To demote it to a record:
-`git config --global greenpiste.workspace-root-write.stance observe`.
+`git config --global greenbelay.workspace-root-write.stance observe`.
 
 `stale-base` advises from the start because it refuses nothing, speaks only
 after measuring a real gap, and names a failure no correcting loop can see —
@@ -198,7 +198,7 @@ out.
 ## Asking about one command
 
 ```sh
-greenpiste check 'git push | tail -1'
+greenbelay check 'git push | tail -1'
 ```
 
 No stdin, no session, no journal entry — just the rules over one string, with

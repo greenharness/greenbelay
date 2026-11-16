@@ -13,7 +13,7 @@
 use std::process::Command;
 
 fn corpus_check() -> (i32, String) {
-    let out = greenpiste_command()
+    let out = greenbelay_command()
         .args(["corpus", "check"])
         .output()
         .expect("the binary runs");
@@ -66,12 +66,12 @@ fn every_rule_has_a_corpus() {
     );
 }
 
-/// The greenpiste binary pointed at scratch directories, so the migration every
+/// The greenbelay binary pointed at scratch directories, so the migration every
 /// subcommand runs first never touches the real home of whoever runs the tests.
 /// A caller that sets one of these variables itself overrides it afterwards.
-fn greenpiste_command() -> Command {
+fn greenbelay_command() -> Command {
     let scratch = fresh_scratch("corpus");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
     command
         .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
         .env("XDG_STATE_HOME", scratch.join("state"))

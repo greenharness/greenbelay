@@ -50,7 +50,7 @@ impl Reply {
 /// A scratch config dir per test, so nothing here writes to the real journal.
 fn home() -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "greenpiste-hook-{}-{:?}",
+        "greenbelay-hook-{}-{:?}",
         std::process::id(),
         std::thread::current().id()
     ));
@@ -95,7 +95,7 @@ enum HostSlot {
 }
 
 fn send_inner(payload: &str, path: String, slot: HostSlot) -> Reply {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
     match slot {
         HostSlot::Held => command.env("GREENHARNESS_HOST_SLOT", "held"),
         HostSlot::Free => command.env_remove("GREENHARNESS_HOST_SLOT"),
@@ -110,8 +110,8 @@ fn send_inner(payload: &str, path: String, slot: HostSlot) -> Reply {
         .env("PATH", path)
         // The guard must not be silenced by the developer's own environment
         // while its own tests are running.
-        .env_remove("GREENPISTE_OFF")
-        // Nor steered by it: a developer's `greenpiste.<rule>.stance` in
+        .env_remove("GREENBELAY_OFF")
+        // Nor steered by it: a developer's `greenbelay.<rule>.stance` in
         // their global git config (implementation-review at deny, say)
         // would otherwise decide what these tests observe.
         .env("GIT_CONFIG_GLOBAL", home().join("no-global-gitconfig"))
@@ -209,7 +209,7 @@ fn an_unqueued_test_run_is_advised_toward_the_slot_queue() {
         "{advice}"
     );
     assert!(advice.contains("exit 75"), "{advice}");
-    let journal = std::fs::read_to_string(home().join("greenpiste").join("journal.log"))
+    let journal = std::fs::read_to_string(home().join("greenbelay").join("journal.log"))
         .expect("the hook wrote a journal");
     assert!(
         journal.lines().any(|l| l.contains("heavy-build-unqueued")),
@@ -384,8 +384,8 @@ fn only_the_emitter_writes_to_stdout() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let trees = [
         root.join("src"),
-        root.join("crates/greenpiste-guard/src"),
-        root.join("crates/greenpiste-process/src"),
+        root.join("crates/greenbelay-guard/src"),
+        root.join("crates/greenbelay-process/src"),
     ];
     for t in &trees {
         assert!(t.is_dir(), "missing source tree {}", t.display());
@@ -524,7 +524,7 @@ fn a_session_opening_in_a_stale_checkout_is_told_how_far_behind_it_is() {
     let text = out["additionalContext"].as_str().unwrap_or_default();
     assert!(text.contains("1 commit behind origin/main"), "{text}");
     assert!(text.contains("the thing that already exists"), "{text}");
-    assert!(text.starts_with("greenpiste/stale-base:"), "{text}");
+    assert!(text.starts_with("greenbelay/stale-base:"), "{text}");
     // Informed, not moved: HEAD is where it was.
     let head = Command::new("git")
         .args(["-C", clone.to_str().unwrap(), "log", "-1", "--format=%s"])
@@ -571,7 +571,7 @@ fn a_branch_started_from_a_stale_head_is_advised() {
     let text = doc["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap_or_default();
-    assert!(text.starts_with("greenpiste/stale-base:"), "{doc}");
+    assert!(text.starts_with("greenbelay/stale-base:"), "{doc}");
     assert!(
         doc["hookSpecificOutput"]["permissionDecision"].is_null(),
         "advice refuses nothing: {doc}"
@@ -640,7 +640,7 @@ fn a_session_opening_on_a_stale_guidance_block_is_told() {
     let text = doc["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap_or_default();
-    assert!(text.contains("greenpiste/agents-md: AGENTS.md"), "{text}");
+    assert!(text.contains("greenbelay/agents-md: AGENTS.md"), "{text}");
     assert!(text.contains("amont agents-md"), "{text}");
 
     // greengate 4.0's markers open the same gate.
@@ -656,7 +656,7 @@ fn a_session_opening_on_a_stale_guidance_block_is_told() {
     let text = doc["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap_or_default();
-    assert!(text.contains("greenpiste/agents-md: AGENTS.md"), "{text}");
+    assert!(text.contains("greenbelay/agents-md: AGENTS.md"), "{text}");
     std::fs::write(
         work.join("AGENTS.md"),
         "# Project\n\n<!-- amont:start -->\nSTALE\n<!-- amont:end -->\n",
@@ -739,7 +739,7 @@ fn a_push_from_an_unrehearsed_tree_is_advised_and_a_stamped_one_is_not() {
     let text = doc["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap_or_default();
-    assert!(text.starts_with("greenpiste/push-preflight:"), "{doc}");
+    assert!(text.starts_with("greenbelay/push-preflight:"), "{doc}");
     assert!(text.contains("amont rehearse --wait"), "{text}");
     assert!(
         doc["hookSpecificOutput"]["permissionDecision"].is_null(),
@@ -801,7 +801,7 @@ fn a_declined_confirm_records_why_and_status_reads_it_back() {
     let reply = send(&payload);
     assert_eq!(reply.code, 0);
 
-    let journal = std::fs::read_to_string(home().join("greenpiste").join("journal.log"))
+    let journal = std::fs::read_to_string(home().join("greenbelay").join("journal.log"))
         .expect("the hook wrote a journal");
     let line = journal
         .lines()
@@ -816,11 +816,11 @@ fn a_declined_confirm_records_why_and_status_reads_it_back() {
         "`skipped` is not a reason: {line}"
     );
 
-    let status = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let status = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
         .arg("status")
         .env("CLAUDE_CONFIG_DIR", home())
         .env_remove("XDG_STATE_HOME")
-        .env_remove("GREENPISTE_OFF")
+        .env_remove("GREENBELAY_OFF")
         .output()
         .expect("the binary runs");
     let text = String::from_utf8_lossy(&status.stdout);
@@ -1000,7 +1000,7 @@ fn a_whole_read_past_8_kib_is_advised_and_under_it_is_not() {
     assert!(!small.read("um-2").stdout.contains("read-unbounded-large"));
 }
 
-const LARGE_DENY: &str = "[greenpiste \"read-unbounded-large\"]\n\tstance = deny\n";
+const LARGE_DENY: &str = "[greenbelay \"read-unbounded-large\"]\n\tstance = deny\n";
 
 /// A Read of the fixture's file as `agent` (none: the main conversation),
 /// with `read-unbounded-large` at `deny`.
@@ -1044,7 +1044,7 @@ fn at_deny_a_large_whole_read_is_refused_once_then_allowed() {
         "{}",
         again.stdout
     );
-    let journal = std::fs::read_to_string(home().join("greenpiste").join("journal.log"))
+    let journal = std::fs::read_to_string(home().join("greenbelay").join("journal.log"))
         .expect("the hook wrote a journal");
     assert!(
         journal
@@ -1108,7 +1108,7 @@ fn at_deny_another_file_is_its_own_and_an_unrecorded_session_is_advised() {
             .as_deref(),
         Some("deny")
     );
-    let journal = std::fs::read_to_string(home().join("greenpiste").join("journal.log"))
+    let journal = std::fs::read_to_string(home().join("greenbelay").join("journal.log"))
         .expect("the hook wrote a journal");
     assert!(
         journal
@@ -1207,7 +1207,7 @@ fn a_reread_says_file_reread_only() {
 #[test]
 fn an_observed_reread_still_suppresses() {
     let f = ReadFixture::with_size("unbounded-observed", 20_000);
-    let cfg = "[greenpiste \"file-reread\"]\n\tstance = observe";
+    let cfg = "[greenbelay \"file-reread\"]\n\tstance = observe";
     let session = "obsrd-01";
     // The first read is only remembered, so the journal below holds what the
     // second one did and nothing else.
@@ -1215,7 +1215,7 @@ fn an_observed_reread_still_suppresses() {
     let second = f.file_event_with_global("PreToolUse", "Read", session, "", cfg);
     assert_eq!(second.stdout, "", "neither rule speaks: {}", second.stdout);
 
-    let journal = std::fs::read_to_string(home().join("greenpiste").join("journal.log"))
+    let journal = std::fs::read_to_string(home().join("greenbelay").join("journal.log"))
         .expect("the hook wrote a journal");
     let rows: Vec<&str> = journal.lines().filter(|l| l.contains(session)).collect();
     let rereads = rows
@@ -1568,14 +1568,14 @@ fn send_with_global_err(payload: &str, global: &str) -> (Reply, String) {
     let dir = home();
     let cfg = dir.join("fanout.gitconfig");
     std::fs::write(&cfg, global).expect("global config");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
         .arg("hook")
         .env("CLAUDE_CONFIG_DIR", &dir)
         .env_remove("XDG_STATE_HOME")
         .env("GIT_CONFIG_GLOBAL", &cfg)
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .env("SHELL", "/bin/zsh")
-        .env_remove("GREENPISTE_OFF")
+        .env_remove("GREENBELAY_OFF")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1596,7 +1596,7 @@ fn send_with_global_err(payload: &str, global: &str) -> (Reply, String) {
 }
 
 fn journal_rows(session: &str) -> Vec<String> {
-    std::fs::read_to_string(home().join("greenpiste").join("journal.log"))
+    std::fs::read_to_string(home().join("greenbelay").join("journal.log"))
         .expect("the hook wrote a journal")
         .lines()
         .filter(|l| l.contains(session))
@@ -1678,7 +1678,7 @@ fn lint_suppression_a_new_tsconfig_with_strict_off_is_advised() {
 #[test]
 fn lint_suppression_observed_is_silent_and_journalled_as_watched() {
     let f = ReadFixture::with_content("lsa-obs", "x.py", "def f(a):\n    return g(a)\n");
-    let cfg = "[greenpiste \"lint-suppression-added\"]\n\tstance = observe";
+    let cfg = "[greenbelay \"lint-suppression-added\"]\n\tstance = observe";
     let session = "lsaobs-1";
     let said = f.file_event_with_global("PreToolUse", "Edit", session, ADD_IGNORE, cfg);
     assert_eq!(said.stdout, "", "{}", said.stdout);
@@ -1696,7 +1696,7 @@ fn lint_suppression_observed_is_silent_and_journalled_as_watched() {
 fn lint_suppression_leaves_the_pass_file_guard_denying() {
     let f = ReadFixture::with_content("lsa-guard", "x.py", "");
     let target = home()
-        .join("greenpiste")
+        .join("greenbelay")
         .join("implementation-review")
         .join("by-tree")
         .join("app")
@@ -1808,14 +1808,14 @@ impl LspWorld {
     fn send(&self, payload: &str, global: &str) -> Reply {
         let cfg = self.config.join("global.gitconfig");
         std::fs::write(&cfg, global).expect("global config");
-        let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
             .arg("hook")
             .env("CLAUDE_CONFIG_DIR", &self.config)
             .env_remove("XDG_STATE_HOME")
             .env("PATH", lsp_path(&self.bin))
             .env("GIT_CONFIG_GLOBAL", &cfg)
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("GREENPISTE_OFF")
+            .env_remove("GREENBELAY_OFF")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1874,7 +1874,7 @@ impl LspWorld {
     }
 
     fn journal_rows(&self, session: &str) -> Vec<String> {
-        std::fs::read_to_string(self.config.join("greenpiste").join("journal.log"))
+        std::fs::read_to_string(self.config.join("greenbelay").join("journal.log"))
             .unwrap_or_default()
             .lines()
             .filter(|l| l.contains(session))
@@ -1990,7 +1990,7 @@ fn an_observed_code_read_leaves_the_size_advice_speaking() {
         "lo-1",
         &big,
         "",
-        "[greenpiste \"code-read-not-lsp\"]\n\tstance = observe\n",
+        "[greenbelay \"code-read-not-lsp\"]\n\tstance = observe\n",
     );
     let said = r.reason();
     assert!(said.contains("read-unbounded-large"), "{}", r.stdout);
@@ -2134,7 +2134,7 @@ fn a_shell_symbol_grep_over_code_is_advised_once() {
 }
 
 const DENY_HAIKU: &str =
-    "[greenpiste \"symbol-grep-not-lsp\"]\n\tdenyAgents = relais:relais-worker-haiku-*\n";
+    "[greenbelay \"symbol-grep-not-lsp\"]\n\tdenyAgents = relais:relais-worker-haiku-*\n";
 const HAIKU: &str = "relais:relais-worker-haiku-default";
 const SYMBOL_GREP: &str = r#"{"pattern":"fn agent_type","path":"."}"#;
 
@@ -2243,8 +2243,8 @@ fn a_denied_worker_shell_grep_is_refused_once() {
 fn a_denied_worker_whose_telling_cannot_be_recorded_is_advised() {
     let w = LspWorld::new("deny-agents-unrecorded", true);
     w.install_relais_workers();
-    std::fs::create_dir_all(w.config.join("greenpiste")).expect("journal dir");
-    std::fs::write(w.config.join("greenpiste").join("sessions"), "x").expect("block sessions");
+    std::fs::create_dir_all(w.config.join("greenbelay")).expect("journal dir");
+    std::fs::write(w.config.join("greenbelay").join("sessions"), "x").expect("block sessions");
     let reply = w.grep_as("du-1", HAIKU, SYMBOL_GREP, DENY_HAIKU);
     assert!(!reply.stdout.contains("\"deny\""), "{}", reply.stdout);
     assert!(
@@ -2256,7 +2256,7 @@ fn a_denied_worker_whose_telling_cannot_be_recorded_is_advised() {
     assert!(rows.iter().any(|r| r.contains("unrecorded")), "{rows:?}");
 }
 
-const DENY: &str = "[greenpiste \"code-read-not-lsp\"]\n\tstance = deny\n";
+const DENY: &str = "[greenbelay \"code-read-not-lsp\"]\n\tstance = deny\n";
 
 /// A whole Read after a documentSymbol on the same file is silent, and the
 /// journal holds the call, then the rule's `lsp-first`.
@@ -2440,7 +2440,7 @@ fn a_denied_code_read_passes_once_lsp_was_asked() {
 
 // --- file-reread: a record per agent, exact windows, certain or uncertain ---
 
-const REREAD_DENY: &str = "[greenpiste \"file-reread\"]\n\tstance = deny\n";
+const REREAD_DENY: &str = "[greenbelay \"file-reread\"]\n\tstance = deny\n";
 
 /// A scratch file, and every payload shape the per-agent read record sees.
 struct Rr {
@@ -2537,7 +2537,7 @@ impl Rr {
     }
 
     fn sessions(&self) -> PathBuf {
-        home().join("greenpiste").join("sessions")
+        home().join("greenbelay").join("sessions")
     }
 }
 
@@ -2593,7 +2593,7 @@ fn an_agent_id_that_is_not_a_key_neither_records_nor_denies() {
         f.post_bash(bad, "cat f.txt", r#""ok""#);
     }
     // Nothing escaped `sessions/`.
-    let root = home().join("greenpiste");
+    let root = home().join("greenbelay");
     assert!(!root.join("x.log").exists());
     assert!(!root.join("x").exists());
     assert!(!home().join("x.log").exists());
@@ -2934,7 +2934,7 @@ fn guidance_other_memory_files_are_exempt() {
 #[test]
 fn guidance_a_denying_lint_rule_still_denies() {
     let f = ReadFixture::with_content("agw-deny", "x.py", "def f(a):\n    return g(a)\n");
-    let cfg = "[greenpiste \"lint-suppression-added\"]\n\tstance = deny";
+    let cfg = "[greenbelay \"lint-suppression-added\"]\n\tstance = deny";
     let said = f.file_event_with_global("PreToolUse", "Edit", "agw-sd", ADD_IGNORE, cfg);
     assert_eq!(said.decision().as_deref(), Some("deny"), "{}", said.stdout);
     assert!(
@@ -3118,7 +3118,7 @@ fn unloaded_transcript(name: &str) -> PathBuf {
 
 /// How many times the reply's reason text carries the bug-nudge advisory.
 fn advisory_count(r: &Reply) -> usize {
-    r.reason().matches("greenpiste/bug-nudge").count()
+    r.reason().matches("greenbelay/bug-nudge").count()
 }
 
 #[test]
@@ -3302,7 +3302,7 @@ fn send_clocked_with_path(
     now: u64,
     path: Option<&std::ffi::OsStr>,
 ) -> Reply {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
     if let Some(path) = path {
         command.env("PATH", path);
     }
@@ -3310,10 +3310,10 @@ fn send_clocked_with_path(
         .arg("hook")
         .env("CLAUDE_CONFIG_DIR", config_dir)
         .env_remove("XDG_STATE_HOME")
-        .env("GREENPISTE_TEST_NOW", now.to_string())
+        .env("GREENBELAY_TEST_NOW", now.to_string())
         .env("GIT_CONFIG_GLOBAL", home().join("no-global-gitconfig"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env_remove("GREENPISTE_OFF")
+        .env_remove("GREENBELAY_OFF")
         .env_remove("GREENHARNESS_HOST_SLOT")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -3364,7 +3364,7 @@ impl Overlap {
 
     fn activity_file(&self, session: &str) -> PathBuf {
         home()
-            .join("greenpiste")
+            .join("greenbelay")
             .join("sessions")
             .join(format!("{session}.activity"))
     }
@@ -3543,7 +3543,7 @@ fn work_overlap_tells_a_session_once_about_a_live_peer_in_its_repository() {
         &scene.second_repo.display().to_string(),
         "main",
         "1m",
-        "greenpiste board --repo second",
+        "greenbelay board --repo second",
         "SendMessage",
     ] {
         assert!(reason.contains(part), "{part}: {}", told.stdout);
@@ -3607,7 +3607,7 @@ fn work_overlap_window_is_read_from_git_config() {
     let window_config = home().join("window.gitconfig");
     std::fs::write(
         &window_config,
-        "[greenpiste \"work-overlap\"]\n\twindow = 90m\n",
+        "[greenbelay \"work-overlap\"]\n\twindow = 90m\n",
     )
     .expect("config");
     let edit = |session: &str, later: u64| {
@@ -3618,14 +3618,14 @@ fn work_overlap_window_is_read_from_git_config() {
                  "session_id":"{session}","permission_mode":"default",
                  "tool_input":{{"file_path":{file},"old_string":"a","new_string":"b"}}}}"#
         );
-        let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
             .arg("hook")
             .env("CLAUDE_CONFIG_DIR", home())
             .env_remove("XDG_STATE_HOME")
-            .env("GREENPISTE_TEST_NOW", (scene.start + later).to_string())
+            .env("GREENBELAY_TEST_NOW", (scene.start + later).to_string())
             .env("GIT_CONFIG_GLOBAL", &window_config)
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .env_remove("GREENPISTE_OFF")
+            .env_remove("GREENBELAY_OFF")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -4102,7 +4102,7 @@ fn a_plan_lookup_whose_git_closes_stdout_and_keeps_running_is_cut_at_the_budget(
     );
 }
 
-const DUMP_DENY: &str = "[greenpiste \"whole-file-dump\"]\n\tstance = deny\n";
+const DUMP_DENY: &str = "[greenbelay \"whole-file-dump\"]\n\tstance = deny\n";
 
 /// A Bash call in the fixture's directory as `agent` (none: the main
 /// conversation), with `whole-file-dump` at `deny`.
@@ -4144,7 +4144,7 @@ fn at_deny_a_whole_dump_is_refused_once_then_allowed() {
     assert!(said.contains("20 KB"), "names the size: {said}");
     let again = dump_as(&fixture, session, None, "cat big.rs");
     assert_eq!(again.stdout, "", "the repeat passes silently");
-    let journal = std::fs::read_to_string(home().join("greenpiste").join("journal.log"))
+    let journal = std::fs::read_to_string(home().join("greenbelay").join("journal.log"))
         .expect("the hook wrote a journal");
     assert!(
         journal.lines().any(|l| l.contains(session)
@@ -4187,7 +4187,7 @@ fn at_deny_each_file_is_refused_once_and_a_shared_refusal_promises_less() {
     let twice = ReadFixture::with_size("dump-twice", 20_000);
     let both = dump_as(&twice, "dtwice-01", None, "cat big.rs; cat ./big.rs");
     assert_eq!(both.decision().as_deref(), Some("deny"), "{}", both.stdout);
-    let journal = std::fs::read_to_string(home().join("greenpiste").join("journal.log"))
+    let journal = std::fs::read_to_string(home().join("greenbelay").join("journal.log"))
         .expect("the hook wrote a journal");
     assert!(
         !journal
@@ -4237,7 +4237,7 @@ fn at_deny_an_unrecordable_dump_refusal_advises() {
         "{}",
         reply.stdout
     );
-    let journal = std::fs::read_to_string(home().join("greenpiste").join("journal.log"))
+    let journal = std::fs::read_to_string(home().join("greenbelay").join("journal.log"))
         .expect("the hook wrote a journal");
     assert!(
         journal
@@ -4278,7 +4278,7 @@ fn at_deny_only_a_large_whole_dump_is_refused() {
 
 // screenshot-in-main-session
 
-const SCREENSHOT_ADVICE: &str = "greenpiste/screenshot-in-main-session: a screenshot here puts \
+const SCREENSHOT_ADVICE: &str = "greenbelay/screenshot-in-main-session: a screenshot here puts \
      the image (~126 KB) into the main context. Delegate the check: Agent tool with \
      subagent_type \"browser-check\", giving the URL and what to verify.";
 
@@ -4335,8 +4335,8 @@ fn journalled(session: &str, outcome: &str) -> bool {
         .any(|row| row.contains("take_screenshot @main") && row.contains(outcome))
 }
 
-const OBSERVE_STANCE: &str = "[greenpiste \"screenshot-in-main-session\"]\n\tstance = observe";
-const DENY_STANCE: &str = "[greenpiste \"screenshot-in-main-session\"]\n\tstance = deny";
+const OBSERVE_STANCE: &str = "[greenbelay \"screenshot-in-main-session\"]\n\tstance = observe";
+const DENY_STANCE: &str = "[greenbelay \"screenshot-in-main-session\"]\n\tstance = deny";
 
 #[test]
 fn a_main_screenshot_without_a_file_path_is_advised_once() {
@@ -4429,14 +4429,14 @@ fn an_empty_session_id_advises_every_time() {
 
 // relais-run-forks
 
-const FORKS_PREFIX: &str = "greenpiste/relais-run-forks: ";
+const FORKS_PREFIX: &str = "greenbelay/relais-run-forks: ";
 const FORKS_PRIMARY_TAIL: &str = " is in the primary checkout, so this change run would fork \
      a worktree of its own. Start a worktree with the worktree-task skill, pass its path as cwd, \
      and leave workspace unset.";
-const FORKS_SECOND: &str = "greenpiste/relais-run-forks: workspace \"fork\" makes a second \
+const FORKS_SECOND: &str = "greenbelay/relais-run-forks: workspace \"fork\" makes a second \
      worktree beside this one. Leave workspace unset; relais edits a linked worktree in place.";
-const FORKS_OBSERVE: &str = "[greenpiste \"relais-run-forks\"]\n\tstance = observe";
-const FORKS_DENY: &str = "[greenpiste \"relais-run-forks\"]\n\tstance = deny";
+const FORKS_OBSERVE: &str = "[greenbelay \"relais-run-forks\"]\n\tstance = observe";
+const FORKS_DENY: &str = "[greenbelay \"relais-run-forks\"]\n\tstance = deny";
 
 fn forks_git(dir: &std::path::Path, args: &[&str]) {
     let out = Command::new("git")
@@ -4534,7 +4534,7 @@ fn forks_change() -> serde_json::Value {
 /// Whether the journal holds a row for `session` with `needle`; a journal
 /// never written holds none.
 fn forks_row(session: &str, needle: &str) -> bool {
-    std::fs::read_to_string(home().join("greenpiste").join("journal.log"))
+    std::fs::read_to_string(home().join("greenbelay").join("journal.log"))
         .unwrap_or_default()
         .lines()
         .any(|row| row.contains(session) && row.contains(needle))
@@ -4731,14 +4731,14 @@ fn relais_run_forks_a_failing_probe_is_silent_and_journalled() {
         "cwd": "/tmp",
     });
     let dir = home();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
         .arg("hook")
         .env("CLAUDE_CONFIG_DIR", &dir)
         .env_remove("XDG_STATE_HOME")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .env("PATH", &path)
-        .env_remove("GREENPISTE_OFF")
+        .env_remove("GREENBELAY_OFF")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

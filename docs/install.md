@@ -7,51 +7,51 @@ into your `settings.json` as a side effect of you fetching it.
 ## The binary
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/greenharness/greenpiste/main/install/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/greenharness/greenbelay/main/install/install.sh | sh
 ```
 
 ```powershell
-irm https://raw.githubusercontent.com/greenharness/greenpiste/main/install/install.ps1 | iex
+irm https://raw.githubusercontent.com/greenharness/greenbelay/main/install/install.ps1 | iex
 ```
 
 Either one downloads a release binary, verifies it against the published
 `SHA256SUMS`, and puts it in `~/.local/bin`. Neither wires anything in.
 
-Or: `brew install fredericrous/tap/greenpiste`, `cargo install greenpiste`,
+Or: `brew install fredericrous/tap/greenbelay`, `cargo install greenbelay`,
 or a binary straight from
-[Releases](https://github.com/greenharness/greenpiste/releases/latest) — Linux
+[Releases](https://github.com/greenharness/greenbelay/releases/latest) — Linux
 x86_64 (gnu and static musl) and aarch64 (gnu), macOS (Intel and Apple
 silicon), and Windows x86_64.
 
 ## Upgrading from amont-agent
 
-greenpiste was called `amont-agent` until 4.0.0. The installers and the
-formula also place `amont-agent` beside `greenpiste`, as a copy of the same
+greenbelay was called `amont-agent` until 4.0.0. The installers and the
+formula also place `amont-agent` beside `greenbelay`, as a copy of the same
 binary, so hook entries written for the old name keep firing after the
 upgrade. With Homebrew, the upgrade goes through the tap's rename, and
-Homebrew trusts only the formula you named, so trust greenpiste first:
+Homebrew trusts only the formula you named, so trust greenbelay first:
 
 ```sh
-brew trust --formula fredericrous/tap/greenpiste
+brew trust --formula fredericrous/tap/greenbelay
 brew upgrade fredericrous/tap/amont-agent
 ```
 
 Without the `brew trust`, Homebrew stops with "Refusing to load formula
-fredericrous/tap/greenpiste from untrusted tap". Then move the hook entries
+fredericrous/tap/greenbelay from untrusted tap". Then move the hook entries
 to the new name once:
 
 ```sh
-greenpiste install --write   # replaces the amont-agent entries, adds no second set
-greenpiste doctor
+greenbelay install --write   # replaces the amont-agent entries, adds no second set
+greenbelay doctor
 ```
 
-`cargo install greenpiste` places no `amont-agent` copy. The `amont-agent`
+`cargo install greenbelay` places no `amont-agent` copy. The `amont-agent`
 crates stay at 3.35.0. Release 5.0.0 also renames the names the tool reads
-and writes (the `~/.claude/greenpiste/` directory, `greenpiste.*` git config
-keys, `GREENPISTE_*` variables) and moves this machine's data once; see
+and writes (the `~/.claude/greenbelay/` directory, `greenbelay.*` git config
+keys, `GREENBELAY_*` variables) and moves this machine's data once; see
 [migrating to the new data names](migrate.md).
 
-The installers read `GREENPISTE_BIN_DIR` and `GREENPISTE_VERSION`; the old
+The installers read `GREENBELAY_BIN_DIR` and `GREENBELAY_VERSION`; the old
 `AMONT_AGENT_BIN_DIR` and `AMONT_AGENT_VERSION` still work, with a warning.
 
 ## Why there is no npm package
@@ -80,8 +80,8 @@ Every channel above hands `install` a path that stays put.
 ## The wiring
 
 ```sh
-greenpiste install          # prints the settings block, writes nothing
-greenpiste install --write  # merges it into ~/.claude/settings.json
+greenbelay install          # prints the settings block, writes nothing
+greenbelay install --write  # merges it into ~/.claude/settings.json
 ```
 
 `install` refuses to guess. It will not patch a `settings.json` it could not
@@ -91,8 +91,8 @@ changes nothing unless `--reformat` says otherwise. `uninstall` removes exactly
 what it wrote and leaves everything else byte-identical.
 
 ```sh
-greenpiste install --write --project   # .claude/settings.json instead
-greenpiste install --write --local     # .claude/settings.local.json
+greenbelay install --write --project   # .claude/settings.json instead
+greenbelay install --write --local     # .claude/settings.local.json
 ```
 
 Four kinds of entry are written: the guard on `PreToolUse`, for Bash and for
@@ -117,13 +117,13 @@ non-zero when the guard is inert, so it can run from cron:
 
 ```
 ✓ installed in /Users/you/.claude/settings.json
-✓ greenpiste 4.0.0 at /Users/you/.local/bin/greenpiste
+✓ greenbelay 4.0.0 at /Users/you/.local/bin/greenbelay
 ✓ a refused command produces a valid decision document
 ✓ last ran 4m ago
 ✓ acting on pipe-to-tail
 ```
 
-`greenpiste doctor --json` prints one JSON document on stdout instead:
+`greenbelay doctor --json` prints one JSON document on stdout instead:
 `healthy` (the same verdict as the exit status), `findings` (a list of `ok`,
 `advisory`, `line` and `detail`), and `integration`, which is reported apart
 from health: `state` is `present`, `partial`, `absent` or `unknown` (a settings
@@ -142,9 +142,9 @@ An agents directory or plugin manifest that cannot be read counts as installed.
 ## Turning it off
 
 ```sh
-GREENPISTE_OFF=1                                # this shell only
-git config --global greenpiste.enabled false    # everywhere
-greenpiste uninstall --write                    # remove the settings entries
+GREENBELAY_OFF=1                                # this shell only
+git config --global greenbelay.enabled false    # everywhere
+greenbelay uninstall --write                    # remove the settings entries
 ```
 
 Demoting one rule is almost always the better move than switching the guard

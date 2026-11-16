@@ -30,7 +30,7 @@ use std::process::Command;
 /// regression test that only sometimes meets the condition it guards is a
 /// coin, not a test.
 fn big_transcript() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("greenpiste-sigpipe-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("greenbelay-sigpipe-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("scratch dir");
     let mut out = String::new();
@@ -53,7 +53,7 @@ fn big_transcript() -> PathBuf {
 #[test]
 fn a_closed_pipe_kills_a_listing_quietly() {
     let dir = big_transcript();
-    let bin = env!("CARGO_BIN_EXE_greenpiste");
+    let bin = env!("CARGO_BIN_EXE_greenbelay");
     let err = dir.join("stderr.txt");
     let status = dir.join("status.txt");
 
@@ -138,7 +138,7 @@ fn a_closed_pipe_kills_a_listing_quietly() {
 /// `die_on_sigpipe` is the one above.
 #[test]
 fn rules_survives_a_closed_pipe() {
-    let bin = env!("CARGO_BIN_EXE_greenpiste");
+    let bin = env!("CARGO_BIN_EXE_greenbelay");
     for reader in ["head -1", "grep -q pipe-to-tail"] {
         let out = scratch_sh()
             .arg("-c")
@@ -167,7 +167,7 @@ fn rules_survives_a_closed_pipe() {
 /// them.
 #[test]
 fn help_survives_a_closed_pipe() {
-    let bin = env!("CARGO_BIN_EXE_greenpiste");
+    let bin = env!("CARGO_BIN_EXE_greenbelay");
     let out = scratch_sh()
         .arg("-c")
         .arg(format!("'{bin}' --help 2>&1 | grep -q backtest"))
@@ -185,7 +185,7 @@ fn help_survives_a_closed_pipe() {
     );
 }
 
-/// A shell whose children, the greenpiste binary among them, see scratch
+/// A shell whose children, the greenbelay binary among them, see scratch
 /// directories, so the migration every subcommand runs first never touches the
 /// real home of whoever runs the tests.
 fn scratch_sh() -> Command {

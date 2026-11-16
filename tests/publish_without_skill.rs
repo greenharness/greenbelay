@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const RULE: &str = "greenpiste/publish-without-skill";
+const RULE: &str = "greenbelay/publish-without-skill";
 
 #[derive(Debug, PartialEq)]
 enum Said {
@@ -37,7 +37,7 @@ struct World {
 impl World {
     fn new(name: &str) -> World {
         let root = std::env::temp_dir().join(format!(
-            "greenpiste-pws-{name}-{}-{:?}",
+            "greenbelay-pws-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -58,7 +58,7 @@ impl World {
         let out = Command::new("git")
             .args(["config", "--file"])
             .arg(self.root.join("global"))
-            .args([&format!("greenpiste.{rule}.stance"), stance])
+            .args([&format!("greenbelay.{rule}.stance"), stance])
             .output()
             .expect("git config");
         assert!(out.status.success());
@@ -89,13 +89,13 @@ impl World {
             payload["agent_transcript_path"] = serde_json::json!(a);
             payload["agent_id"] = serde_json::json!("a1");
         }
-        let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
             .arg("hook")
             .env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
             .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", self.root.join("global"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("GREENPISTE_OFF")
+            .env_remove("GREENBELAY_OFF")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -132,7 +132,7 @@ impl World {
     }
 
     fn journal(&self) -> String {
-        std::fs::read_to_string(self.root.join("claude/greenpiste/journal.log")).unwrap_or_default()
+        std::fs::read_to_string(self.root.join("claude/greenbelay/journal.log")).unwrap_or_default()
     }
 }
 
@@ -400,7 +400,7 @@ fn gh_pr_merge_auto_still_refuses_on_its_own() {
     let t = w.transcript("t", &[human("x")]);
     let said = w.publish(cmd, &t);
     let text = said.text();
-    let (a, b) = (text.find("greenpiste/gh-pr-merge-auto"), text.find(RULE));
+    let (a, b) = (text.find("greenbelay/gh-pr-merge-auto"), text.find(RULE));
     assert!(matches!(said, Said::Deny(_)), "{said:?}");
     assert!(a.is_some() && b.is_some() && a < b, "{text}");
     let t = w.transcript("u", &lines(&[vec![human("x")], skill("merge-when-green")]));
@@ -422,7 +422,7 @@ fn a_curl_merge_is_refused_alone_or_advised_first() {
     w.stance("publish-without-skill", "advise");
     let said = w.publish(CURL, &t);
     let text = said.text();
-    let (a, b) = (text.find(RULE), text.find("greenpiste/forge-merge-by-hand"));
+    let (a, b) = (text.find(RULE), text.find("greenbelay/forge-merge-by-hand"));
     assert!(matches!(said, Said::Advise(_)), "{said:?}");
     assert!(a.is_some() && b.is_some() && a < b, "{text}");
 }

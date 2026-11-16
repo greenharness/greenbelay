@@ -13,7 +13,7 @@ struct Home(PathBuf);
 impl Home {
     fn new(name: &str) -> Home {
         let dir = std::env::temp_dir().join(format!(
-            "greenpiste-rules-json-{name}-{}",
+            "greenbelay-rules-json-{name}-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
@@ -23,7 +23,7 @@ impl Home {
     }
 
     fn rules(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        Command::new(env!("CARGO_BIN_EXE_greenbelay"))
             .arg("rules")
             .args(args)
             .current_dir(&self.0)
@@ -31,7 +31,7 @@ impl Home {
             .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", self.0.join("global"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("GREENPISTE_OFF")
+            .env_remove("GREENBELAY_OFF")
             .output()
             .expect("the binary runs")
     }
@@ -147,7 +147,7 @@ fn the_stance_in_force_is_this_machines_and_the_default_is_what_ships() {
         "an empty config changes nothing"
     );
 
-    h.set(&format!("greenpiste.{id}.stance"), "deny");
+    h.set(&format!("greenbelay.{id}.stance"), "deny");
     let raised = h.json();
     let rule = raised.iter().find(|e| e["id"] == id.as_str()).unwrap();
     assert_eq!(rule["stance"], "deny");
@@ -183,7 +183,7 @@ fn rules_takes_only_json() {
         assert_eq!(out.status.code(), Some(0));
         assert_eq!(
             String::from_utf8(out.stdout).unwrap(),
-            "usage: greenpiste rules [--json]\n"
+            "usage: greenbelay rules [--json]\n"
         );
     }
 }

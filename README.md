@@ -1,4 +1,4 @@
-# greenpiste
+# greenbelay
 
 **Your agent just ran `git push … | tail -5`, the push was rejected, and the
 command reported success.**
@@ -9,17 +9,17 @@ that never left the machine all look identical — and the trimming throws the
 error text away too. No git hook can catch that: the mistake is in the command
 string and never reaches one.
 
-`greenpiste` (formerly `amont-agent`, still installed as a copy under that name) is a Claude Code hook that reads an agent's tool calls before
+`greenbelay` (formerly `amont-agent`, still installed as a copy under that name) is a Claude Code hook that reads an agent's tool calls before
 they run — a shell command first of all — and can observe one, advise against
 it, or refuse it. The same guard holds the work-process verdicts a tool call
 waits on: a plan's review panel before `ExitPlanMode`, the implementation
 review and the preview approval before a push.
 
-[![CI](https://github.com/greenharness/greenpiste/actions/workflows/ci.yaml/badge.svg)](https://github.com/greenharness/greenpiste/actions/workflows/ci.yaml)
-[![License](https://img.shields.io/github/license/greenharness/greenpiste)](LICENSE)
+[![CI](https://github.com/greenharness/greenbelay/actions/workflows/ci.yaml/badge.svg)](https://github.com/greenharness/greenbelay/actions/workflows/ci.yaml)
+[![License](https://img.shields.io/github/license/greenharness/greenbelay)](LICENSE)
 
 ```console
-$ greenpiste check 'git push origin main 2>&1 | tail -5'
+$ greenbelay check 'git push origin main 2>&1 | tail -5'
 pipe-to-tail [deny]
   `git push` pipes into `tail`, so the pipeline reports tail's exit status, not git push's. A failed, rejected or timed-out run reads as success, and the trimming discards the error text as well.
   → Run `git push` on its own and read its output afterwards. Then verify the effect rather than the exit code.
@@ -29,24 +29,24 @@ pipe-to-tail [deny]
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/greenharness/greenpiste/main/install/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/greenharness/greenbelay/main/install/install.sh | sh
 ```
 
-Or `brew install fredericrous/tap/greenpiste`, `cargo install greenpiste`,
+Or `brew install fredericrous/tap/greenbelay`, `cargo install greenbelay`,
 the PowerShell installer, or a
-[prebuilt binary](https://github.com/greenharness/greenpiste/releases/latest).
+[prebuilt binary](https://github.com/greenharness/greenbelay/releases/latest).
 Then wire it in — a separate step, because a program that can refuse your
 agent's commands should not add itself to your settings as a side effect of
 you downloading it:
 
 ```sh
-greenpiste install          # prints the settings block, writes nothing
-greenpiste install --write  # merges it into ~/.claude/settings.json
-greenpiste doctor           # installed, runnable, firing? plan root in use
+greenbelay install          # prints the settings block, writes nothing
+greenbelay install --write  # merges it into ~/.claude/settings.json
+greenbelay doctor           # installed, runnable, firing? plan root in use
 ```
 
 `install --write` also places the `clear-relay` Claude Code plugin under
-`<state dir>/greenpiste/claude-marketplace/` and enables it in the same
+`<state dir>/greenbelay/claude-marketplace/` and enables it in the same
 `settings.json`; `uninstall --write` removes it again.
 
 ## It measures before it blocks
@@ -63,7 +63,7 @@ context with nothing in flight it tells you a `/clear` would pay, and at
 `/clear` and carry on. A rule is promoted from your own
 transcripts, not from an argument: `mine`, `backtest`, `explain`,
 `corpus check`, `backtest --compliance`, then `graduate`. Demoting is one
-command with no questions. `greenpiste rules` lists every rule with the
+command with no questions. `greenbelay rules` lists every rule with the
 stance in force on your machine and its measured rate.
 
 It never emits `allow`, every failure path is silence, it does not phone home,
@@ -71,8 +71,8 @@ and no repository can change a stance — stances live in your `--global` git
 config only:
 
 ```sh
-git config --global greenpiste.pipe-to-tail.stance observe   # one rule
-GREENPISTE_OFF=1                                             # this shell
+git config --global greenbelay.pipe-to-tail.stance observe   # one rule
+GREENBELAY_OFF=1                                             # this shell
 ```
 
 ## Runs alone
@@ -88,7 +88,7 @@ the declared code-review profiles are required.
 
 ## Documentation
 
-The [book](https://greenharness.github.io/greenpiste/), versioned with the
+The [book](https://greenharness.github.io/greenbelay/), versioned with the
 code:
 
 - [Installing](docs/install.md) — channels, the wiring, `doctor`, turning it off
@@ -109,9 +109,9 @@ and the compiler keeps them apart (decisions ADR-0039):
 
 | Crate | Holds | Pages |
 |---|---|---|
-| [`greenpiste-guard`](crates/greenpiste-guard) | shell analysis, the rules and their stances, the assertions, the journal, `quiet` | [rules](docs/rules.md), [assertions](docs/assertions.md), [stances](docs/stances.md), [analysis](docs/analysis.md), [measuring](docs/measuring.md), [quiet](docs/quiet.md) |
-| [`greenpiste-process`](crates/greenpiste-process) | the plan-review panel, the implementation review, preview approvals, provenance, `shipped` | [plan review](docs/plan-review.md), [implementation review](docs/implementation-review.md), [preview](docs/preview.md), [shipped](docs/shipped.md) |
-| `greenpiste` (the root) | the CLI and the hook's dispatch: the composition root that wires both | [install](docs/install.md), [configuration](docs/configuration.md), [session notice](docs/session-notice.md) |
+| [`greenbelay-guard`](crates/greenbelay-guard) | shell analysis, the rules and their stances, the assertions, the journal, `quiet` | [rules](docs/rules.md), [assertions](docs/assertions.md), [stances](docs/stances.md), [analysis](docs/analysis.md), [measuring](docs/measuring.md), [quiet](docs/quiet.md) |
+| [`greenbelay-process`](crates/greenbelay-process) | the plan-review panel, the implementation review, preview approvals, provenance, `shipped` | [plan review](docs/plan-review.md), [implementation review](docs/implementation-review.md), [preview](docs/preview.md), [shipped](docs/shipped.md) |
+| `greenbelay` (the root) | the CLI and the hook's dispatch: the composition root that wires both | [install](docs/install.md), [configuration](docs/configuration.md), [session notice](docs/session-notice.md) |
 
 The guard never names the work process or the binary; the work process never
 names the binary. Dependencies are `serde`/`serde_json` (for reading),

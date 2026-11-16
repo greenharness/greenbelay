@@ -6,7 +6,7 @@
 //! produce identical evidence. Every test here sets up one of those states and
 //! insists `doctor` distinguishes it.
 
-use greenpiste_guard::names::{self, old};
+use greenbelay_guard::names::{self, old};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -16,7 +16,7 @@ struct Home(PathBuf);
 impl Home {
     fn new(name: &str) -> Home {
         let dir =
-            std::env::temp_dir().join(format!("greenpiste-doctor-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenbelay-doctor-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir); // a stale scratch directory may not exist
         std::fs::create_dir_all(&dir).expect("scratch dir");
         Home(dir)
@@ -32,7 +32,7 @@ impl Home {
         self
     }
     fn run(&self, args: &[&str]) -> (i32, String) {
-        let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let out = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
             .args(args)
             .current_dir(&self.0)
             .env("CLAUDE_CONFIG_DIR", &self.0)
@@ -42,7 +42,7 @@ impl Home {
             .env("XDG_STATE_HOME", self.0.join("state"))
             .env("GIT_CONFIG_GLOBAL", self.0.join("home").join(".gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("GREENPISTE_OFF")
+            .env_remove("GREENBELAY_OFF")
             .output()
             .expect("the binary runs");
         (
@@ -76,7 +76,7 @@ fn a_missing_binary_is_reported_as_broken() {
     // because that literal is NOT absolute on Windows — `doctor` then correctly
     // reported "not an absolute path" and this test, which had assumed POSIX
     // path semantics, failed on the Windows runner while the code was right.
-    let missing = h.0.join("nowhere").join("greenpiste");
+    let missing = h.0.join("nowhere").join("greenbelay");
     assert!(missing.is_absolute(), "the fixture must be absolute");
     std::fs::write(
         h.settings(),
@@ -105,7 +105,7 @@ fn a_relative_command_is_reported_as_fragile() {
         h.settings(),
         serde_json::to_string_pretty(&serde_json::json!({
             "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
-                {"type": "command", "command": "greenpiste", "args": ["hook"]}
+                {"type": "command", "command": "greenbelay", "args": ["hook"]}
             ]}]}
         }))
         .unwrap(),
@@ -124,7 +124,7 @@ fn a_fresh_install_is_healthy() {
     h.with_a_session();
     let (code, out) = h.run(&["install", "--write"]);
     assert_eq!(code, 0, "{out}");
-    // Claude Code registers the plugin itself; greenpiste only reads that.
+    // Claude Code registers the plugin itself; greenbelay only reads that.
     h.registry(names::DATA_DIR);
     let (code, out) = h.run(&["doctor"]);
     assert_eq!(code, 0, "a fresh install should be healthy:\n{out}");
@@ -257,7 +257,7 @@ fn a_missing_heartbeat_is_not_evidence_the_guard_is_dead() {
         h.settings(),
         serde_json::to_string_pretty(&serde_json::json!({
             "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
-                {"type": "command", "command": env!("CARGO_BIN_EXE_greenpiste"), "args": ["hook"]}
+                {"type": "command", "command": env!("CARGO_BIN_EXE_greenbelay"), "args": ["hook"]}
             ]}]}
         }))
         .unwrap(),
@@ -290,7 +290,7 @@ fn two_installs_are_reported_as_a_double_fire() {
     std::fs::create_dir_all(&proj).unwrap();
     std::fs::copy(h.settings(), proj.join("settings.json")).unwrap();
 
-    let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let out = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
         .arg("doctor")
         .current_dir(h.0.join("proj"))
         .env("CLAUDE_CONFIG_DIR", &h.0)
@@ -309,15 +309,15 @@ fn the_kill_switch_is_reported() {
     let h = Home::new("off");
     h.with_a_session();
     h.run(&["install", "--write"]);
-    let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let out = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
         .arg("doctor")
         .env("CLAUDE_CONFIG_DIR", &h.0)
         .env_remove("XDG_STATE_HOME")
-        .env("GREENPISTE_OFF", "1")
+        .env("GREENBELAY_OFF", "1")
         .output()
         .expect("runs");
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    assert!(text.contains("GREENPISTE_OFF"), "{text}");
+    assert!(text.contains("GREENBELAY_OFF"), "{text}");
     assert!(text.contains("observe"), "{text}");
 }
 
@@ -338,10 +338,10 @@ fn install_both(h: &Home) {
         serde_json::to_string_pretty(&serde_json::json!({
             "hooks": {
                 "PreToolUse": [{"matcher": "Bash", "hooks": [
-                    {"type": "command", "command": env!("CARGO_BIN_EXE_greenpiste"), "args": ["hook"]}
+                    {"type": "command", "command": env!("CARGO_BIN_EXE_greenbelay"), "args": ["hook"]}
                 ]}],
                 "SessionStart": [{"hooks": [
-                    {"type": "command", "command": env!("CARGO_BIN_EXE_greenpiste"), "args": ["hook"]}
+                    {"type": "command", "command": env!("CARGO_BIN_EXE_greenbelay"), "args": ["hook"]}
                 ]}]
             }
         }))
@@ -357,7 +357,7 @@ fn entries_still_pointing_at_the_old_name_are_told_to_reinstall() {
     let h = Home::new("alias");
     h.with_a_session();
     let alias = h.0.join("amont-agent");
-    std::fs::copy(env!("CARGO_BIN_EXE_greenpiste"), &alias).expect("alias copy");
+    std::fs::copy(env!("CARGO_BIN_EXE_greenbelay"), &alias).expect("alias copy");
     std::fs::write(
         h.settings(),
         serde_json::to_string_pretty(&serde_json::json!({
@@ -373,7 +373,7 @@ fn entries_still_pointing_at_the_old_name_are_told_to_reinstall() {
         out.contains("1 hook entry still runs the old name"),
         "{out}"
     );
-    assert!(out.contains("greenpiste install --write"), "{out}");
+    assert!(out.contains("greenbelay install --write"), "{out}");
 }
 
 /// Backdate a file, since the whole question is about relative ages.
@@ -393,7 +393,7 @@ fn a_recent_firing_outweighs_an_old_heartbeat() {
     h.with_a_session();
     install_both(&h);
 
-    let dir = h.0.join("greenpiste");
+    let dir = h.0.join("greenbelay");
     std::fs::create_dir_all(&dir).expect("state dir");
     std::fs::write(dir.join("heartbeat"), "x\n").expect("heartbeat");
     // Well past the six-hour grace, and before the session was written.
@@ -421,7 +421,7 @@ fn doctor_reads_the_window_across_generations() {
     let h = Home::new("generations");
     h.with_a_session();
     install_both(&h);
-    let dir = h.0.join("greenpiste");
+    let dir = h.0.join("greenbelay");
     std::fs::create_dir_all(&dir).expect("state dir");
     std::fs::write(dir.join("heartbeat"), "x\n").expect("heartbeat");
     backdate(&dir.join("heartbeat"), "202001010000");
@@ -429,7 +429,7 @@ fn doctor_reads_the_window_across_generations() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let rec = |ago: u64| format!("greenpiste-v1\nF {} r deny denied - - - x\n", now - ago);
+    let rec = |ago: u64| format!("greenbelay-v1\nF {} r deny denied - - - x\n", now - ago);
     std::fs::write(dir.join("journal.log.3"), rec(6 * 86_400)).expect(".3");
     std::fs::write(dir.join("journal.log.1"), rec(86_400)).expect(".1");
     std::fs::write(dir.join("journal.log"), rec(10)).expect("live");
@@ -456,7 +456,7 @@ fn an_old_heartbeat_with_no_firings_still_accuses() {
     h.with_a_session();
     install_both(&h);
 
-    let dir = h.0.join("greenpiste");
+    let dir = h.0.join("greenbelay");
     std::fs::create_dir_all(&dir).expect("state dir");
     std::fs::write(dir.join("heartbeat"), "x\n").expect("heartbeat");
     backdate(&dir.join("heartbeat"), "202001010000");
@@ -485,7 +485,7 @@ fn doctor_does_not_journal_its_own_probe() {
     h.with_a_session();
     install_both(&h);
 
-    let journal = h.0.join("greenpiste").join("journal.log");
+    let journal = h.0.join("greenbelay").join("journal.log");
     let before = std::fs::read_to_string(&journal).unwrap_or_default();
 
     let (_code, out) = h.run(&["doctor"]);
@@ -527,7 +527,7 @@ fn doctor_says_whether_the_lsp_rules_can_speak_here() {
             format!(r#"{{"enabledPlugins":{{"fleet-lsp@fleet-lsp":{plugin_on}}}}}"#),
         )
         .expect("settings");
-        let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let out = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
             .arg("doctor")
             .current_dir(&repo)
             .env("CLAUDE_CONFIG_DIR", &h.0)
@@ -536,7 +536,7 @@ fn doctor_says_whether_the_lsp_rules_can_speak_here() {
                 "PATH",
                 std::env::join_paths([bin.clone()]).expect("a PATH of one directory"),
             )
-            .env_remove("GREENPISTE_OFF")
+            .env_remove("GREENBELAY_OFF")
             .output()
             .expect("the binary runs");
         String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr)
@@ -551,11 +551,11 @@ fn doctor_says_whether_the_lsp_rules_can_speak_here() {
 
 /// `doctor --json`, with stdout parsed whole: anything else there fails.
 fn integration(h: &Home) -> (i32, serde_json::Value) {
-    let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let out = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
         .args(["doctor", "--json"])
         .env("CLAUDE_CONFIG_DIR", &h.0)
         .env_remove("XDG_STATE_HOME")
-        .env_remove("GREENPISTE_OFF")
+        .env_remove("GREENBELAY_OFF")
         .output()
         .expect("the binary runs");
     let stdout = String::from_utf8(out.stdout).expect("UTF-8");
@@ -576,9 +576,9 @@ fn json_reports_an_absent_integration_apart_from_health() {
 #[test]
 fn json_reports_present_but_unhealthy_with_file_and_binary() {
     let h = Home::new("json-present");
-    let missing = h.0.join("nowhere").join("greenpiste");
+    let missing = h.0.join("nowhere").join("greenbelay");
     let mut hooks = serde_json::Map::new();
-    for (event, matcher) in greenpiste_guard::settings::TARGETS {
+    for (event, matcher) in greenbelay_guard::settings::TARGETS {
         let mut block = serde_json::json!({"hooks": [
             {"type": "command", "command": missing, "args": ["hook"]}]});
         if let Some(matcher) = matcher {
@@ -642,7 +642,7 @@ fn json_reports_unknown_for_unparsable_settings() {
 fn doctor_help_prints_usage_on_stdout_and_exits_zero() {
     let h = Home::new("doctor-help");
     for flag in ["--help", "-h"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_greenbelay"))
             .args(["doctor", flag])
             .env("CLAUDE_CONFIG_DIR", &h.0)
             .env_remove("XDG_STATE_HOME")
@@ -651,7 +651,7 @@ fn doctor_help_prints_usage_on_stdout_and_exits_zero() {
         assert_eq!(out.status.code(), Some(0), "{flag}");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(
-            stdout.contains("usage: greenpiste doctor [--json]"),
+            stdout.contains("usage: greenbelay doctor [--json]"),
             "{stdout}"
         );
     }
@@ -696,12 +696,12 @@ fn plan_root_doctor(
         let ok = Command::new("git")
             .args(["config", "--file"])
             .arg(&gitconfig)
-            .args(["greenpiste.plan-review.root", v])
+            .args(["greenbelay.plan-review.root", v])
             .status()
             .unwrap();
         assert!(ok.success());
     }
-    let mut c = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    let mut c = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
     c.arg("doctor")
         .args(json.then_some("--json"))
         .current_dir(cwd)
@@ -710,10 +710,10 @@ fn plan_root_doctor(
         .env("HOME", &home)
         .env("GIT_CONFIG_GLOBAL", &gitconfig)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env_remove("GREENPISTE_OFF")
-        .env_remove("GREENPISTE_PLAN_ROOT");
+        .env_remove("GREENBELAY_OFF")
+        .env_remove("GREENBELAY_PLAN_ROOT");
     if let Some(v) = env {
-        c.env("GREENPISTE_PLAN_ROOT", v);
+        c.env("GREENBELAY_PLAN_ROOT", v);
     }
     let out = c.output().unwrap();
     String::from_utf8_lossy(&out.stdout).into_owned()
@@ -826,12 +826,12 @@ fn opener_doctor_line(home_dir: &Home, name: &str, opener: Option<&str>) -> Stri
         let ok = Command::new("git")
             .args(["config", "--file"])
             .arg(&gitconfig)
-            .args(["greenpiste.opener", v])
+            .args(["greenbelay.opener", v])
             .status()
             .unwrap();
         assert!(ok.success());
     }
-    let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let out = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
         .args(["doctor", "--json"])
         .current_dir(&home_dir.0)
         .env("CLAUDE_CONFIG_DIR", &home_dir.0)
@@ -839,7 +839,7 @@ fn opener_doctor_line(home_dir: &Home, name: &str, opener: Option<&str>) -> Stri
         .env("HOME", &home)
         .env("GIT_CONFIG_GLOBAL", &gitconfig)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env_remove("GREENPISTE_OFF")
+        .env_remove("GREENBELAY_OFF")
         .output()
         .unwrap();
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -861,7 +861,7 @@ fn doctor_reports_the_opener_and_warns_when_its_program_is_missing() {
         "{missing}"
     );
     assert!(
-        missing.contains("git config --global greenpiste.opener"),
+        missing.contains("git config --global greenbelay.opener"),
         "{missing}"
     );
     let unset = opener_doctor_line(&home_dir, "unset", None);
@@ -951,7 +951,7 @@ impl Home {
     }
 
     fn doctor_with_old_variable(&self) -> (i32, String) {
-        let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let out = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
             .arg("doctor")
             .current_dir(&self.0)
             .env("CLAUDE_CONFIG_DIR", &self.0)
@@ -961,7 +961,7 @@ impl Home {
             .env("GIT_CONFIG_GLOBAL", self.0.join("home").join(".gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env(format!("{}OFF", old::ENV_PREFIX), "secret-value")
-            .env_remove("GREENPISTE_OFF")
+            .env_remove("GREENBELAY_OFF")
             .output()
             .expect("the binary runs");
         (
@@ -988,7 +988,7 @@ fn doctor_lists_each_thing_the_migration_left_with_its_fix_and_changes_nothing()
         t
     };
     assert_eq!(before, after, "doctor wrote to the tree");
-    let fix = "greenpiste migrate";
+    let fix = "greenbelay migrate";
     let line_with = |needle: &str| {
         out.lines()
             .find(|l| l.contains(needle))
@@ -1032,7 +1032,7 @@ fn doctor_reports_the_markers() {
 fn doctor_on_a_migrated_tree_has_nothing_to_report() {
     let h = Home::new("migration-done");
     h.old_style();
-    let migrated = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let migrated = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
         .arg("migrate")
         .current_dir(&h.0)
         .env("CLAUDE_CONFIG_DIR", &h.0)
@@ -1041,7 +1041,7 @@ fn doctor_on_a_migrated_tree_has_nothing_to_report() {
         .env("XDG_STATE_HOME", h.0.join("state"))
         .env("GIT_CONFIG_GLOBAL", h.0.join("home").join(".gitconfig"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env_remove("GREENPISTE_OFF")
+        .env_remove("GREENBELAY_OFF")
         .output()
         .unwrap();
     assert!(migrated.status.success(), "{migrated:?}");
@@ -1056,7 +1056,7 @@ fn doctor_on_a_migrated_tree_has_nothing_to_report() {
     assert!(!out.contains("old git config key"), "{out}");
 }
 
-/// A finding greenpiste can fix fails doctor (`✗`); the person's own
+/// A finding greenbelay can fix fails doctor (`✗`); the person's own
 /// environment is advice only (`!`). A bare scratch home fails doctor for other
 /// reasons (no hooks installed), so these read the marker on the finding's line.
 fn line_with<'a>(out: &'a str, needle: &str) -> &'a str {
@@ -1129,7 +1129,7 @@ fn a_stale_registry_is_a_failing_finding_with_one_command_per_line() {
     let home = Home::new("registry-stale");
     home.old_style();
     home.registry(old::DATA_DIR);
-    let migrated = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let migrated = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
         .arg("migrate")
         .current_dir(&home.0)
         .env("CLAUDE_CONFIG_DIR", &home.0)
@@ -1138,7 +1138,7 @@ fn a_stale_registry_is_a_failing_finding_with_one_command_per_line() {
         .env("XDG_STATE_HOME", home.0.join("state"))
         .env("GIT_CONFIG_GLOBAL", home.0.join("home").join(".gitconfig"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env_remove("GREENPISTE_OFF")
+        .env_remove("GREENBELAY_OFF")
         .output()
         .unwrap();
     assert!(migrated.status.success(), "{migrated:?}");

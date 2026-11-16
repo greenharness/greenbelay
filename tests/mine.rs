@@ -29,7 +29,7 @@ struct Transcript {
 impl Transcript {
     fn new(name: &str) -> Transcript {
         let dir =
-            std::env::temp_dir().join(format!("greenpiste-mine-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenbelay-mine-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("projects/p")).expect("scratch dir");
         std::fs::write(dir.join("global"), "").expect("global config");
@@ -78,13 +78,13 @@ impl Transcript {
 
     fn run(&self, args: &[&str]) -> String {
         let dir = self.write();
-        let out = greenpiste_command()
+        let out = greenbelay_command()
             .args(args)
             .arg("--transcripts")
             .arg(dir.join("projects"))
             .env("GIT_CONFIG_GLOBAL", dir.join("global"))
             .env("GIT_CONFIG_SYSTEM", dir.join("system"))
-            .env_remove("GREENPISTE_OFF")
+            .env_remove("GREENBELAY_OFF")
             .output()
             .expect("the binary runs");
         assert!(
@@ -183,7 +183,7 @@ fn format_cases_emits_unreviewed_lines_in_the_corpus_format() {
         t.other().other().other().other();
     }
     let out = t.run(&["mine", "--format", "cases"]);
-    assert!(out.starts_with("# greenpiste-cases-v1\n"), "{out}");
+    assert!(out.starts_with("# greenbelay-cases-v1\n"), "{out}");
     let cases: Vec<&str> = out.lines().skip(1).filter(|l| !l.is_empty()).collect();
     assert!(!cases.is_empty(), "no cases emitted:\n{out}");
     for line in &cases {
@@ -272,7 +272,7 @@ fn novelty_puts_the_unlike_match_first() {
 #[test]
 fn an_unknown_rank_is_refused() {
     let dir = Transcript::new("rank").write().clone();
-    let out = greenpiste_command()
+    let out = greenbelay_command()
         .args(["explain", "pipe-to-tail", "--rank", "wisdom"])
         .arg("--transcripts")
         .arg(dir.join("projects"))
@@ -282,12 +282,12 @@ fn an_unknown_rank_is_refused() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("--rank takes `novelty`"));
 }
 
-/// The greenpiste binary pointed at scratch directories, so the migration every
+/// The greenbelay binary pointed at scratch directories, so the migration every
 /// subcommand runs first never touches the real home of whoever runs the tests.
 /// A caller that sets one of these variables itself overrides it afterwards.
-fn greenpiste_command() -> Command {
+fn greenbelay_command() -> Command {
     let scratch = fresh_scratch("mine");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
     command
         .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
         .env("XDG_STATE_HOME", scratch.join("state"))

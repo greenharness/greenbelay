@@ -35,11 +35,11 @@ class ReleaseManifest(unittest.TestCase):
         self.expected = {}
         for target in TARGETS:
             body = f"tarball for {target}".encode()
-            (self.dist / f"greenpiste-{self.version}-{target}.tar.gz").write_bytes(body)
+            (self.dist / f"greenbelay-{self.version}-{target}.tar.gz").write_bytes(body)
             self.expected[target] = hashlib.sha256(body).hexdigest()
         # Present in a real dist/ and never part of [tool.release].
-        (self.dist / f"greenpiste-{self.version}-x86_64-pc-windows-msvc.zip").write_bytes(b"zip")
-        (self.dist / f"amont-agent-{self.version}-x86_64-apple-darwin.tar.gz").write_bytes(b"old name")
+        (self.dist / f"greenbelay-{self.version}-x86_64-pc-windows-msvc.zip").write_bytes(b"zip")
+        (self.dist / f"greenpiste-{self.version}-x86_64-apple-darwin.tar.gz").write_bytes(b"old name")
         self.out = self.dist / "greenharness.toml"
 
     def run_script(self, version: str, manifest: pathlib.Path = MANIFEST) -> subprocess.CompletedProcess:
@@ -55,15 +55,15 @@ class ReleaseManifest(unittest.TestCase):
         written = tomllib.loads(self.out.read_text())
         self.assertEqual(
             written["tool"]["release"],
-            {"repo": "greenharness/greenpiste", "version": self.version, "sha256": self.expected},
+            {"repo": "greenharness/greenbelay", "version": self.version, "sha256": self.expected},
         )
         # Everything else is the committed manifest, unchanged.
         committed = tomllib.loads(MANIFEST.read_text())
         del written["tool"]["release"]
         self.assertEqual(written, committed)
-        self.assertEqual(written["extension"]["name"], "greenpiste")
-        self.assertEqual(written["tool"]["bin"], "greenpiste")
-        self.assertEqual(written["tool"]["bin_aliases"], ["amont-agent"])
+        self.assertEqual(written["extension"]["name"], "greenbelay")
+        self.assertEqual(written["tool"]["bin"], "greenbelay")
+        self.assertNotIn("bin_aliases", written["tool"])
 
     def test_a_version_other_than_the_manifests_is_refused(self) -> None:
         run = self.run_script("v9.9.9")
@@ -72,7 +72,7 @@ class ReleaseManifest(unittest.TestCase):
         self.assertFalse(self.out.exists())
 
     def test_a_missing_tarball_is_refused(self) -> None:
-        (self.dist / f"greenpiste-{self.version}-aarch64-unknown-linux-gnu.tar.gz").unlink()
+        (self.dist / f"greenbelay-{self.version}-aarch64-unknown-linux-gnu.tar.gz").unlink()
         run = self.run_script(self.version)
         self.assertEqual(run.returncode, 1)
         self.assertIn("aarch64-unknown-linux-gnu", run.stderr)
@@ -88,9 +88,9 @@ class ReleaseManifest(unittest.TestCase):
         self.assertIn("already carries [tool.release]", run.stderr)
         self.assertFalse(self.out.exists())
 
-    def test_sums_come_from_greenpiste_archives_only(self) -> None:
+    def test_sums_come_from_greenbelay_archives_only(self) -> None:
         for target in TARGETS:
-            alias = self.dist / f"amont-agent-{self.version}-{target}.tar.gz"
+            alias = self.dist / f"greenpiste-{self.version}-{target}.tar.gz"
             alias.write_bytes(b"alias bytes differ")
         run = self.run_script(self.version)
         self.assertEqual(run.returncode, 0, run.stderr)
@@ -99,12 +99,12 @@ class ReleaseManifest(unittest.TestCase):
 
     def test_alias_archives_alone_are_not_enough(self) -> None:
         for target in TARGETS:
-            (self.dist / f"greenpiste-{self.version}-{target}.tar.gz").rename(
-                self.dist / f"amont-agent-{self.version}-{target}.tar.gz"
+            (self.dist / f"greenbelay-{self.version}-{target}.tar.gz").rename(
+                self.dist / f"greenpiste-{self.version}-{target}.tar.gz"
             )
         run = self.run_script(self.version)
         self.assertEqual(run.returncode, 1)
-        self.assertIn("no greenpiste-", run.stderr)
+        self.assertIn("no greenbelay-", run.stderr)
 
     def test_a_manifest_already_uploaded_is_refused(self) -> None:
         self.assertEqual(self.run_script(self.version).returncode, 0)
@@ -114,16 +114,21 @@ class ReleaseManifest(unittest.TestCase):
         self.assertIn("already carries [tool.release]", again.stderr)
         self.assertEqual(self.out.read_text(), uploaded, "the released manifest is never replaced")
 
-    def test_bin_aliases_survives_and_is_required(self) -> None:
-        self.assertEqual(self.run_script(self.version).returncode, 0)
-        self.assertIn('bin_aliases = ["amont-agent"]', self.out.read_text())
-        self.out.unlink()
-        without = self.dir / "without.toml"
-        without.write_text(MANIFEST.read_text().replace('bin_aliases = ["amont-agent"]\n', ""))
-        run = self.run_script(self.version, without)
+    def test_bin_aliases_are_refused(self) -> None:
+        # One name per tool (ADR-0071): a manifest declaring an alias binary
+        # is refused, so grh never places an old name.
+        with_alias = self.dir / "with-alias.toml"
+        with_alias.write_text(
+            MANIFEST.read_text().replace('bin = "greenbelay"\n', 'bin = "greenbelay"\nbin_aliases = ["greenpiste"]\n')
+        )
+        self.assertIn("bin_aliases", with_alias.read_text())
+        run = self.run_script(self.version, with_alias)
         self.assertEqual(run.returncode, 1)
         self.assertIn("bin_aliases", run.stderr)
         self.assertFalse(self.out.exists())
+        # The committed manifest declares none, and is accepted.
+        self.assertNotIn("bin_aliases", MANIFEST.read_text())
+        self.assertEqual(self.run_script(self.version).returncode, 0)
 
     def test_a_manifest_that_is_not_toml_is_refused_cleanly(self) -> None:
         broken = self.dir / "broken.toml"

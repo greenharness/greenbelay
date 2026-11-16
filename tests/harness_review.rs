@@ -10,7 +10,7 @@ struct Home(PathBuf);
 impl Home {
     fn new(name: &str) -> Home {
         let dir =
-            std::env::temp_dir().join(format!("greenpiste-hr-it-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenbelay-hr-it-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let proj = dir.join("projects").join("p");
         std::fs::create_dir_all(&proj).expect("projects dir");
@@ -41,7 +41,7 @@ impl Home {
         (code, out)
     }
     fn run_err(&self, args: &[&str]) -> (i32, String, String) {
-        let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let out = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
             .arg("harness-review")
             .args(args)
             .arg("--out")
@@ -50,7 +50,7 @@ impl Home {
             .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("GREENPISTE_OFF")
+            .env_remove("GREENBELAY_OFF")
             .output()
             .expect("the binary runs");
         (
@@ -114,7 +114,7 @@ fn the_json_has_one_row_per_rule_and_assertion() {
     h.session("a", "claude-one", "2026-10-01");
     let (code, json) = h.run(&["--json"]);
     assert_eq!(code, 0);
-    let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let out = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
         .args(["rules", "--json"])
         .env("CLAUDE_CONFIG_DIR", &h.0)
         .env_remove("XDG_STATE_HOME")

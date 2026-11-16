@@ -51,7 +51,7 @@ impl Reply {
 }
 
 fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("greenpiste-page-{}-{name}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("greenbelay-page-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("scratch dir");
     dir
 }
@@ -89,7 +89,7 @@ fn denied_ask(id: &str, question: &str) -> Vec<String> {
 }
 
 const REGISTER_OPEN: &str =
-    "greenpiste preview register --url http://localhost:5173 --guide g.md --open";
+    "greenbelay preview register --url http://localhost:5173 --guide g.md --open";
 
 fn register_command(id: &str, command: &str, page: &str, opened: bool) -> Vec<String> {
     let registration = json!({"id":"aa7ad80ae8ea6b","page":page,"opened":opened}).to_string();
@@ -128,11 +128,11 @@ fn payload(question: &str, transcript: Option<&PathBuf>) -> String {
 
 fn send(payload: &str) -> Reply {
     let config = scratch("config");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
         .arg("hook")
         .env("CLAUDE_CONFIG_DIR", &config)
         .env_remove("XDG_STATE_HOME")
-        .env_remove("GREENPISTE_OFF")
+        .env_remove("GREENBELAY_OFF")
         .env_remove("GREENHARNESS_HOST_SLOT")
         .env("GIT_CONFIG_GLOBAL", config.join("no-global-gitconfig"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -169,7 +169,7 @@ fn a_question_naming_an_unopened_mockup_is_denied() {
     assert!(reply.denied(), "{}", reply.stdout);
     let why = reply.reason();
     assert!(why.contains(MOCKUP), "{why}");
-    assert!(why.contains("greenpiste open 'docs/mockups/part-toggles/options.html'"));
+    assert!(why.contains("greenbelay open 'docs/mockups/part-toggles/options.html'"));
     assert!(why.contains("ask the question again"));
     assert!(why.contains("work.page-shown-before-asked"));
 }
@@ -182,7 +182,7 @@ fn a_question_with_no_page_is_allowed() {
 
 #[test]
 fn an_opened_page_may_be_asked_about() {
-    let calls = [bash("b1", &format!("greenpiste open {MOCKUP}"))];
+    let calls = [bash("b1", &format!("greenbelay open {MOCKUP}"))];
     assert_eq!(ask("opened", &calls, &abc()).stdout, "");
 }
 
@@ -202,7 +202,7 @@ fn a_preview_question_after_register_and_open_is_allowed() {
         "[preview aa7ad80ae8ea6b] Approve http://localhost:5173/app ? Guide: /work/repo/g.html";
     let calls = [
         register("r1", "/work/repo/g.html", true),
-        bash("b2", "greenpiste open 'http://localhost:5173/app'"),
+        bash("b2", "greenbelay open 'http://localhost:5173/app'"),
     ];
     assert_eq!(ask("preview-ok", &calls, question).stdout, "");
 }
@@ -216,11 +216,11 @@ fn a_preview_question_after_register_only_is_denied_naming_the_url() {
     assert!(reply.denied(), "{}", reply.stdout);
     let why = reply.reason();
     assert!(
-        why.contains("greenpiste open 'http://localhost:5173/app'"),
+        why.contains("greenbelay open 'http://localhost:5173/app'"),
         "{why}"
     );
     assert!(
-        !why.contains("greenpiste open '/work/repo/g.html'"),
+        !why.contains("greenbelay open '/work/repo/g.html'"),
         "{why}"
     );
 }
@@ -228,7 +228,7 @@ fn a_preview_question_after_register_only_is_denied_naming_the_url() {
 #[test]
 fn open_ask_ask_again_is_denied() {
     let calls = [
-        bash("b1", &format!("greenpiste open {MOCKUP}")),
+        bash("b1", &format!("greenbelay open {MOCKUP}")),
         answered("a1", &abc()),
     ];
     assert!(ask("window", &calls, &abc()).denied());
@@ -237,7 +237,7 @@ fn open_ask_ask_again_is_denied() {
 #[test]
 fn a_denied_ask_is_not_a_boundary() {
     let calls = [
-        bash("b1", &format!("greenpiste open {MOCKUP}")),
+        bash("b1", &format!("greenbelay open {MOCKUP}")),
         denied_ask("a1", &abc()),
     ];
     assert_eq!(ask("denied-ask", &calls, &abc()).stdout, "");
@@ -245,9 +245,9 @@ fn a_denied_ask_is_not_a_boundary() {
 
 #[test]
 fn another_fragment_or_route_is_another_page() {
-    let calls = [bash("b1", "greenpiste open 'http://localhost:3000/#/A'")];
+    let calls = [bash("b1", "greenbelay open 'http://localhost:3000/#/A'")];
     assert!(ask("frag", &calls, "Pick http://localhost:3000/#/B").denied());
-    let calls = [bash("b1", "greenpiste open http://localhost:3000/options")];
+    let calls = [bash("b1", "greenbelay open http://localhost:3000/options")];
     assert!(ask("slash", &calls, "Pick http://localhost:3000/options/").denied());
     assert!(ask(
         "index",
@@ -264,11 +264,11 @@ fn another_fragment_or_route_is_another_page() {
 #[test]
 fn an_open_that_may_not_have_run_does_not_count() {
     let page = format!("Pick {MOCKUP}");
-    let skipped = [bash("b1", &format!("true || greenpiste open {MOCKUP}"))];
+    let skipped = [bash("b1", &format!("true || greenbelay open {MOCKUP}"))];
     assert!(ask("skipped", &skipped, &page).denied());
-    let masked = [bash("b1", &format!("greenpiste open {MOCKUP}; true"))];
+    let masked = [bash("b1", &format!("greenbelay open {MOCKUP}; true"))];
     assert!(ask("masked", &masked, &page).denied());
-    let failed = [failed_bash("b1", &format!("greenpiste open {MOCKUP}"))];
+    let failed = [failed_bash("b1", &format!("greenbelay open {MOCKUP}"))];
     assert!(ask("failed", &failed, &page).denied());
     let not_opened = [register("r1", &format!("{CWD}/{MOCKUP}"), false)];
     assert!(ask("not-opened", &not_opened, &page).denied());
@@ -293,7 +293,7 @@ fn a_register_open_in_a_compound_command_does_not_count() {
 
 #[test]
 fn a_cd_prefixed_open_counts_for_the_page_under_that_directory() {
-    let calls = [bash("b1", "cd dir && greenpiste open x.html")];
+    let calls = [bash("b1", "cd dir && greenbelay open x.html")];
     assert_eq!(ask("cd", &calls, "Pick /work/repo/dir/x.html").stdout, "");
     assert!(ask("cd-wrong", &calls, "Pick /work/repo/x.html").denied());
 }
@@ -313,7 +313,7 @@ fn no_transcript_advises() {
     let reply = send(&payload(&abc(), None));
     assert!(!reply.denied(), "{}", reply.stdout);
     assert!(
-        reply.reason().contains("greenpiste open"),
+        reply.reason().contains("greenbelay open"),
         "{}",
         reply.stdout
     );
@@ -332,7 +332,7 @@ fn a_transcript_still_being_written_advises() {
 
 #[test]
 fn the_guard_encodes_a_file_url_as_the_opener_does() {
-    use greenpiste_guard::page_open::key_of;
+    use greenbelay_guard::page_open::key_of;
     use std::path::Path;
     for path in [
         "/a b/c.html",
@@ -342,7 +342,7 @@ fn the_guard_encodes_a_file_url_as_the_opener_does() {
     ] {
         assert_eq!(
             key_of(path, Path::new("/")),
-            greenpiste_process::guide::file_url(Path::new(path)),
+            greenbelay_process::guide::file_url(Path::new(path)),
             "{path}"
         );
     }

@@ -2,12 +2,12 @@
 
 Every session records which repository, worktree and branch it edits, so that
 another session can tell whether somebody else is working in the same place.
-`work-overlap` reads it, and `greenpiste board` lists it (see below).
+`work-overlap` reads it, and `greenbelay board` lists it (see below).
 
 ## The activity file
 
 One file per session, `<journal dir>/sessions/<full session id>.activity`
-(the journal dir is `<config dir>/greenpiste`, `~/.claude/greenpiste` by
+(the journal dir is `<config dir>/greenbelay`, `~/.claude/greenbelay` by
 default). Each line is
 
 ```text
@@ -75,7 +75,7 @@ untrimmed file), are each journalled once per session and then ignored.
 Advise, ceiling advise. On a session's first Edit, MultiEdit, Write or
 NotebookEdit in a repository, it advises once when another session's latest
 line names the same repository and that session is live. The window is 2 h
-and is set with `git config --global greenpiste.work-overlap.window`
+and is set with `git config --global greenbelay.work-overlap.window`
 (`90m`, `3h`, `2d`; a bare number is seconds). The message names the other
 session, its worktree, its branch, the title of the active plan its branch
 added (the first active file under `docs/plans` that the worktree's `HEAD`
@@ -83,7 +83,7 @@ adds relative to the repository's default branch, read with bounded git calls
 only when the rule fires; none for a peer on the default branch) and how long
 ago it was last seen. The plan lookups of all named peers (at most three)
 share one 2 s budget, and a peer reached after it is named without a plan.
-The message then points to `greenpiste board --repo <repo
+The message then points to `greenbelay board --repo <repo
 name>`, then to a message to that session (SendMessage) or to the person. It
 is silent when the only matching activity is the session's own, and fires
 when another live session works in the very same worktree.
@@ -93,10 +93,10 @@ a session whose first write meets nobody is told on a later write, once a
 peer appears. Under `observe` the journalled firing counts as the telling,
 so the journal holds one line per session and repository.
 
-## `greenpiste board`
+## `greenbelay board`
 
 ```text
-greenpiste board [--repo <name>...] [--since <dur>] [--fetch] [--json]
+greenbelay board [--repo <name>...] [--since <dur>] [--fetch] [--json]
 ```
 
 Read-only. It lists, per repository, the work in flight and what landed
@@ -105,7 +105,7 @@ activity files through the same reader as `work-overlap` and never writes
 them.
 
 Repositories: those named with `--repo` (resolved like plan-review `repos=`
-names: `git config greenpiste.plan-review.<name>.path`, else
+names: `git config greenbelay.plan-review.<name>.path`, else
 `<plan root>/<name>`), else the working directory's repository, else every git
 repository directly under the plan root.
 

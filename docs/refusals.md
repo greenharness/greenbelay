@@ -39,7 +39,7 @@ blocking on half a reading is the worst outcome available.
 
 **It does not phone home.** No telemetry, no update checks, no fetches — with
 one exception, which is `git fetch` against your own remote for the
-[session notice](session-notice.md), and `greenpiste.fetch false` switches
+[session notice](session-notice.md), and `greenbelay.fetch false` switches
 that off.
 
 **No repository can change a stance.** Stances are read from `--global` and
@@ -49,7 +49,7 @@ agent could write. See [stances](stances.md#why-git-config-and-not-a-committed-f
 
 ## The journal
 
-Every firing is recorded at `~/.claude/greenpiste/journal.log`, redacted, and
+Every firing is recorded at `~/.claude/greenbelay/journal.log`, redacted, and
 never transmitted anywhere.
 
 It only **counts**. Nothing in it may participate in a decision — the rules

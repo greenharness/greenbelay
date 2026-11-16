@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    Install the greenpiste binary on Windows (and amont-agent, its old name, as a copy). Nothing else.
+    Install the greenbelay binary on Windows. Nothing else.
 
 .DESCRIPTION
-    irm https://raw.githubusercontent.com/greenharness/greenpiste/main/install/install.ps1 | iex
+    irm https://raw.githubusercontent.com/greenharness/greenbelay/main/install/install.ps1 | iex
 
     The counterpart to install/install.sh, which is POSIX sh and therefore
     reaches Windows only through Git Bash. This one runs in the PowerShell
@@ -21,32 +21,32 @@
 
 .PARAMETER BinDir
     Where to put the executable. Defaults to $HOME\.local\bin.
-    `greenpiste install` writes this binary's ABSOLUTE path into
+    `greenbelay install` writes this binary's ABSOLUTE path into
     settings.json, so the directory decides only whether you can type the
     command yourself — Claude Code finds it either way.
 #>
 [CmdletBinding()]
 param(
-    [string]$Version = $env:GREENPISTE_VERSION,
-    [string]$BinDir  = $env:GREENPISTE_BIN_DIR
+    [string]$Version = $env:GREENBELAY_VERSION,
+    [string]$BinDir  = $env:GREENBELAY_BIN_DIR
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-# GREENPISTE_VERSION and GREENPISTE_BIN_DIR are the settings. Their old names,
+# GREENBELAY_VERSION and GREENBELAY_BIN_DIR are the settings. Their old names,
 # AMONT_AGENT_VERSION and AMONT_AGENT_BIN_DIR, still work while the new one is
 # unset, with one warning naming the new one.
 if (-not $Version -and $env:AMONT_AGENT_VERSION) {
     $Version = $env:AMONT_AGENT_VERSION
-    Write-Warning 'AMONT_AGENT_VERSION is the old name: set GREENPISTE_VERSION instead'
+    Write-Warning 'AMONT_AGENT_VERSION is the old name: set GREENBELAY_VERSION instead'
 }
 if (-not $BinDir -and $env:AMONT_AGENT_BIN_DIR) {
     $BinDir = $env:AMONT_AGENT_BIN_DIR
-    Write-Warning 'AMONT_AGENT_BIN_DIR is the old name: set GREENPISTE_BIN_DIR instead'
+    Write-Warning 'AMONT_AGENT_BIN_DIR is the old name: set GREENBELAY_BIN_DIR instead'
 }
 
-$Repo = 'greenharness/greenpiste'
+$Repo = 'greenharness/greenbelay'
 if (-not $BinDir)  { $BinDir  = Join-Path $HOME '.local\bin' }
 if (-not $Version) { $Version = 'latest' }
 
@@ -65,7 +65,7 @@ try {
 }
 
 Write-Host ''
-Write-Host '  greenpiste installer'
+Write-Host '  greenbelay installer'
 Write-Host ''
 
 # Only x86_64 is published today. Windows on ARM runs x64 binaries through
@@ -80,7 +80,7 @@ if ($arch -eq 'ARM64') {
 if ($Version -eq 'latest') {
     try {
         $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" `
-            -Headers @{ 'User-Agent' = 'greenpiste-installer' }
+            -Headers @{ 'User-Agent' = 'greenbelay-installer' }
         $Version = $release.tag_name
     } catch {
         Fail "could not determine the latest release (rate limited? pass -Version v1.2.3): $_"
@@ -88,7 +88,7 @@ if ($Version -eq 'latest') {
 }
 $v = $Version -replace '^v', ''
 
-$name = "greenpiste-$v-$target"
+$name = "greenbelay-$v-$target"
 $base = "https://github.com/$Repo/releases/download/v$v"
 
 Write-Host "  version:  $v"
@@ -96,12 +96,12 @@ Write-Host "  platform: $target"
 Write-Host "  into:     $BinDir"
 Write-Host ''
 
-$tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("greenpiste-" + [guid]::NewGuid().ToString('N'))
+$tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("greenbelay-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $tmp -Force | Out-Null
 
 try {
     $zip = Join-Path $tmp "$name.zip"
-    $archiveDir = $env:GREENPISTE_ARCHIVE_DIR
+    $archiveDir = $env:GREENBELAY_ARCHIVE_DIR
     if ($archiveDir) {
         # A local archive (the release's standalone check): the same checks
         # as a download, read from a directory instead of the release.
@@ -152,14 +152,13 @@ try {
     $src = Join-Path $tmp $name
     # Whether this is an upgrade decides what to say at the end: the
     # first-install steps are wrong advice the second time.
-    $upgrading = Test-Path (Join-Path $BinDir 'greenpiste.exe')
+    $upgrading = Test-Path (Join-Path $BinDir 'greenbelay.exe')
     New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
 
-    $from = Join-Path $src 'greenpiste.exe'
-    if (-not (Test-Path $from)) { throw "the archive holds no greenpiste.exe" }
-    # The old name, amont-agent.exe, is placed the same way as a copy, so
-    # hook entries baked to its path keep working.
-    foreach ($exe in @('greenpiste.exe', 'amont-agent.exe')) {
+    $from = Join-Path $src 'greenbelay.exe'
+    if (-not (Test-Path $from)) { throw "the archive holds no greenbelay.exe" }
+    # No old-name binary is placed (ADR-0071).
+    foreach ($exe in @('greenbelay.exe')) {
         $to = Join-Path $BinDir $exe
         # Copy beside the destination, then move it into place: the move is
         # a rename in one directory, so the path holds the whole old file or
@@ -201,19 +200,19 @@ if ($upgrading) {
     Write-Host '  Upgraded. The settings.json entry points at this path, so'
     Write-Host '  nothing needs rewiring. Confirm it still fires:'
     Write-Host ''
-    Write-Host '    greenpiste doctor'
+    Write-Host '    greenbelay doctor'
     Write-Host ''
 } else {
     Write-Host '  Installed, and wired into nothing. The guard does not run until'
     Write-Host '  Claude Code is told about it:'
     Write-Host ''
-    Write-Host '    greenpiste install          # print the settings block, write nothing'
-    Write-Host '    greenpiste install --write  # merge it into the Claude settings.json'
-    Write-Host '    greenpiste doctor           # installed, runnable, and actually firing?'
+    Write-Host '    greenbelay install          # print the settings block, write nothing'
+    Write-Host '    greenbelay install --write  # merge it into the Claude settings.json'
+    Write-Host '    greenbelay doctor           # installed, runnable, and actually firing?'
     Write-Host ''
     Write-Host '  Every rule but pipe-to-tail ships as observe, so nothing is refused'
     Write-Host '  until you have seen what it would have caught:'
     Write-Host ''
-    Write-Host '    greenpiste status'
+    Write-Host '    greenbelay status'
     Write-Host ''
 }

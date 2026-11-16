@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use greenpiste_process::block_fingerprint::{fingerprint, fingerprint_of_diff};
+use greenbelay_process::block_fingerprint::{fingerprint, fingerprint_of_diff};
 
 fn fixture(name: &str) -> Vec<u8> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -193,7 +193,7 @@ impl Scratch {
     /// one in a subdirectory and one at the root.
     fn new(name: &str) -> Scratch {
         let root =
-            std::env::temp_dir().join(format!("greenpiste-block-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("greenbelay-block-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root); // a leftover scratch dir from an earlier run; absence is the goal
         let repo = root.join("repo");
         std::fs::create_dir_all(repo.join("sub")).unwrap();
@@ -222,7 +222,7 @@ impl Scratch {
     }
 
     fn sha(&self, cwd: &Path, global: Option<&Path>) -> Output {
-        greenpiste_command()
+        greenbelay_command()
             .args(["block", "sha", "-C"])
             .arg(cwd)
             .args(["--base", "main"])
@@ -344,7 +344,7 @@ fn a_binary_file_prints_nothing_and_exits_1() {
 }
 
 fn block(args: &[&str]) -> Output {
-    greenpiste_command()
+    greenbelay_command()
         .arg("block")
         .args(args)
         .output()
@@ -359,13 +359,13 @@ fn usage_errors_exit_2_and_help_exits_0() {
         assert!(out.stdout.is_empty(), "{args:?}");
     }
     let no_verb = block(&[]);
-    assert!(String::from_utf8_lossy(&no_verb.stderr).contains("usage: greenpiste block sha"));
+    assert!(String::from_utf8_lossy(&no_verb.stderr).contains("usage: greenbelay block sha"));
 
     for args in [&["--help"][..], &["sha", "--help"][..], &["-h"][..]] {
         let out = block(args);
         assert_eq!(out.status.code(), Some(0), "{args:?}");
         let said = String::from_utf8_lossy(&out.stdout);
-        assert!(said.contains("usage: greenpiste block sha"), "{said}");
+        assert!(said.contains("usage: greenbelay block sha"), "{said}");
         for line in said.lines() {
             assert!(line.chars().count() <= 80, "{line}");
         }
@@ -384,14 +384,14 @@ const REVOKED_FP: &str = "bbbbbbbbbbbb111111111111111111111111111111111111111111
 impl Registry {
     fn new(name: &str) -> Registry {
         let config =
-            std::env::temp_dir().join(format!("greenpiste-registry-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("greenbelay-registry-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&config); // a leftover dir from an earlier run; absence is the goal
         std::fs::create_dir_all(&config).unwrap();
         Registry { config }
     }
 
     fn base(&self) -> PathBuf {
-        self.config.join("greenpiste")
+        self.config.join("greenbelay")
     }
 
     fn register(&self, fingerprint: &str, roles: &[&str], repo: &str, commit: &str) {
@@ -406,7 +406,7 @@ impl Registry {
         repo: &str,
         commit: &str,
     ) {
-        use greenpiste_process::block_registry::{
+        use greenbelay_process::block_registry::{
             record_copy, register_entry, EntryData, Generation,
         };
         register_entry(
@@ -429,7 +429,7 @@ impl Registry {
     }
 
     fn run(&self, args: &[&str]) -> Output {
-        greenpiste_command()
+        greenbelay_command()
             .arg("block")
             .args(args)
             .env("CLAUDE_CONFIG_DIR", &self.config)
@@ -469,7 +469,7 @@ fn list_shows_active_and_revoked_blocks_as_tsv_and_json() {
     let registry = Registry::new("list-two");
     registry.register(ACTIVE, &["backend", "lang:rust"], "o/alpha", "abc123");
     registry.register(REVOKED_FP, &["backend"], "o/beta", "def456");
-    greenpiste_process::block_registry::revoke(&registry.base(), REVOKED_FP, "a defect").unwrap();
+    greenbelay_process::block_registry::revoke(&registry.base(), REVOKED_FP, "a defect").unwrap();
 
     let out = registry.run(&["list"]);
     assert_eq!(out.status.code(), Some(0), "{}", err_text(&out));
@@ -521,11 +521,11 @@ fn revoke_by_short_id_prefix_and_full_hex() {
         );
         assert!(err_text(&out).contains("fp:aaaaaaaaaaaa is revoked"));
         assert_eq!(
-            greenpiste_process::block_registry::revoked(&registry.base(), ACTIVE).as_deref(),
+            greenbelay_process::block_registry::revoked(&registry.base(), ACTIVE).as_deref(),
             Some("found a defect")
         );
         assert_eq!(
-            greenpiste_process::block_registry::revoked(&registry.base(), REVOKED_FP),
+            greenbelay_process::block_registry::revoked(&registry.base(), REVOKED_FP),
             None
         );
     }
@@ -559,7 +559,7 @@ fn revoke_without_because_exits_2() {
         assert!(out.stdout.is_empty(), "{args:?}");
     }
     assert_eq!(
-        greenpiste_process::block_registry::revoked(&registry.base(), ACTIVE),
+        greenbelay_process::block_registry::revoked(&registry.base(), ACTIVE),
         None
     );
 }
@@ -583,9 +583,9 @@ fn an_unknown_or_ambiguous_fingerprint_exits_1_naming_it() {
         let said = err_text(&out);
         let id = args[1].strip_prefix("fp:").unwrap();
         let expected = if id == "aaa" {
-            "greenpiste: block: fp:aaa matches 2 blocks; give more hex".to_string()
+            "greenbelay: block: fp:aaa matches 2 blocks; give more hex".to_string()
         } else {
-            format!("greenpiste: block: no entry fp:{id}; see greenpiste block list")
+            format!("greenbelay: block: no entry fp:{id}; see greenbelay block list")
         };
         assert!(said.contains(&expected), "{args:?}: {said}");
     }
@@ -602,12 +602,12 @@ fn reinstate_a_revoked_block_prints_a_success_line() {
     assert_eq!(out.status.code(), Some(0), "{}", err_text(&out));
     assert!(out.stdout.is_empty(), "{}", out_text(&out));
     assert!(
-        err_text(&out).contains("greenpiste: block: fp:aaaaaaaaaaaa reinstated"),
+        err_text(&out).contains("greenbelay: block: fp:aaaaaaaaaaaa reinstated"),
         "{}",
         err_text(&out)
     );
     assert_eq!(
-        greenpiste_process::block_registry::revoked(&registry.base(), ACTIVE),
+        greenbelay_process::block_registry::revoked(&registry.base(), ACTIVE),
         None
     );
 }
@@ -620,7 +620,7 @@ fn reinstate_a_block_that_was_not_revoked_says_so_on_stderr_and_exits_0() {
     assert_eq!(out.status.code(), Some(0));
     assert!(out.stdout.is_empty());
     assert!(
-        err_text(&out).contains("greenpiste: block: fp:aaaaaaaaaaaa was not revoked"),
+        err_text(&out).contains("greenbelay: block: fp:aaaaaaaaaaaa was not revoked"),
         "{}",
         err_text(&out)
     );
@@ -659,7 +659,7 @@ fn help_is_a_verb_flag_never_a_flag_value() {
     assert_eq!(out.status.code(), Some(0), "{}", err_text(&out));
     assert!(!out_text(&out).starts_with("usage:"));
     assert_eq!(
-        greenpiste_process::block_registry::revoked(&registry.base(), ACTIVE).as_deref(),
+        greenbelay_process::block_registry::revoked(&registry.base(), ACTIVE).as_deref(),
         Some("-h")
     );
 }
@@ -700,7 +700,7 @@ fn a_tab_is_not_a_space_in_the_common_indentation() {
 
 #[test]
 fn list_and_revoke_pick_the_same_source_across_generations() {
-    use greenpiste_process::block_registry::{register_entry, EntryData, Generation};
+    use greenbelay_process::block_registry::{register_entry, EntryData, Generation};
     let registry = Registry::new("two-generations");
     for (digit, source_repo) in [("1", None), ("2", Some("o/second"))] {
         register_entry(
@@ -730,12 +730,12 @@ fn list_and_revoke_pick_the_same_source_across_generations() {
     assert_eq!(out_text(&revoked), "o/second\ttopic\t-\n");
 }
 
-/// The greenpiste binary pointed at scratch directories, so the migration every
+/// The greenbelay binary pointed at scratch directories, so the migration every
 /// subcommand runs first never touches the real home of whoever runs the tests.
 /// A caller that sets one of these variables itself overrides it afterwards.
-fn greenpiste_command() -> Command {
+fn greenbelay_command() -> Command {
     let scratch = fresh_scratch("block");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
     command
         .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
         .env("XDG_STATE_HOME", scratch.join("state"))

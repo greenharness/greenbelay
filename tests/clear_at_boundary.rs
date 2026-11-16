@@ -63,7 +63,7 @@ struct World {
 impl World {
     fn new(name: &str) -> World {
         let root = std::env::temp_dir().join(format!(
-            "greenpiste-clear-{name}-{}-{:?}",
+            "greenbelay-clear-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -78,7 +78,7 @@ impl World {
         let global = root.join("global");
         std::fs::write(
             &global,
-            "[greenpiste \"clear-at-boundary\"]\n\tstance = deny\n",
+            "[greenbelay \"clear-at-boundary\"]\n\tstance = deny\n",
         )
         .unwrap();
         Command::new("git")
@@ -120,7 +120,7 @@ impl World {
     fn stance(&self, rule: &str, stance: &str) {
         std::fs::write(
             &self.global,
-            format!("[greenpiste \"{rule}\"]\n\tstance = {stance}\n"),
+            format!("[greenbelay \"{rule}\"]\n\tstance = {stance}\n"),
         )
         .unwrap();
     }
@@ -133,14 +133,14 @@ impl World {
     }
 
     fn run_with_path(&self, payload: &Value, bin_dir: Option<&Path>) -> Reply {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
         command
             .arg("hook")
             .env("CLAUDE_CONFIG_DIR", &self.claude)
             .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", &self.global)
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("GREENPISTE_OFF")
+            .env_remove("GREENBELAY_OFF")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -187,7 +187,7 @@ impl World {
     }
 
     fn journal(&self) -> Vec<String> {
-        std::fs::read_to_string(self.claude.join("greenpiste/journal.log"))
+        std::fs::read_to_string(self.claude.join("greenbelay/journal.log"))
             .unwrap_or_default()
             .lines()
             .filter(|line| line.contains(" clear-at-boundary "))
@@ -282,7 +282,7 @@ fn each_boundary_shape_at_250k_continues_once() {
         assert!(first.blocks(), "{name}: {}", first.stdout);
         let reason = first.reason();
         assert!(
-            reason.starts_with("greenpiste/clear-at-boundary:"),
+            reason.starts_with("greenbelay/clear-at-boundary:"),
             "{reason}"
         );
         assert!(reason.contains(what), "{reason}");
@@ -500,7 +500,7 @@ fn working_is_in_flight_whatever_the_stance() {
         let reply = world.stop("s1", &transcript, json!({}));
         assert!(reply.blocks(), "{attempt}: {}", reply.stdout);
         assert!(
-            reply.reason().starts_with("greenpiste/plan-phases-open:"),
+            reply.reason().starts_with("greenbelay/plan-phases-open:"),
             "{}",
             reply.reason()
         );
@@ -536,7 +536,7 @@ fn boundary_one_is_judged_before_plan_phases_open() {
     let first = world.stop("s1", &big, json!({}));
     assert!(first.blocks(), "{}", first.stdout);
     assert!(
-        first.reason().starts_with("greenpiste/clear-at-boundary:"),
+        first.reason().starts_with("greenbelay/clear-at-boundary:"),
         "{}",
         first.reason()
     );
@@ -556,7 +556,7 @@ fn boundary_one_is_judged_before_plan_phases_open() {
     );
     let carried = world.stop("s2", &small, json!({}));
     assert!(carried.blocks(), "{}", carried.stdout);
-    assert!(carried.reason().starts_with("greenpiste/plan-phases-open:"));
+    assert!(carried.reason().starts_with("greenbelay/plan-phases-open:"));
 }
 
 #[test]
@@ -569,7 +569,7 @@ fn at_observe_boundary_one_falls_through_to_plan_phases_open() {
     );
     let reply = world.stop("s1", &big, json!({}));
     assert!(reply.blocks(), "{}", reply.stdout);
-    assert!(reply.reason().starts_with("greenpiste/plan-phases-open:"));
+    assert!(reply.reason().starts_with("greenbelay/plan-phases-open:"));
     assert!(
         world.journal_has("watched", "plan commit (observe)"),
         "{:?}",
@@ -588,7 +588,7 @@ fn at_advise_boundary_one_lets_plan_phases_open_carry_the_plan() {
     let reply = world.stop("s1", &big, json!({}));
     assert!(reply.blocks(), "{}", reply.stdout);
     assert!(
-        reply.reason().starts_with("greenpiste/plan-phases-open:"),
+        reply.reason().starts_with("greenbelay/plan-phases-open:"),
         "{}",
         reply.reason()
     );
@@ -600,7 +600,7 @@ fn at_advise_boundary_one_lets_plan_phases_open_carry_the_plan() {
     // The next Stop of the same turn is plan-phases-open's to judge too.
     let next = world.stop("s1", &big, json!({"stop_hook_active": true}));
     assert!(
-        next.silent() || next.reason().starts_with("greenpiste/plan-phases-open:"),
+        next.silent() || next.reason().starts_with("greenbelay/plan-phases-open:"),
         "{}",
         next.stdout
     );
@@ -770,7 +770,7 @@ fn when_the_cap_silences_a_plan_only_boundary_plan_phases_open_runs() {
         let transcript = world.transcript("t.jsonl", &entries);
         let reply = world.stop("s1", &transcript, json!({}));
         assert!(
-            reply.reason().starts_with("greenpiste/clear-at-boundary:"),
+            reply.reason().starts_with("greenbelay/clear-at-boundary:"),
             "boundary {at}: {}",
             reply.stdout
         );
@@ -781,7 +781,7 @@ fn when_the_cap_silences_a_plan_only_boundary_plan_phases_open_runs() {
     let fourth = world.stop("s1", &transcript, json!({}));
     assert!(fourth.blocks(), "{}", fourth.stdout);
     assert!(
-        fourth.reason().starts_with("greenpiste/plan-phases-open:"),
+        fourth.reason().starts_with("greenbelay/plan-phases-open:"),
         "{}",
         fourth.reason()
     );
@@ -905,7 +905,7 @@ fn a_pending_boundary_missing_from_the_tail_is_lost() {
 fn a_state_file_in_the_text_format_still_reads() {
     let world = World::new("oldstate");
     let transcript = world.transcript("t.jsonl", &turn(TEARDOWN, 250_000));
-    let dir = world.claude.join("greenpiste/clear-at-boundary");
+    let dir = world.claude.join("greenbelay/clear-at-boundary");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("capped"), "turn-1 3\nsome key").unwrap();
     let capped = world.stop("capped", &transcript, json!({}));

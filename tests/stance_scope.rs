@@ -9,7 +9,7 @@
 //! So the reader takes `--global` then `--system`, and these tests hold that
 //! line from outside the binary, against real `git config` files.
 
-use greenpiste_guard::names::{self, old};
+use greenbelay_guard::names::{self, old};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -20,7 +20,7 @@ struct Fixture {
 impl Fixture {
     fn new(name: &str) -> Fixture {
         let dir =
-            std::env::temp_dir().join(format!("greenpiste-scope-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenbelay-scope-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("repo")).expect("scratch dir");
         std::fs::write(dir.join("global"), "").expect("global config");
@@ -57,7 +57,7 @@ impl Fixture {
 
     /// The `now` column of `amont-agent status`, for one rule.
     fn stance_of(&self, rule: &str) -> String {
-        let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let out = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
             .arg("status")
             .current_dir(self.repo())
             .env("HOME", self.dir.join("home"))
@@ -66,7 +66,7 @@ impl Fixture {
             .env("CLAUDE_CONFIG_DIR", self.dir.join("claude"))
             .env("GIT_CONFIG_GLOBAL", self.dir.join("global"))
             .env("GIT_CONFIG_SYSTEM", self.dir.join("system"))
-            .env_remove("GREENPISTE_OFF")
+            .env_remove("GREENBELAY_OFF")
             .output()
             .expect("the binary runs");
         assert!(
@@ -98,7 +98,7 @@ impl Drop for Fixture {
 #[test]
 fn a_repository_cannot_lower_a_stance() {
     let f = Fixture::new("local-demote");
-    f.set("--local", "greenpiste.pipe-to-tail.stance", "observe");
+    f.set("--local", "greenbelay.pipe-to-tail.stance", "observe");
     assert_eq!(
         f.stance_of("pipe-to-tail"),
         "deny",
@@ -110,7 +110,7 @@ fn a_repository_cannot_lower_a_stance() {
 #[test]
 fn a_repository_cannot_raise_a_stance_either() {
     let f = Fixture::new("local-promote");
-    f.set("--local", "greenpiste.git-add-broad.stance", "deny");
+    f.set("--local", "greenbelay.git-add-broad.stance", "deny");
     assert_eq!(f.stance_of("git-add-broad"), "observe");
 }
 
@@ -119,7 +119,7 @@ fn a_repository_cannot_raise_a_stance_either() {
 #[test]
 fn a_repository_cannot_disable_the_guard() {
     let f = Fixture::new("local-enabled");
-    f.set("--local", "greenpiste.enabled", "false");
+    f.set("--local", "greenbelay.enabled", "false");
     assert_eq!(f.stance_of("pipe-to-tail"), "deny");
 }
 
@@ -128,11 +128,11 @@ fn a_repository_cannot_disable_the_guard() {
 #[test]
 fn the_machines_own_config_still_decides() {
     let f = Fixture::new("global");
-    f.set("--global", "greenpiste.pipe-to-tail.stance", "observe");
+    f.set("--global", "greenbelay.pipe-to-tail.stance", "observe");
     assert_eq!(f.stance_of("pipe-to-tail"), "observe");
 
     let f = Fixture::new("global-off");
-    f.set("--global", "greenpiste.enabled", "false");
+    f.set("--global", "greenbelay.enabled", "false");
     assert_eq!(f.stance_of("pipe-to-tail"), "observe");
 }
 
@@ -141,10 +141,10 @@ fn the_machines_own_config_still_decides() {
 #[test]
 fn system_is_the_floor_and_global_outranks_it() {
     let f = Fixture::new("system");
-    f.set("--system", "greenpiste.git-add-broad.stance", "advise");
+    f.set("--system", "greenbelay.git-add-broad.stance", "advise");
     assert_eq!(f.stance_of("git-add-broad"), "advise");
 
-    f.set("--global", "greenpiste.git-add-broad.stance", "observe");
+    f.set("--global", "greenbelay.git-add-broad.stance", "observe");
     assert_eq!(f.stance_of("git-add-broad"), "observe");
 }
 
@@ -154,7 +154,7 @@ fn system_is_the_floor_and_global_outranks_it() {
 fn the_switch_speaks_gits_boolean_dialect() {
     for off in ["no", "OFF", "0"] {
         let f = Fixture::new(&format!("dialect-{off}"));
-        f.set("--global", "greenpiste.enabled", off);
+        f.set("--global", "greenbelay.enabled", off);
         assert_eq!(f.stance_of("pipe-to-tail"), "observe", "enabled = {off}");
     }
 }
@@ -164,12 +164,12 @@ fn the_switch_speaks_gits_boolean_dialect() {
 #[test]
 fn a_malformed_value_in_the_users_file_is_not_answered_by_the_machines() {
     let f = Fixture::new("malformed");
-    f.set("--system", "greenpiste.git-add-broad.stance", "advise");
-    f.set("--global", "greenpiste.git-add-broad.stance", "sometimes");
+    f.set("--system", "greenbelay.git-add-broad.stance", "advise");
+    f.set("--global", "greenbelay.git-add-broad.stance", "sometimes");
     assert_eq!(f.stance_of("git-add-broad"), "observe");
 
     let f = Fixture::new("malformed-bool");
-    f.set("--global", "greenpiste.enabled", "maybe");
+    f.set("--global", "greenbelay.enabled", "maybe");
     assert_eq!(f.stance_of("pipe-to-tail"), "deny");
 }
 
@@ -178,7 +178,7 @@ fn a_malformed_value_in_the_users_file_is_not_answered_by_the_machines() {
 #[test]
 fn a_key_written_in_another_case_still_counts() {
     let f = Fixture::new("case");
-    f.set("--global", "GREENPISTE.git-add-broad.STANCE", "advise");
+    f.set("--global", "GREENBELAY.git-add-broad.STANCE", "advise");
     assert_eq!(f.stance_of("git-add-broad"), "advise");
 }
 
@@ -186,10 +186,10 @@ fn a_key_written_in_another_case_still_counts() {
 #[test]
 fn the_blanket_floor_is_the_machines_too() {
     let f = Fixture::new("floor");
-    f.set("--local", "greenpiste.stance", "deny");
+    f.set("--local", "greenbelay.stance", "deny");
     assert_eq!(f.stance_of("git-add-broad"), "observe");
 
-    f.set("--global", "greenpiste.stance", "advise");
+    f.set("--global", "greenbelay.stance", "advise");
     assert_eq!(f.stance_of("git-add-broad"), "advise");
 }
 
@@ -206,7 +206,7 @@ fn a_file_the_global_config_includes_is_read() {
         "config",
         "--file",
         &extra,
-        "greenpiste.pipe-to-tail.stance",
+        "greenbelay.pipe-to-tail.stance",
         "observe",
     ]);
     f.set("--global", "include.path", &extra);
@@ -226,7 +226,7 @@ fn a_file_the_global_config_includes_for_this_repository_is_read() {
         "config",
         "--file",
         &extra,
-        "greenpiste.pipe-to-tail.stance",
+        "greenbelay.pipe-to-tail.stance",
         "observe",
     ]);
     // A pattern that names no root: git prepends `**/` to one that starts
@@ -235,7 +235,7 @@ fn a_file_the_global_config_includes_for_this_repository_is_read() {
     // the `\\?\` prefix a canonicalised Windows path carries, which git's
     // matcher does not read.
     let condition = format!(
-        "includeIf.gitdir:greenpiste-scope-{}-include-if/repo/.path",
+        "includeIf.gitdir:greenbelay-scope-{}-include-if/repo/.path",
         std::process::id()
     );
     f.set("--global", &condition, &extra);
@@ -248,7 +248,7 @@ fn a_file_the_global_config_includes_for_this_repository_is_read() {
         "config",
         "--file",
         &extra,
-        "greenpiste.pipe-to-tail.stance",
+        "greenbelay.pipe-to-tail.stance",
         "observe",
     ]);
     f.set("--global", "includeIf.gitdir:/nowhere/.path", &extra);
@@ -262,7 +262,7 @@ fn a_file_the_global_config_includes_for_this_repository_is_read() {
 #[test]
 fn a_relocated_global_config_is_still_read() {
     let f = Fixture::new("relocated");
-    f.set("--global", "greenpiste.no-verify.stance", "deny");
+    f.set("--global", "greenbelay.no-verify.stance", "deny");
     assert_eq!(f.stance_of("no-verify"), "deny");
     assert!(
         Path::new(&f.dir.join("global")).exists(),
@@ -280,18 +280,18 @@ fn a_stance_for_a_retired_rule_is_ignored() {
         "forge-status-stale-row",
         "poll-blank-verdict",
     ] {
-        f.set("--global", &format!("greenpiste.{id}.stance"), "deny");
-        f.set("--local", &format!("greenpiste.{id}.stance"), "advise");
+        f.set("--global", &format!("greenbelay.{id}.stance"), "deny");
+        f.set("--local", &format!("greenbelay.{id}.stance"), "advise");
     }
     assert_eq!(f.stance_of("pipe-to-tail"), "deny");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
         .arg("hook")
         .current_dir(f.repo())
         .env("CLAUDE_CONFIG_DIR", f.dir.join("claude"))
         .env_remove("XDG_STATE_HOME")
         .env("GIT_CONFIG_GLOBAL", f.dir.join("global"))
         .env("GIT_CONFIG_SYSTEM", f.dir.join("system"))
-        .env_remove("GREENPISTE_OFF")
+        .env_remove("GREENBELAY_OFF")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -321,19 +321,19 @@ fn a_ceiling_holds_against_both_keys() {
     assert_eq!(f.stance_of("agent-guidance-written"), "advise");
     f.set(
         "--global",
-        "greenpiste.agent-guidance-written.stance",
+        "greenbelay.agent-guidance-written.stance",
         "observe",
     );
     assert_eq!(f.stance_of("agent-guidance-written"), "observe");
     f.set(
         "--global",
-        "greenpiste.agent-guidance-written.stance",
+        "greenbelay.agent-guidance-written.stance",
         "deny",
     );
     assert_eq!(f.stance_of("agent-guidance-written"), "advise");
 
     let f = Fixture::new("ceiling-blanket");
-    f.set("--global", "greenpiste.stance", "deny");
+    f.set("--global", "greenbelay.stance", "deny");
     assert_eq!(f.stance_of("agent-guidance-written"), "advise");
     assert_eq!(f.stance_of("pipe-to-tail"), "deny");
 }
@@ -344,9 +344,9 @@ fn a_ceiling_holds_against_both_keys() {
 fn work_overlap_is_capped_at_advise() {
     let f = Fixture::new("ceiling-work-overlap");
     assert_eq!(f.stance_of("work-overlap"), "advise");
-    f.set("--global", "greenpiste.work-overlap.stance", "observe");
+    f.set("--global", "greenbelay.work-overlap.stance", "observe");
     assert_eq!(f.stance_of("work-overlap"), "observe");
-    f.set("--global", "greenpiste.work-overlap.stance", "deny");
+    f.set("--global", "greenbelay.work-overlap.stance", "deny");
     assert_eq!(f.stance_of("work-overlap"), "advise");
 }
 
@@ -355,14 +355,14 @@ fn work_overlap_is_capped_at_advise() {
 #[test]
 fn rules_shows_the_stance_in_force() {
     let line = |f: &Fixture| {
-        let out = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let out = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
             .arg("rules")
             .current_dir(f.repo())
             .env("CLAUDE_CONFIG_DIR", f.dir.join("claude"))
             .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", f.dir.join("global"))
             .env("GIT_CONFIG_SYSTEM", f.dir.join("system"))
-            .env_remove("GREENPISTE_OFF")
+            .env_remove("GREENBELAY_OFF")
             .output()
             .expect("the binary runs");
         assert!(out.status.success(), "rules exited {:?}", out.status.code());
@@ -378,7 +378,7 @@ fn rules_shows_the_stance_in_force() {
     assert!(shipped.contains("observe"), "{shipped}");
     assert!(!shipped.contains("ships as"), "{shipped}");
 
-    f.set("--global", "greenpiste.git-add-broad.stance", "deny");
+    f.set("--global", "greenbelay.git-add-broad.stance", "deny");
     let moved = line(&f);
     assert!(moved.contains("deny"), "{moved}");
     assert!(moved.contains("ships as observe"), "{moved}");
@@ -391,7 +391,7 @@ fn rules_shows_the_stance_in_force() {
 #[cfg(unix)]
 #[test]
 fn a_repository_cannot_set_deny_agents_and_the_global_config_can() {
-    let key = "greenpiste.symbol-grep-not-lsp.denyAgents";
+    let key = "greenbelay.symbol-grep-not-lsp.denyAgents";
     let f = Fixture::new("deny-agents");
     f.set("--local", key, "relais:relais-worker-haiku-*");
     assert!(!f.denies_haiku(), "a --local denyAgents raised a stance");
@@ -443,7 +443,7 @@ impl Fixture {
             "tool_input": {"pattern": "fn agent_type", "path": "."},
         })
         .to_string();
-        let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
             .arg("hook")
             .current_dir(&repo)
             .env("HOME", self.dir.join("home"))
@@ -453,7 +453,7 @@ impl Fixture {
             .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
             .env("GIT_CONFIG_GLOBAL", self.dir.join("global"))
             .env("GIT_CONFIG_SYSTEM", self.dir.join("system"))
-            .env_remove("GREENPISTE_OFF")
+            .env_remove("GREENBELAY_OFF")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())

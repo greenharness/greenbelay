@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const BIN: &str = env!("CARGO_BIN_EXE_greenpiste");
+const BIN: &str = env!("CARGO_BIN_EXE_greenbelay");
 const SESSION_ONE: &str = "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const SESSION_TWO: &str = "22222222-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const PLAN: &str = "---\nstatus: active\nrepos: [a, b]\n---\n# Board plan\n\n- [ ] Phase 1\n";
@@ -90,7 +90,7 @@ impl World {
     }
 
     fn activity(&self, session: &str, repo: &Path, worktree: &Path, branch: &str, seen_ago: u64) {
-        let sessions = self.config.join("greenpiste/sessions");
+        let sessions = self.config.join("greenbelay/sessions");
         std::fs::create_dir_all(&sessions).unwrap();
         let file = sessions.join(format!("{session}.activity"));
         let identity = repo.join(".git");
@@ -119,7 +119,7 @@ impl World {
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .env("CLAUDE_CONFIG_DIR", &self.config)
             .env_remove("XDG_STATE_HOME")
-            .env("GREENPISTE_PLAN_ROOT", &self.root)
+            .env("GREENBELAY_PLAN_ROOT", &self.root)
             .output()
             .expect("runs")
     }
@@ -156,7 +156,7 @@ impl World {
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
             .env("CLAUDE_CONFIG_DIR", &self.config)
             .env_remove("XDG_STATE_HOME")
-            .env("GREENPISTE_PLAN_ROOT", &self.root)
+            .env("GREENBELAY_PLAN_ROOT", &self.root)
             .output()
             .expect("runs");
         let calls = std::fs::read_to_string(&log).unwrap_or_default();
@@ -243,7 +243,7 @@ fn help_exits_zero_and_a_bad_flag_exits_two() {
     assert_eq!(both.status.code(), Some(0));
     let help = world.board(&world.top, &["--help"]);
     assert_eq!(help.status.code(), Some(0));
-    assert!(String::from_utf8_lossy(&help.stdout).contains("greenpiste board"));
+    assert!(String::from_utf8_lossy(&help.stdout).contains("greenbelay board"));
     assert_eq!(world.board(&world.top, &["--bogus"]).status.code(), Some(2));
     assert_eq!(
         world.board(&world.top, &["--since", "soon"]).status.code(),

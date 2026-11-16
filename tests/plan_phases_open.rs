@@ -64,7 +64,7 @@ impl World {
     /// `main` on a bare `origin`, and a checkout on `feat/x`.
     fn new(name: &str) -> World {
         let root = std::env::temp_dir().join(format!(
-            "greenpiste-phases-{name}-{}-{:?}",
+            "greenbelay-phases-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -114,13 +114,13 @@ impl World {
     }
 
     fn run(&self, payload: &serde_json::Value, claude: &Path) -> Reply {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
             .arg("hook")
             .env("CLAUDE_CONFIG_DIR", claude)
             .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", &self.global)
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("GREENPISTE_OFF")
+            .env_remove("GREENBELAY_OFF")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -172,7 +172,7 @@ impl World {
     }
 
     fn state_dir(&self) -> PathBuf {
-        self.claude.join("greenpiste/plan-phases-open")
+        self.claude.join("greenbelay/plan-phases-open")
     }
 }
 
@@ -198,7 +198,7 @@ fn an_open_phase_blocks_and_is_named() {
     let v = r.json();
     let reason = v["reason"].as_str().unwrap();
     assert!(
-        reason.starts_with("greenpiste/plan-phases-open:"),
+        reason.starts_with("greenbelay/plan-phases-open:"),
         "{reason}"
     );
     assert!(reason.contains("2026-10-07-x.md"), "{reason}");
@@ -345,7 +345,7 @@ fn two_active_plans_choose_by_branch() {
 #[test]
 fn an_unusable_session_id_touches_nothing() {
     let w = with_open_plan("badid");
-    let agent_dir = w.claude.join("greenpiste");
+    let agent_dir = w.claude.join("greenbelay");
     std::fs::create_dir_all(&agent_dir).unwrap();
     // `../x` from the counter directory lands here.
     let sentinel = agent_dir.join("x");
@@ -409,7 +409,7 @@ fn three_blocks_then_a_release_then_silence() {
     assert!(w.stop().silent());
     assert!(w.stop().silent());
     let journal =
-        std::fs::read_to_string(w.claude.join("greenpiste/journal.log")).unwrap_or_default();
+        std::fs::read_to_string(w.claude.join("greenbelay/journal.log")).unwrap_or_default();
     for outcome in ["denied", "released", "watched"] {
         assert!(journal.contains(outcome), "{outcome} in:\n{journal}");
     }
@@ -510,7 +510,7 @@ fn at_advise_the_person_is_told_and_the_agent_stops() {
     let w = with_open_plan("advise");
     std::fs::write(
         &w.global,
-        "[greenpiste \"plan-phases-open\"]\n\tstance = advise\n",
+        "[greenbelay \"plan-phases-open\"]\n\tstance = advise\n",
     )
     .unwrap();
     let r = w.stop();
@@ -531,7 +531,7 @@ fn at_observe_it_only_journals() {
     let w = with_open_plan("observe");
     std::fs::write(
         &w.global,
-        "[greenpiste \"plan-phases-open\"]\n\tstance = observe\n",
+        "[greenbelay \"plan-phases-open\"]\n\tstance = observe\n",
     )
     .unwrap();
     assert!(w.stop().silent());

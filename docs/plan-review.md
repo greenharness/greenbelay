@@ -82,10 +82,10 @@ past its `upstream`, and a shallow clone is judged on files alone.
   ```
 
 `repos=` names each repository. A name resolves to
-`git config greenpiste.plan-review.<name>.path` when that is set, for a
+`git config greenbelay.plan-review.<name>.path` when that is set, for a
 repository kept elsewhere; otherwise to `<plan root>/<name>`. The plan root is
-`$GREENPISTE_PLAN_ROOT`, else `git config --global greenpiste.plan-review.root`
-(`git config --global greenpiste.plan-review.root ~/Developer/Perso` keeps the
+`$GREENBELAY_PLAN_ROOT`, else `git config --global greenbelay.plan-review.root`
+(`git config --global greenbelay.plan-review.root ~/Developer/Perso` keeps the
 old default); with neither, the session's directory when it is not in a git
 repository, else the parent of the repository's main worktree. The attestations
 sweep uses only the explicit setting. `adds=` declares classes no named
@@ -95,10 +95,10 @@ file shows: `cli`, `ui`, `screen`, `ops`, `contract` (or its old name
 
 ## Which agents to launch
 
-`greenpiste plan-panel <plan.md>` answers with the hook's own code:
+`greenbelay plan-panel <plan.md>` answers with the hook's own code:
 
 ```
-repos=greenpiste areas=cli,lang:rust body=cf3f43c938c4 panel=full seats=paths counts=repos:1,phases:2,prs:1,releases:1,person:0,words:640,steps:0,merge-candidates:-
+repos=greenbelay areas=cli,lang:rust body=cf3f43c938c4 panel=full seats=paths counts=repos:1,phases:2,prs:1,releases:1,person:0,words:640,steps:0,merge-candidates:-
 plan-review-backend
 plan-review-language --lang rust
 plan-review-tui
@@ -141,16 +141,16 @@ goes before `merge-candidates`, which stays the last comma field:
 line when it has none, before it prints anything. The front matter is
 outside the body sha, so no review goes stale. The write resolves a symlinked
 plan file first, takes the ledger lock (waiting up to 5 s: `ledger busy;
-nothing written. Run again: greenpiste plan-panel <path>`, exit 1), re-reads
+nothing written. Run again: greenbelay plan-panel <path>`, exit 1), re-reads
 the file and refuses one changed since it was read
 (`plan changed under plan-panel; nothing written. Re-read <path>, then run:
-greenpiste plan-panel <path>`), then renames a temp file into place; a file
+greenbelay plan-panel <path>`), then renames a temp file into place; a file
 it cannot write prints `cannot write plan-id: <path>: <error>`. Both exit 1
 with nothing on stdout. A second run leaves the file byte-identical.
 
 When the person approves ExitPlanMode (PostToolUse, `approved: true`), the
 hook writes `plan-review/approved/<id>.json`
-(`{"schema": "greenpiste-plan-approval-v1", "plan_id", "body_sha",
+(`{"schema": "greenbelay-plan-approval-v1", "plan_id", "body_sha",
 "approved_at"}`), before it takes the ledger lock and without it. The next
 `plan-panel` on another body replaces the retired id
 (`replaced plan-id p-… (approved) with p-…` on stderr); a rejection retires
@@ -160,7 +160,7 @@ id through that rule, so a plan edited over an approved one never inherits
 its id, even when `plan-panel` did not run in between.
 
 Each body `plan-panel` sees is mapped to its id in
-`plan-review/ids/<body_sha>.json` (`greenpiste-plan-id-v1`). `record` reads
+`plan-review/ids/<body_sha>.json` (`greenbelay-plan-id-v1`). `record` reads
 a row's `plan_id` from that map (on a miss, the file's own id when the file
 still holds that body), and numbers `round` and `first_round_sha` within
 the id. The baseline's older-body lookups (by path, by title) serve only
@@ -169,7 +169,7 @@ the same `plan_id`, so a new plan in a reused file is a full panel for both
 
 ## Binding a review to the plan
 
-`greenpiste plan-sha --block [--lang <l>] [--slice <role>] <plan.md>` prints the review
+`greenbelay plan-sha --block [--lang <l>] [--slice <role>] <plan.md>` prints the review
 block that each reviewer's prompt carries:
 
 ```
@@ -211,7 +211,7 @@ is outside every slice: backend, which binds the whole body, reviews it.
 Backend, architect, product owner, unix, tui, ux-research and game-ux always
 bind the whole body, and so does every seat on a plan seated from areas.
 
-`greenpiste plan-sha --block --slice <role> <plan.md>` prints two lines:
+`greenbelay plan-sha --block --slice <role> <plan.md>` prints two lines:
 
 ```
 <<<PLAN path=… sha=<body sha> lang=rust slice=<64 hex>>>>
@@ -229,7 +229,7 @@ A sliced review counts when it reviewed this body, or when its `slice=` is
 the role's slice as it stands. In a delta the hook also requires every
 sliced seat whose slice moved since the last pass, and names the moved span
 with the command to re-run:
-``stale (its slice changed: Phase 2) for repos=…: lang:typescript; re-run: `greenpiste plan-sha --block --lang typescript --slice lang:typescript <plan.md>` ``
+``stale (its slice changed: Phase 2) for repos=…: lang:typescript; re-run: `greenbelay plan-sha --block --lang typescript --slice lang:typescript <plan.md>` ``
 (the command is in backticks, so it copies alone; a path with a space is
 quoted).
 A seat that was whole-body at the last pass and is sliced now (`it has a
@@ -277,18 +277,18 @@ have reviewed.
 | refused twice already | the person is asked, with `UNREVIEWED: refused N×` |
 | `⚠ unreviewed: …` in the review section | the person is asked |
 
-A pass is remembered under `~/.claude/greenpiste/plan-review/`, which is
+A pass is remembered under `~/.claude/greenbelay/plan-review/`, which is
 0700 with 0600 files, by plan path and by body. The same plan presented from
 a new session, under a new file name, is therefore recognised.
 
-The default stance is `deny`. Set `greenpiste.plan-review-panel.stance` to
+The default stance is `deny`. Set `greenbelay.plan-review-panel.stance` to
 `advise` to be told without being refused, or to `observe` to only journal.
 
 ## Recording what the panel did
 
-`greenpiste plan-review record <plan.md> [--transcript <path>]` appends one
+`greenbelay plan-review record <plan.md> [--transcript <path>]` appends one
 JSON row per completed plan-review reviewer of the plan to
-`~/.claude/greenpiste/plan-review/outcomes.jsonl`, so the panel can later be
+`~/.claude/greenbelay/plan-review/outcomes.jsonl`, so the panel can later be
 judged on its own record. Without `--transcript` it reads the transcript under
 `~/.claude/projects` (modified in the last 7 days) that reviewed this plan's
 path: the one that reviewed its current body first, then the newest. A long
@@ -299,7 +299,7 @@ stdin is a JSON array of findings (empty stdin is `[]`):
 accepted|rejected|decision, "section"?, "area"?}`. They are attached to the
 rows this call writes for the highest round it writes, matched by role.
 
-A row has: `schema` (`greenpiste-review-outcome-v1`), `recorded_at` (unix
+A row has: `schema` (`greenbelay-review-outcome-v1`), `recorded_at` (unix
 seconds), `role`, `agent_id`, `model`, `tokens`, `seconds`, `round` (1-based,
 in the order distinct bodies first appear), `body_sha`, `first_round_sha`,
 `plan_path`, `plan` (`areas`, the repositories' areas whatever seated the
@@ -325,7 +325,7 @@ is skipped, never guessed. `None.` gives no findings.
 round on a changed body gets its own row, on an unchanged body nothing. A
 manual call with stdin findings (each may carry `n`) for a reviewer already on
 record writes no outcome row; it appends one
-`greenpiste-review-disposition-v1` row `{agent_id, body_sha, role, n,
+`greenbelay-review-disposition-v1` row `{agent_id, body_sha, role, n,
 disposition}` per finding, exempt from that dedupe.
 
 Outcome rows are deduped as above under an exclusive lock, so a second run, or two
@@ -346,7 +346,7 @@ hook takes the ledger lock with `LOCK_NB` and retries for at most 2 s; if
 another process still holds it, it journals one `skipped` entry (body sha and
 plan path) and returns. `plan-review stats` lists such a plan as
 `record-skipped` until the ledger has a row for that body (or any row for the
-plan recorded after the skip); running `greenpiste plan-review record
+plan recorded after the skip); running `greenbelay plan-review record
 <plan.md>` by hand catches up.
 
 Its status line (`wrote N rows (round R, plan <sha12>)`, `already recorded
@@ -363,7 +363,7 @@ ledger cannot be written; 2 on a usage error or malformed findings.
 A reviewer that proposes an edit ends its result with a `Patches:` section: a
 fenced JSON array of `{"finding": n, "old_string": "...", "new_string": "..."}`,
 one object per edit, `old_string` copied from the plan and unique in it.
-`greenpiste plan-apply <plan.md>` applies them with no model. The accepted
+`greenbelay plan-apply <plan.md>` applies them with no model. The accepted
 findings come on stdin, `[{"role": "tui", "finding": 1}, ...]`; a finding may
 carry `"patch": {"old_string", "new_string"}` to supply an edit the main
 session wrote itself. Stdin on a terminal is a usage error.
@@ -389,7 +389,7 @@ the fallback subagent's prompt must start with:
 Patch lines stay within 80 columns; the `next:` line and the block carry the
 plan's path unclipped, since one is copied and the other is machine-read.
 Diagnostics go to stderr. Every real run appends one
-`greenpiste-review-merge-v1` row to `outcomes.jsonl` (`recorded_at`,
+`greenbelay-review-merge-v1` row to `outcomes.jsonl` (`recorded_at`,
 `plan_path`, `body_sha_before`, `body_sha_after`, `round`, `accepted`,
 `applied`, `unmatched`, `mode: "command"`); merge rows are not review rows and
 never count as a recorded reviewer.
@@ -410,11 +410,11 @@ never count as a recorded reviewer.
 ## Judging a seat: `plan-review stats`
 
 ```
-greenpiste plan-review stats [--json] [--model <id>]
+greenbelay plan-review stats [--json] [--model <id>]
 ```
 
-Reads `~/.claude/greenpiste/plan-review/outcomes.jsonl` and, for the
-implementation review, `~/.claude/greenpiste/implementation-review-outcomes/outcomes.jsonl`,
+Reads `~/.claude/greenbelay/plan-review/outcomes.jsonl` and, for the
+implementation review, `~/.claude/greenbelay/implementation-review-outcomes/outcomes.jsonl`,
 through the one ledger reader in `review_outcomes.rs`; rows of another schema
 (merge rows) are not reviews. It prints one row per (role, model): reviews,
 findings by severity (`blocking/high/medium/low`), accepted findings by
@@ -426,8 +426,8 @@ findings per review. A finding is accepted when its disposition is `accepted`
 A parsed plan-review finding (one `record` wrote as `{n, severity}`) has its
 disposition derived when stats are read, so a merge or a disposition row
 appended after the review rows still counts. In order: the latest
-`greenpiste-review-disposition-v1` row for its `agent_id`, `body_sha` and `n`
-wins; else it is `accepted` when any `greenpiste-review-merge-v1` row whose
+`greenbelay-review-disposition-v1` row for its `agent_id`, `body_sha` and `n`
+wins; else it is `accepted` when any `greenbelay-review-merge-v1` row whose
 `body_sha_before` equals the review row's `body_sha` lists `role#n` in
 `applied_labels` (the union over every such row); else `unresolved`. Findings
 given on stdin keep the disposition they were given.
@@ -447,7 +447,7 @@ closed approve-with-changes or rework yet have 0 parsed findings, and a
 
 ## Time to done: `plan-review stats --time`
 
-`greenpiste plan-review stats --time [--since <YYYY-MM-DD>] [--json]` reports
+`greenbelay plan-review stats --time [--since <YYYY-MM-DD>] [--json]` reports
 each landed plan's time to done (ADR-0070 `work.plan-time-to-done`; the
 contract is the time-to-done programme's t01 ticket in decisions). It reads
 the transcripts under `~/.claude/projects`, this ledger and git, and nothing
@@ -506,7 +506,7 @@ A plan declares who reviews its code in a `## Code review` section (after
 
 A profile is `backend`, `platform`, `unix`, `tui`, `react`, `ui-design`,
 `architect` or `lang:<x>`; a parenthesised reason for the profiles left out
-is kept as text. `greenpiste plan-panel --code-review <plan.md>` proposes
+is kept as text. `greenbelay plan-panel --code-review <plan.md>` proposes
 the list: one line `<repo>\t<profiles comma-separated>`, or
 `<repo>\tnone\t<reason>`, per repository of the machine comment, from the
 files the Phases name in it (`backend` always, each `lang:<x>`; `ops` adds

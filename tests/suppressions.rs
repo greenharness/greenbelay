@@ -10,7 +10,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const BIN: &str = env!("CARGO_BIN_EXE_greenpiste");
+const BIN: &str = env!("CARGO_BIN_EXE_greenbelay");
 const GIT_ENV: [&str; 12] = [
     "GIT_DIR",
     "GIT_WORK_TREE",
@@ -19,7 +19,7 @@ const GIT_ENV: [&str; 12] = [
     "GIT_PREFIX",
     "GIT_CONFIG_PARAMETERS",
     "GIT_CONFIG_COUNT",
-    "GREENPISTE_OFF",
+    "GREENBELAY_OFF",
     "AMONT_INDEX_FILE",
     "AMONT_INDEX_GIT_DIR",
     "GREENGATE_INDEX_FILE",
@@ -228,7 +228,7 @@ fn an_added_bare_marker_blocks_with_its_fix() {
     let stderr = text(&out.stderr);
     assert!(stderr.contains("fix the cause, or stop and tell the person"));
     assert!(stderr.contains("for the person only (an agent's attempt is refused):"));
-    assert!(stderr.contains("git -c greenpiste.suppressions=allow commit"));
+    assert!(stderr.contains("git -c greenbelay.suppressions=allow commit"));
     assert!(!stdout.contains("for the person only"), "{stdout}");
 }
 
@@ -366,7 +366,7 @@ fn under_observe_a_scan_error_prints_its_reason_and_exits_zero() {
         "config",
         "--file",
         repo.config.to_str().unwrap(),
-        "greenpiste.lint-suppression-added.stance",
+        "greenbelay.lint-suppression-added.stance",
         "observe",
     ]);
     let (bin, _) = repo.missing_names_shim();
@@ -487,7 +487,7 @@ fn only_a_command_scoped_allow_passes() {
     repo.stage("a.py", "x = 1\n");
     repo.commit("base");
     repo.install_hook();
-    repo.git(&["config", "--local", "greenpiste.suppressions", "allow"]);
+    repo.git(&["config", "--local", "greenbelay.suppressions", "allow"]);
     repo.write("a.py", BARE);
     repo.git(&["add", "a.py"]);
     let base = repo.head();
@@ -495,7 +495,7 @@ fn only_a_command_scoped_allow_passes() {
     let plain = repo.git_output(&["commit", "-q", "-m", "plain"]);
     assert!(!plain.status.success(), "a repo-config allow must not pass");
     assert!(
-        text(&plain.stderr).contains("greenpiste.suppressions=allow in local config is ignored"),
+        text(&plain.stderr).contains("greenbelay.suppressions=allow in local config is ignored"),
         "{}",
         text(&plain.stderr)
     );
@@ -503,7 +503,7 @@ fn only_a_command_scoped_allow_passes() {
 
     let scoped = repo.git_output(&[
         "-c",
-        "greenpiste.suppressions=allow",
+        "greenbelay.suppressions=allow",
         "commit",
         "-q",
         "-m",
@@ -541,7 +541,7 @@ fn an_extensionless_shell_script_is_judged_by_its_shebang() {
 fn the_stance_decides_the_exit_status() {
     let repo = Repo::new();
     repo.stage("a.py", BARE);
-    let key = "greenpiste.lint-suppression-added.stance";
+    let key = "greenbelay.lint-suppression-added.stance";
 
     assert_eq!(code(&repo.gate()), 1, "advise is the default");
 
@@ -638,7 +638,7 @@ fn the_pack_declares_the_one_gate() {
         lines,
         [format!(
             "pre-commit  suppressions  *  block  {} suppressions --staged",
-            greenpiste_guard::names::BIN
+            greenbelay_guard::names::BIN
         )]
     );
 }
@@ -825,7 +825,7 @@ fn a_command_scoped_allow_passes_even_with_an_invalid_amont_index_file() {
         .env("AMONT_INDEX_FILE", &missing)
         .env("AMONT_INDEX_GIT_DIR", repo.dir.join(".git"))
         .env("GIT_CONFIG_COUNT", "1")
-        .env("GIT_CONFIG_KEY_0", "greenpiste.suppressions")
+        .env("GIT_CONFIG_KEY_0", "greenbelay.suppressions")
         .env("GIT_CONFIG_VALUE_0", "allow")
         .output()
         .unwrap();
@@ -837,7 +837,7 @@ fn a_command_scoped_allow_passes_even_with_an_invalid_amont_index_file() {
         text(&scoped.stderr)
     );
 
-    repo.git(&["config", "--local", "greenpiste.suppressions", "allow"]);
+    repo.git(&["config", "--local", "greenbelay.suppressions", "allow"]);
     let persistent = repo
         .command(BIN)
         .args(["suppressions", "--staged"])
@@ -1110,7 +1110,7 @@ fn a_failed_identity_query_is_exit_two_unless_scoped_allow_or_observe() {
     let scoped = hinted_gate(&repo, alternate.as_os_str(), owner.as_os_str())
         .env("PATH", &path)
         .env("GIT_CONFIG_COUNT", "1")
-        .env("GIT_CONFIG_KEY_0", "greenpiste.suppressions")
+        .env("GIT_CONFIG_KEY_0", "greenbelay.suppressions")
         .env("GIT_CONFIG_VALUE_0", "allow")
         .output()
         .unwrap();
@@ -1126,7 +1126,7 @@ fn a_failed_identity_query_is_exit_two_unless_scoped_allow_or_observe() {
         "config",
         "--file",
         repo.config.to_str().unwrap(),
-        "greenpiste.lint-suppression-added.stance",
+        "greenbelay.lint-suppression-added.stance",
         "observe",
     ]);
     let observed = hinted_gate(&repo, alternate.as_os_str(), owner.as_os_str())

@@ -63,7 +63,7 @@ impl World {
     /// A UI repository whose `main` is on the remote, on a fresh branch.
     fn new(name: &str) -> World {
         let root = std::env::temp_dir().join(format!(
-            "greenpiste-preview-{name}-{}-{:?}",
+            "greenbelay-preview-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -113,7 +113,7 @@ impl World {
     }
 
     fn run(&self, args: &[&str], stdin: Option<&str>) -> (i32, String, String) {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
         // A test that installed the fake `amont` puts it first.
         let fake = self.root.join("bin");
         if fake.join("amont").is_file() {
@@ -129,7 +129,7 @@ impl World {
             .env_remove("XDG_STATE_HOME")
             .env("GIT_CONFIG_GLOBAL", self.root.join("global"))
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .env_remove("GREENPISTE_OFF")
+            .env_remove("GREENBELAY_OFF")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -231,7 +231,7 @@ impl World {
         // Quoted as a session writes it: an unquoted Windows path's
         // backslashes are shell escapes.
         let command = format!(
-            "greenpiste preview register --url http://localhost:5173/ --guide '{}'",
+            "greenbelay preview register --url http://localhost:5173/ --guide '{}'",
             record.display()
         );
         // The PreToolUse stamp comes first, as it does in a session: the
@@ -313,11 +313,11 @@ printf '{"branch":"%s","remote":"origin","push_url":"u","pushed":"%s","dst":"ref
 
     fn push_advised(&self, session: &str) -> bool {
         self.pre_bash(session, "push1", "git push -u origin feat/x")
-            .contains("greenpiste/push-preview")
+            .contains("greenbelay/push-preview")
     }
 
     fn journal(&self) -> String {
-        std::fs::read_to_string(self.root.join("claude/greenpiste/journal.log")).unwrap_or_default()
+        std::fs::read_to_string(self.root.join("claude/greenbelay/journal.log")).unwrap_or_default()
     }
 }
 
@@ -349,13 +349,13 @@ fn an_unapproved_ui_land_is_advised_like_a_push() {
     w.commit("docs/plan.md", "x\n");
     assert!(
         !w.pre_bash("s", "land1", "amont land --json")
-            .contains("greenpiste/push-preview"),
+            .contains("greenbelay/push-preview"),
         "docs-only lands carry nothing to preview"
     );
     w.commit("app/routes/home.tsx", "export default 1\n");
     assert!(w
         .pre_bash("s", "land2", "amont land --json")
-        .contains("greenpiste/push-preview"));
+        .contains("greenbelay/push-preview"));
 }
 
 #[test]
@@ -516,7 +516,7 @@ fn a_prefilled_marked_question_never_approves_and_is_refused_under_deny() {
         "a pre-answered question is not the person"
     );
 
-    w.set_global("greenpiste.push-preview.stance", "deny");
+    w.set_global("greenbelay.push-preview.stance", "deny");
     let out = w.ask("PreToolUse", ("s", "p1"), "q2", &q, None, true);
     assert!(out.contains("\"deny\""), "refused before it runs: {out}");
 }
@@ -593,7 +593,7 @@ fn a_register_that_is_not_last_is_not_bound_and_says_how() {
     w.commit("app/a.tsx", "1\n");
     let record = w.guide();
     let command = format!(
-        "greenpiste preview register --url http://localhost:1/ --guide '{}' && echo done",
+        "greenbelay preview register --url http://localhost:1/ --guide '{}' && echo done",
         record.display()
     );
     let (id, said) = stamped(&w, &w.work, "reg", &command, "", "done\n");
@@ -620,7 +620,7 @@ fn a_register_that_is_not_last_is_not_bound_and_says_how() {
         .find_map(|l| l.trim_start().strip_prefix("cd "))
         .map(|rest| format!("cd {rest}"))
         .expect("a command to run");
-    assert!(again.contains("greenpiste preview register"), "{again}");
+    assert!(again.contains("greenbelay preview register"), "{again}");
     assert!(!again.contains("echo done"), "{again}");
     let (_, bound) = stamped(&w, &w.work, "reg2", &again, "", "");
     assert!(!bound.contains("NOT bound"), "{bound}");
@@ -632,7 +632,7 @@ fn a_refusal_quotes_the_question_prefix() {
     let w = World::new("refusal-prefix");
     w.commit("app/a.tsx", "1\n");
     let command = format!(
-        "greenpiste preview register --url http://localhost:1/ --guide '{}' | tee /dev/null",
+        "greenbelay preview register --url http://localhost:1/ --guide '{}' | tee /dev/null",
         w.guide().display()
     );
     let (id, said) = stamped(&w, &w.work, "reg", &command, "", "");
@@ -649,7 +649,7 @@ fn a_register_chained_after_other_commands_is_bound() {
     w.commit("app/a.tsx", "1\n");
     let record = w.guide();
     let command = format!(
-        "curl -s http://localhost:1/ ; cd '{}' && greenpiste preview register --url http://localhost:1/ --guide '{}'",
+        "curl -s http://localhost:1/ ; cd '{}' && greenbelay preview register --url http://localhost:1/ --guide '{}'",
         w.work.display(),
         record.display()
     );
@@ -666,7 +666,7 @@ fn a_plain_register_binds() {
     let w = World::new("plain");
     w.commit("app/a.tsx", "1\n");
     let command = format!(
-        "greenpiste preview register --url http://localhost:1/ --guide '{}'",
+        "greenbelay preview register --url http://localhost:1/ --guide '{}'",
         w.guide().display()
     );
     let (id, said) = stamped(&w, &w.work, "reg", &command, "", "");
@@ -681,7 +681,7 @@ fn a_register_with_no_pretooluse_stamp_is_not_bound() {
     w.commit("app/a.tsx", "1\n");
     let record = w.guide();
     let command = format!(
-        "greenpiste preview register --url http://localhost:1/ --guide '{}'",
+        "greenbelay preview register --url http://localhost:1/ --guide '{}'",
         record.display()
     );
     let (_, out, _) = w.register_cli("http://localhost:1/", &record);
@@ -704,7 +704,7 @@ fn a_json_line_printed_before_a_failed_register_is_not_bound() {
     let (_, out, _) = w.register_cli("http://localhost:1/", &w.guide());
     std::thread::sleep(std::time::Duration::from_millis(20));
     let command = format!(
-        "printf '%s\\n' '{}'; greenpiste preview register --bad",
+        "printf '%s\\n' '{}'; greenbelay preview register --bad",
         out.trim()
     );
     w.pre_bash("s", "reg", &command);
@@ -738,8 +738,8 @@ fn a_chained_register_help_is_not_a_registration() {
         "s",
         "p1",
         "help",
-        "greenpiste --version && greenpiste preview register --help | grep -c Mockup",
-        "usage: greenpiste preview register …\n",
+        "greenbelay --version && greenbelay preview register --help | grep -c Mockup",
+        "usage: greenbelay preview register …\n",
     );
     assert!(!said.contains("NOT bound"), "{said}");
 }
@@ -815,7 +815,7 @@ fn a_worktree_commit_is_approved_under_the_main_checkouts_name() {
 
     let record = w.guide();
     let command = format!(
-        "cd '{}' && greenpiste preview register --url http://localhost:1/ --guide '{}'",
+        "cd '{}' && greenbelay preview register --url http://localhost:1/ --guide '{}'",
         wt.display(),
         record.display()
     );
@@ -854,7 +854,7 @@ fn a_worktree_commit_is_approved_under_the_main_checkouts_name() {
     w.ask("PostToolUse", ("s", "p1"), "q1", &q, Some("Approve"), false);
     assert!(w.journal().contains("approved"), "{}", w.journal());
     let pushed = w.pre_bash_in(&wt, "s", "push1", "git push -u origin feat/wt");
-    assert!(!pushed.contains("greenpiste/push-preview"), "{pushed}");
+    assert!(!pushed.contains("greenbelay/push-preview"), "{pushed}");
 }
 
 /// A register call as a session makes it, from a session sitting in `cwd`:
@@ -888,7 +888,7 @@ fn a_register_after_leading_cds_is_bound_in_the_repository_they_reach() {
     let w = World::new("cd-chained");
     w.commit("app/a.tsx", "1\n");
     let command = format!(
-        "cd '{}' && cd app && greenpiste preview register --url http://localhost:1/ --guide '{}'",
+        "cd '{}' && cd app && greenbelay preview register --url http://localhost:1/ --guide '{}'",
         w.root.display(),
         w.guide().display()
     );
@@ -905,7 +905,7 @@ fn a_register_joined_by_semicolons_or_after_a_build_is_bound() {
     w.commit("app/a.tsx", "1\n");
     let work = w.work.display();
     let tail = format!(
-        "greenpiste preview register --url http://localhost:1/ --guide '{}'",
+        "greenbelay preview register --url http://localhost:1/ --guide '{}'",
         w.guide().display()
     );
     for (i, command) in [
@@ -925,7 +925,7 @@ fn a_register_that_is_not_last_piped_or_substituted_stays_unbound() {
     let w = World::new("cd-other");
     w.commit("app/a.tsx", "1\n");
     let tail = format!(
-        "greenpiste preview register --url http://localhost:1/ --guide '{}'",
+        "greenbelay preview register --url http://localhost:1/ --guide '{}'",
         w.guide().display()
     );
     let work = w.work.display();
@@ -953,7 +953,7 @@ fn a_register_that_is_not_last_piped_or_substituted_stays_unbound() {
 #[test]
 fn under_deny_an_unreadable_push_to_a_ui_repository_is_held() {
     let w = World::new("deny");
-    w.set_global("greenpiste.push-preview.stance", "deny");
+    w.set_global("greenbelay.push-preview.stance", "deny");
     w.commit("app/a.tsx", "1\n");
     let out = w.pre_bash("s", "t", "git push --all origin");
     assert!(out.contains("\"deny\""), "{out}");
@@ -964,7 +964,7 @@ fn under_deny_an_unreadable_push_to_a_ui_repository_is_held() {
 #[test]
 fn under_deny_a_delete_only_push_passes() {
     let w = World::new("deny-delete");
-    w.set_global("greenpiste.push-preview.stance", "deny");
+    w.set_global("greenbelay.push-preview.stance", "deny");
     w.commit("app/a.tsx", "1\n");
     for command in [
         "git push origin --delete old other",
@@ -990,7 +990,7 @@ fn a_removed_session_directory_neither_hides_nor_excuses_a_push() {
     let cd = format!("cd '{}' && git push -u origin feat/x", w.work.display());
     let out = w.pre_bash_in(&gone, "s", "t", &cd);
     assert!(
-        out.contains("greenpiste/push-preview"),
+        out.contains("greenbelay/push-preview"),
         "judged in the repository the cd reaches: {out}"
     );
     let out = w.pre_bash_in(&gone, "s", "t", "git push -u origin feat/x");
@@ -999,7 +999,7 @@ fn a_removed_session_directory_neither_hides_nor_excuses_a_push() {
         "advise: nothing to look at: {out}"
     );
 
-    w.set_global("greenpiste.push-preview.stance", "deny");
+    w.set_global("greenbelay.push-preview.stance", "deny");
     let out = w.pre_bash_in(&gone, "s", "t", &cd);
     assert!(out.contains("\"deny\""), "{out}");
     let out = w.pre_bash_in(&gone, "s", "t", "git push -u origin feat/x");
@@ -1015,7 +1015,7 @@ fn a_removed_session_directory_neither_hides_nor_excuses_a_push() {
 #[test]
 fn a_repository_can_opt_out() {
     let w = World::new("opt-out");
-    git(&w.work, &["config", "greenpiste.push-preview.ui", "false"]);
+    git(&w.work, &["config", "greenbelay.push-preview.ui", "false"]);
     w.commit("app/a.tsx", "1\n");
     assert!(!w.push_advised("s"));
 }
@@ -1057,13 +1057,13 @@ fn preview_journal_lines_name_the_repository_pushed_not_the_sessions() {
     // are shell escapes.
     let push = format!("cd '{}' && git push -q -u origin feat/x", w.work.display());
     let out = w.pre_bash_in(&elsewhere, "s", "push1", &push);
-    assert!(out.contains("greenpiste/push-preview"), "{out}");
+    assert!(out.contains("greenbelay/push-preview"), "{out}");
     git(&w.work, &["push", "-q", "-u", "origin", "feat/x"]);
     w.post_bash_in(&elsewhere, "s", "p1", "push1", &push, "");
 
     let record = w.guide();
     let unbound = format!(
-        "cd '{}'; greenpiste preview register --url http://localhost:1/ --guide '{}'",
+        "cd '{}'; greenbelay preview register --url http://localhost:1/ --guide '{}'",
         w.work.display(),
         record.display()
     );
@@ -1386,7 +1386,7 @@ fn an_unapproved_mockup_commit_is_held_and_a_plain_ui_one_is_advised() {
     let w = World::new("mockup-deny");
     w.commit("app/routes/home.tsx", "1\n");
     let plain = w.pre_bash("s", "push1", "git push -u origin feat/x");
-    assert!(plain.contains("greenpiste/push-preview"), "{plain}");
+    assert!(plain.contains("greenbelay/push-preview"), "{plain}");
     assert!(!plain.contains("\"deny\""), "advised, not held: {plain}");
 
     w.commit("docs/mockups/pill/Main.dc.html", "<x-dc></x-dc>\n");
@@ -1394,7 +1394,7 @@ fn an_unapproved_mockup_commit_is_held_and_a_plain_ui_one_is_advised() {
     assert!(held.contains("\"deny\""), "held: {held}");
 
     // Observe is how a person turns the rule off; mockup mode respects it.
-    w.set_global("greenpiste.push-preview.stance", "observe");
+    w.set_global("greenbelay.push-preview.stance", "observe");
     let off = w.pre_bash("s", "push3", "git push -u origin feat/x");
     assert!(!off.contains("\"deny\""), "{off}");
 }
@@ -1418,7 +1418,7 @@ fn an_unreadable_push_is_held_as_unreadable_not_as_unapproved() {
     // before the tag existed; the hold said "no approved preview covers",
     // and the session went looking for an approval it did not need.
     let w = World::new("deny-unborn-tag");
-    w.set_global("greenpiste.push-preview.stance", "deny");
+    w.set_global("greenbelay.push-preview.stance", "deny");
     w.commit("app/a.tsx", "1\n");
     let out = w.pre_bash("s", "t", "git tag v9.9.9 && git push origin v9.9.9");
     assert!(out.contains("\"deny\""), "still held: {out}");
@@ -1437,11 +1437,11 @@ fn an_unreadable_push_is_held_as_unreadable_not_as_unapproved() {
 #[test]
 fn under_deny_a_push_of_an_existing_tag_passes() {
     let w = World::new("deny-tag");
-    w.set_global("greenpiste.push-preview.stance", "deny");
+    w.set_global("greenbelay.push-preview.stance", "deny");
     w.commit("app/a.tsx", "1\n");
     git(&w.work, &["tag", "v9.9.9"]);
     let out = w.pre_bash("s", "t", "git push origin v9.9.9");
-    assert!(!out.contains("greenpiste/push-preview"), "{out}");
+    assert!(!out.contains("greenbelay/push-preview"), "{out}");
 }
 
 // --- the plan approval record (ADR-0028) -----------------------------------
@@ -1474,7 +1474,7 @@ fn plan_sha(w: &World, plan: &Path) -> String {
 }
 
 fn approved_plans(w: &World) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(w.root.join("claude/greenpiste/plan-approved"))
+    let mut names: Vec<String> = std::fs::read_dir(w.root.join("claude/greenbelay/plan-approved"))
         .map(|d| {
             d.flatten()
                 .map(|e| e.file_name().to_string_lossy().into_owned())
@@ -1625,7 +1625,7 @@ fn no_plan_a_pointer_plan_or_a_plan_already_on_main_is_held_as_before() {
     git(&w.work, &["checkout", "-q", "-b", "feat/y"]);
     w.commit("app/a.tsx", "1\n");
     let out = w.pre_bash("s", "push1", "git push -u origin feat/y");
-    assert!(out.contains("greenpiste/push-preview"), "{out}");
+    assert!(out.contains("greenbelay/push-preview"), "{out}");
     assert!(!w.journal().contains(" evidence "), "{}", w.journal());
 }
 
@@ -1648,7 +1648,7 @@ fn with_no_base_ref_the_evidence_is_not_looked_for() {
         &["remote", "add", "fresh", &empty.display().to_string()],
     );
     let out = w.pre_bash("s", "push1", "git push -u fresh feat/x");
-    assert!(out.contains("greenpiste/push-preview"), "{out}");
+    assert!(out.contains("greenbelay/push-preview"), "{out}");
     assert!(!w.journal().contains(" evidence "), "{}", w.journal());
 }
 
@@ -1715,7 +1715,7 @@ fn an_approval_is_keyed_by_content_not_by_commit() {
 fn an_old_four_field_approval_matches_only_its_own_commit() {
     let w = World::new("bytree-old");
     let first = w.commit("app/routes/home.tsx", "1\n");
-    let dir = w.root.join("claude/greenpiste/previews");
+    let dir = w.root.join("claude/greenbelay/previews");
     std::fs::create_dir_all(&dir).unwrap();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1795,7 +1795,7 @@ impl World {
             std::fs::write(g.parent().unwrap().join(f), body).unwrap();
         }
         let command = format!(
-            "greenpiste preview register --url http://localhost:5173/ --guide '{}'",
+            "greenbelay preview register --url http://localhost:5173/ --guide '{}'",
             g.display()
         );
         self.pre_bash("s", "reg", &command);
@@ -2043,7 +2043,7 @@ fn an_identical_pair_in_a_guide_that_is_not_the_pages_is_not_approved() {
 /// Make the approvals file unwritable: a non-empty directory stands where
 /// the atomic rename would put it.
 fn block_approvals(w: &World) {
-    let blocked = w.root.join("claude/greenpiste/previews/approvals");
+    let blocked = w.root.join("claude/greenbelay/previews/approvals");
     std::fs::create_dir_all(&blocked).unwrap();
     std::fs::write(blocked.join("keep"), "x").unwrap();
 }
@@ -2088,7 +2088,7 @@ fn a_marked_approve_that_cannot_be_stored_is_journalled_and_still_asks() {
 fn register_opening(name: &str, opener: &str) -> serde_json::Value {
     let w = World::new(name);
     w.commit("src/a.txt", "a");
-    w.set_global("greenpiste.opener", opener);
+    w.set_global("greenbelay.opener", opener);
     let guide = w.guide();
     let (code, stdout, stderr) = w.run(
         &[

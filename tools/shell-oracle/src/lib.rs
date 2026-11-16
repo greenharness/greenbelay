@@ -1,8 +1,8 @@
-//! Shared plumbing for the shell-analysis oracle: calling the greenpiste
+//! Shared plumbing for the shell-analysis oracle: calling the greenbelay
 //! binary, reading its claims, the corpora, and running scripts under real
 //! shells with stubbed network clients.
 //!
-//! The analyzer is exercised ONLY through `greenpiste analyze`; nothing here
+//! The analyzer is exercised ONLY through `greenbelay analyze`; nothing here
 //! links the crate. What the harness checks is the published contract in
 //! `docs/analysis.md`, read off the JSON the binary prints.
 
@@ -25,12 +25,12 @@ pub fn repo_root() -> PathBuf {
         .expect("repository root")
 }
 
-/// `$GREENPISTE_BIN`, else `<repo>/target/debug/greenpiste`. Panics with
+/// `$GREENBELAY_BIN`, else `<repo>/target/debug/greenbelay`. Panics with
 /// the fix when it is missing: this harness never builds the crate itself.
 pub fn amont_bin() -> PathBuf {
-    if let Some(p) = std::env::var_os("GREENPISTE_BIN") {
+    if let Some(p) = std::env::var_os("GREENBELAY_BIN") {
         let p = PathBuf::from(p);
-        assert!(p.is_file(), "GREENPISTE_BIN={} is not a file", p.display());
+        assert!(p.is_file(), "GREENBELAY_BIN={} is not a file", p.display());
         return p;
     }
     static BUILT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
@@ -42,14 +42,14 @@ pub fn amont_bin() -> PathBuf {
             // snapshot — without a separate step to forget.
             let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
             let status = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
-                .args(["build", "--quiet", "--bin", "greenpiste"])
+                .args(["build", "--quiet", "--bin", "greenbelay"])
                 .current_dir(&root)
                 .env_remove("CARGO_TARGET_DIR")
                 .env_remove("RUSTUP_TOOLCHAIN")
                 .status()
                 .expect("spawn cargo build at the repository root");
             assert!(status.success(), "cargo build at {} failed", root.display());
-            let p = root.join("target/debug/greenpiste");
+            let p = root.join("target/debug/greenbelay");
             assert!(p.is_file(), "no binary at {} after building", p.display());
             p
         })
@@ -235,7 +235,7 @@ pub fn analyze_raw(bin: &Path, dialect: &str, src: &str) -> Run {
         .args(["analyze", "--dialect", dialect, src])
         .stdin(Stdio::null())
         .output()
-        .expect("spawn greenpiste");
+        .expect("spawn greenbelay");
     Run {
         status: out.status,
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -257,7 +257,7 @@ pub fn analyze(bin: &Path, dialect: &str, src: &str) -> Analysis {
 
 // ── corpora ─────────────────────────────────────────────────────────────────
 
-/// `crates/greenpiste-guard/src/corpus.rs::unescape`, byte for byte in behaviour: `\n`, `\r`, `\t`,
+/// `crates/greenbelay-guard/src/corpus.rs::unescape`, byte for byte in behaviour: `\n`, `\r`, `\t`,
 /// `\\` are escapes; any other backslash is kept verbatim.
 pub fn unescape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -289,10 +289,10 @@ pub struct Sample {
     pub command: String,
 }
 
-/// Every case in `crates/greenpiste-guard/tests/corpus/*.cases` (`label\tcommand`, `#` comments),
-/// parsed the way `crates/greenpiste-guard/src/corpus.rs::parse` does.
+/// Every case in `crates/greenbelay-guard/tests/corpus/*.cases` (`label\tcommand`, `#` comments),
+/// parsed the way `crates/greenbelay-guard/src/corpus.rs::parse` does.
 pub fn corpus_cases() -> Vec<Sample> {
-    let dir = repo_root().join("crates/greenpiste-guard/tests/corpus");
+    let dir = repo_root().join("crates/greenbelay-guard/tests/corpus");
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
         .filter_map(|e| e.ok().map(|e| e.path()))
@@ -320,12 +320,12 @@ pub fn corpus_cases() -> Vec<Sample> {
     out
 }
 
-/// The string literals of `crates/greenpiste-guard/src/analysis/interp/tests.rs` (Appendix C) that
+/// The string literals of `crates/greenbelay-guard/src/analysis/interp/tests.rs` (Appendix C) that
 /// are commands: every `"…"` and `r#"…"#` literal that mentions a client,
 /// minus `format!` templates. Read from the source at test time, so a case
 /// added there is checked here without a copy to keep in step.
 pub fn appendix_c() -> Vec<Sample> {
-    let path = repo_root().join("crates/greenpiste-guard/src/analysis/interp/tests.rs");
+    let path = repo_root().join("crates/greenbelay-guard/src/analysis/interp/tests.rs");
     let src = std::fs::read_to_string(&path).expect("read interp tests");
     let mut out = Vec::new();
     for (line, lit) in rust_string_literals(&src) {

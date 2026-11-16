@@ -42,14 +42,14 @@ jobs:
         run: |
           set -euo pipefail
           # Three crates, one version: the binary and its two libraries
-          # (greenpiste-guard, greenpiste-process). `cargo install` resolves
+          # (greenbelay-guard, greenbelay-process). `cargo install` resolves
           # the libraries by version, so a release where they differ is one
           # nobody can install; read all three, and the exact pins between
           # them, and refuse any disagreement.
           versions=$(cargo metadata --no-deps --format-version 1 | python3 -c '
           import json, sys
           m = json.load(sys.stdin)
-          names = {"greenpiste", "greenpiste-guard", "greenpiste-process"}
+          names = {"greenbelay", "greenbelay-guard", "greenbelay-process"}
           pkgs = {p["name"]: p for p in m["packages"] if p["name"] in names}
           assert set(pkgs) == names, sorted(pkgs)
           vs = {p["version"] for p in pkgs.values()}
@@ -161,13 +161,10 @@ jobs:
           target_upper=$(echo "${{ matrix.target }}" | tr 'a-z-' 'A-Z_')
           echo "CARGO_TARGET_${target_upper}_LINKER=${{ matrix.linker }}" >> "$GITHUB_ENV"
 
-      - run: cargo build -p greenpiste --release --locked --target ${{ matrix.target }}
+      - run: cargo build -p greenbelay --release --locked --target ${{ matrix.target }}
 
-      # Two archive sets from one build: greenpiste-<v>-<t>, and
-      # amont-agent-<v>-<t> holding a regular-file copy of the same binary
-      # under the old name, which installers and grh pins from before the
-      # rename still fetch. The alias set goes when the census finds no
-      # program still reading the old name.
+      # One archive set: greenbelay-<v>-<t>. The rename from greenpiste ships
+      # no alias archive (ADR-0071: no users besides the person's machine).
       - name: Archive
         id: archive
         run: |
@@ -175,14 +172,14 @@ jobs:
           version="${{ needs.guard.outputs.version }}"
           if [ "${{ runner.os }}" = "Windows" ]; then ext=".exe"; else ext=""; fi
           assets=""
-          for pair in "greenpiste greenpiste" "amont-agent amont-agent"; do
+          for pair in "greenbelay greenbelay"; do
             set -- $pair
             name="$1-${version}-${{ matrix.target }}"
             bin_name="$2"
             staging="dist/$name"
             mkdir -p "$staging"
             cp README.md LICENSE "$staging/"
-            cp "target/${{ matrix.target }}/release/greenpiste$ext" "$staging/$bin_name$ext"
+            cp "target/${{ matrix.target }}/release/greenbelay$ext" "$staging/$bin_name$ext"
             if [ "${{ runner.os }}" = "Windows" ]; then
               (cd dist && 7z a "$name.zip" "$name" > /dev/null)
               assets="$assets dist/$name.zip"
@@ -206,16 +203,10 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ needs.guard.outputs.version }}"
-          bin="dist/greenpiste-${version}-${{ matrix.target }}/greenpiste"
-          alias_bin="dist/amont-agent-${version}-${{ matrix.target }}/amont-agent"
+          bin="dist/greenbelay-${version}-${{ matrix.target }}/greenbelay"
           # An `if`, not `[ … ] && …`: under `set -e` a false test as the last
           # command of a line is a FAILING step.
-          if [ "${{ runner.os }}" = "Windows" ]; then bin="$bin.exe"; alias_bin="$alias_bin.exe"; fi
-          # The alias archive holds the same bytes, a regular file.
-          cmp "$bin" "$alias_bin"
-          if [ ! -f "$alias_bin" ] || [ -L "$alias_bin" ]; then
-            echo "::error::the alias archive's binary is not a regular file: $alias_bin"; exit 1
-          fi
+          if [ "${{ runner.os }}" = "Windows" ]; then bin="$bin.exe"; fi
 
           # CAPTURE FIRST, then grep the variable — never `"$bin" | grep -q`.
           #
@@ -298,12 +289,12 @@ jobs:
           print("no vulnerability advisories")
           PY
 
-  # greenpiste stands alone (ADR-0064 `harness.standalone-tools`): installed
+  # greenbelay stands alone (ADR-0064 `harness.standalone-tools`): installed
   # by install/install.sh from the archives this run built, on a clean runner
-  # with no grh, it answers its own commands, and its old name runs as the
-  # same build.
+  # with no grh, it answers its own commands, and it places no old-name
+  # binary.
   standalone:
-    name: greenpiste stands alone (${{ matrix.os }})
+    name: greenbelay stands alone (${{ matrix.os }})
     needs: [guard, build]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
@@ -340,16 +331,16 @@ jobs:
           Set-Content -Path (Join-Path $dist 'SHA256SUMS') -Value $lines
           $bin = Join-Path $env:RUNNER_TEMP 'bin'
           New-Item -ItemType Directory -Path $bin -Force | Out-Null
-          $env:GREENPISTE_ARCHIVE_DIR = $dist
-          $env:GREENPISTE_BIN_DIR = $bin
-          $env:GREENPISTE_VERSION = "v$env:VERSION"
+          $env:GREENBELAY_ARCHIVE_DIR = $dist
+          $env:GREENBELAY_BIN_DIR = $bin
+          $env:GREENBELAY_VERSION = "v$env:VERSION"
           & ./install/install.ps1
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $env:PATH = "$bin;$env:PATH"
-          foreach ($name in 'greenpiste', 'amont-agent') {
+          foreach ($name in 'greenbelay') {
             $reported = (& $name --version | Out-String).Trim()
             Write-Host $reported
-            if ($reported -ne "greenpiste $env:VERSION") { Write-Error "$name --version said: $reported" }
+            if ($reported -ne "greenbelay $env:VERSION") { Write-Error "$name --version said: $reported" }
           }
       - name: Install from the built archives and run it with no grh
         if: matrix.os == 'ubuntu-latest'
@@ -363,19 +354,18 @@ jobs:
           (cd dist && sha256sum * > SHA256SUMS)
           bin="$RUNNER_TEMP/bin"
           mkdir -p "$bin"
-          GREENPISTE_ARCHIVE_DIR="$PWD/dist" GREENPISTE_BIN_DIR="$bin" GREENPISTE_VERSION="v$version" \
+          GREENBELAY_ARCHIVE_DIR="$PWD/dist" GREENBELAY_BIN_DIR="$bin" GREENBELAY_VERSION="v$version" \
             sh install/install.sh
           export PATH="$bin:$PATH"
-          reported=$(greenpiste --version)
+          reported=$(greenbelay --version)
           printf '%s\n' "$reported"
-          [ "$reported" = "greenpiste $version" ] || { echo "::error::greenpiste --version said: $reported"; exit 1; }
-          rules=$(greenpiste rules --json)
+          [ "$reported" = "greenbelay $version" ] || { echo "::error::greenbelay --version said: $reported"; exit 1; }
+          rules=$(greenbelay rules --json)
           python3 -I -c 'import json, sys; json.loads(sys.argv[1])' "$rules"
-          reported=$(amont-agent --version)
-          printf '%s\n' "$reported"
-          [ "$reported" = "greenpiste $version" ] || { echo "::error::amont-agent --version said: $reported"; exit 1; }
-          cmp "$bin/greenpiste" "$bin/amont-agent"
-          echo "greenpiste installs, runs and answers to amont-agent with no grh"
+          if [ -e "$bin/amont-agent" ] || [ -e "$bin/greenpiste" ]; then
+            echo "::error::the installer placed an old-name binary"; exit 1
+          fi
+          echo "greenbelay installs and runs with no grh, and places no old-name binary"
 
   # What a stranger gets: install.sh with no local archives, from the release
   # just published.
@@ -394,15 +384,13 @@ jobs:
           bin="$RUNNER_TEMP/bin"
           mkdir -p "$bin"
           curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/v$version/install/install.sh" -o "$RUNNER_TEMP/install.sh"
-          GREENPISTE_BIN_DIR="$bin" GREENPISTE_VERSION="v$version" sh "$RUNNER_TEMP/install.sh"
+          GREENBELAY_BIN_DIR="$bin" GREENBELAY_VERSION="v$version" sh "$RUNNER_TEMP/install.sh"
           export PATH="$bin:$PATH"
-          reported=$(greenpiste --version)
+          reported=$(greenbelay --version)
           printf '%s\n' "$reported"
-          [ "$reported" = "greenpiste $version" ] || { echo "::error::greenpiste --version said: $reported"; exit 1; }
-          rules=$(greenpiste rules --json)
+          [ "$reported" = "greenbelay $version" ] || { echo "::error::greenbelay --version said: $reported"; exit 1; }
+          rules=$(greenbelay rules --json)
           python3 -I -c 'import json, sys; json.loads(sys.argv[1])' "$rules"
-          reported=$(amont-agent --version)
-          [ "$reported" = "greenpiste $version" ] || { echo "::error::amont-agent --version said: $reported"; exit 1; }
 
   publish:
     name: publish the release
@@ -422,7 +410,7 @@ jobs:
           merge-multiple: true
       # The manifest grh pins, written from the tarballs BEFORE SHA256SUMS so
       # it is checksummed and attested with them. Its [tool.release] names the
-      # greenpiste-* tarballs only.
+      # greenbelay-* tarballs only.
       - name: The manifest grh pins
         run: |
           set -euo pipefail
@@ -444,7 +432,7 @@ jobs:
       #
       # Attestations go to GitHub's API, not into `dist`, so the `dist/*`
       # release glob below needs no change. Verify with:
-      #   gh attestation verify <file> --repo greenharness/greenpiste
+      #   gh attestation verify <file> --repo greenharness/greenbelay
       - name: Attest
         if: needs.guard.outputs.dry_run == 'false'
         uses: actions/attest-build-provenance@v4
@@ -599,10 +587,10 @@ jobs:
           # release must not fail on a crate that is already up, and "already
           # uploaded" is exactly that answer — anything else is a real failure.
           #
-          # The libraries first, in dependency order: `greenpiste` resolves
+          # The libraries first, in dependency order: `greenbelay` resolves
           # them from crates.io by version. A rerun resumes a partial publish,
           # because each crate already up is "already uploaded".
-          for crate in greenpiste-guard greenpiste-process greenpiste; do
+          for crate in greenbelay-guard greenbelay-process greenbelay; do
             echo "→ publishing $crate $VERSION"
             if out=$(cargo publish -p "$crate" --locked 2>&1); then
               printf '%s\n' "$out"
@@ -617,7 +605,7 @@ jobs:
             fi
           done
           echo "### Published to crates.io" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`cargo install greenpiste\` — v$VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`cargo install greenbelay\` — v$VERSION" >> "$GITHUB_STEP_SUMMARY"
 
   # The tap formula, bumped by the release rather than by hand: a release is
   # not published until `brew upgrade` can see it.
@@ -655,7 +643,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          musl="greenpiste-$VERSION-x86_64-unknown-linux-musl"
+          musl="greenbelay-$VERSION-x86_64-unknown-linux-musl"
           gh release download "v$VERSION" --pattern SHA256SUMS --pattern "$musl.tar.gz"
           # Check only the tarball just downloaded. `--ignore-missing` would
           # also check every listed file that happens to exist here, and this
@@ -664,7 +652,7 @@ jobs:
           grep " $musl.tar.gz\$" SHA256SUMS | sha256sum -c -
           mkdir rel && tar -xzf "$musl.tar.gz" -C rel
           GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
-            "rel/$musl/greenpiste" rules --json > rules.json
+            "rel/$musl/greenbelay" rules --json > rules.json
           test -s rules.json
       - name: Clone the tap
         env:
@@ -678,26 +666,29 @@ jobs:
           echo "GIT_SSH_COMMAND=ssh -i ~/.ssh/tap_key -o IdentitiesOnly=yes" >> "$GITHUB_ENV"
           GIT_SSH_COMMAND="ssh -i ~/.ssh/tap_key -o IdentitiesOnly=yes" \
             git clone --depth 1 git@github.com:fredericrous/homebrew-tap.git tap
-      # The formula is greenpiste's own (packaging/homebrew/greenpiste.rb),
+      # The formula is greenbelay's own (packaging/homebrew/greenbelay.rb),
       # rewritten from the published SHA256SUMS and binary. The rename of the
       # old formula goes in the SAME tap commit, written only now that the
       # assets exist: `formula_renames.json` makes `brew upgrade` move an
-      # installed old formula to greenpiste, and the old formula file is
+      # installed old formula to greenbelay, and the old formula file is
       # removed so the old name cannot be installed beside it.
       - name: Rewrite the formula
         run: |
           set -euo pipefail
-          cp packaging/homebrew/greenpiste.rb tap/Formula/greenpiste.rb
-          python3 -I scripts/bump-tap.py "$VERSION" SHA256SUMS rules.json tap/Formula/greenpiste.rb
-          ruby -c tap/Formula/greenpiste.rb
+          cp packaging/homebrew/greenbelay.rb tap/Formula/greenbelay.rb
+          python3 -I scripts/bump-tap.py "$VERSION" SHA256SUMS rules.json tap/Formula/greenbelay.rb
+          ruby -c tap/Formula/greenbelay.rb
           python3 -I - tap/formula_renames.json <<'PY'
           import json, pathlib, sys
           path = pathlib.Path(sys.argv[1])
           renames = json.loads(path.read_text()) if path.exists() else {}
-          renames["amont-agent"] = "greenpiste"
+          if not isinstance(renames, dict):
+              sys.exit(f"{path}: expected a JSON object")
+          renames.pop("amont-agent", None)
+          renames["greenpiste"] = "greenbelay"
           path.write_text(json.dumps(renames, indent=2, sort_keys=True) + "\n")
           PY
-          rm -f tap/Formula/amont-agent.rb
+          rm -f tap/Formula/greenpiste.rb
       - name: Push
         run: |
           set -euo pipefail
@@ -708,12 +699,12 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Formula/greenpiste.rb formula_renames.json
+          git add Formula/greenbelay.rb formula_renames.json
           git add -u Formula
-          git commit -m "chore: greenpiste $VERSION"
+          git commit -m "chore: greenbelay $VERSION"
           git push origin HEAD
           echo "### Published to the homebrew tap" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`brew upgrade fredericrous/tap/greenpiste\` — v$VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`brew upgrade fredericrous/tap/greenbelay\` — v$VERSION" >> "$GITHUB_STEP_SUMMARY"
 
   # The only thing anywhere that runs the formula.
   #
@@ -750,17 +741,18 @@ jobs:
         run: |
           set -euo pipefail
           brew tap fredericrous/tap
-          brew install fredericrous/tap/greenpiste
+          brew install fredericrous/tap/greenbelay
 
       - name: The installed binary is the version just published
         run: |
           set -euo pipefail
-          reported=$(greenpiste --version)
+          reported=$(greenbelay --version)
           printf '%s\n' "$reported"
-          [ "$reported" = "greenpiste $VERSION" ] || { echo "::error::greenpiste --version said: $reported"; exit 1; }
-          # The old name, a copy of the same build.
-          reported=$(amont-agent --version)
-          [ "$reported" = "greenpiste $VERSION" ] || { echo "::error::amont-agent --version said: $reported"; exit 1; }
+          [ "$reported" = "greenbelay $VERSION" ] || { echo "::error::greenbelay --version said: $reported"; exit 1; }
+          # No old-name binary is installed.
+          if command -v greenpiste > /dev/null 2>&1 || command -v amont-agent > /dev/null 2>&1; then
+            echo "::error::an old-name binary is on PATH"; exit 1
+          fi
 
       # It still DECIDES, not merely starts. A guard that installs and then
       # refuses nothing is the defect no unit test can see, because tests
@@ -768,12 +760,12 @@ jobs:
       - name: The installed guard still says no
         run: |
           set -euo pipefail
-          out=$(greenpiste check 'git push origin main 2>&1 | tail -5')
+          out=$(greenbelay check 'git push origin main 2>&1 | tail -5')
           printf '%s\n' "$out"
           printf '%s' "$out" | grep -q 'pipe-to-tail'
 
       - name: brew test
-        run: brew test fredericrous/tap/greenpiste
+        run: brew test fredericrous/tap/greenbelay
 
       # An existing install upgrades. This runs after the fresh-install
       # checks above, so they test a stranger's first `brew install`: it
@@ -783,33 +775,34 @@ jobs:
         run: |
           set -euo pipefail
           export HOMEBREW_NO_AUTO_UPDATE=1
-          brew uninstall greenpiste
+          brew uninstall greenbelay
           tap_dir=$(brew --repository fredericrous/tap)
-          # The commit that removed Formula/amont-agent.rb is the rename; its
+          # The commit that removed Formula/greenpiste.rb is the rename; its
           # parent still has the old formula, whatever landed on the tap since.
-          renamed=$(git -C "$tap_dir" log -1 --format=%H --diff-filter=D -- Formula/amont-agent.rb)
+          renamed=$(git -C "$tap_dir" log -1 --format=%H --diff-filter=D -- Formula/greenpiste.rb)
           if [ -z "$renamed" ]; then
-            echo "::error::no tap commit removes Formula/amont-agent.rb; the rename did not land"; exit 1
+            echo "::error::no tap commit removes Formula/greenpiste.rb; the rename did not land"; exit 1
           fi
           git -C "$tap_dir" checkout --quiet "$renamed~1"
-          brew install fredericrous/tap/amont-agent
+          brew install fredericrous/tap/greenpiste
           # Back to the tap's branch, not a detached HEAD.
           git -C "$tap_dir" checkout --quiet -
           # Homebrew trusts a tap formula only when it is named: installing
-          # amont-agent by name trusted it, but the rename lands on greenpiste,
+          # greenpiste by name trusted it, but the rename lands on greenbelay,
           # which nobody named, and brew refuses to load it ("untrusted tap").
           # A person upgrading runs the same `brew trust` (docs/install.md).
-          brew trust --formula fredericrous/tap/greenpiste
+          brew trust --formula fredericrous/tap/greenbelay
           # Only ours: a bare `brew upgrade` would upgrade every formula on
           # the runner. The old name goes through formula_renames.json.
-          brew upgrade fredericrous/tap/amont-agent
-          for name in greenpiste amont-agent; do
-            reported=$("$name" --version)
-            printf '%s\n' "$reported"
-            [ "$reported" = "greenpiste $VERSION" ] || { echo "::error::$name --version said: $reported"; exit 1; }
-          done
+          brew upgrade fredericrous/tap/greenpiste
+          reported=$(greenbelay --version)
+          printf '%s\n' "$reported"
+          [ "$reported" = "greenbelay $VERSION" ] || { echo "::error::greenbelay --version said: $reported"; exit 1; }
+          if command -v greenpiste > /dev/null 2>&1 || command -v amont-agent > /dev/null 2>&1; then
+            echo "::error::the upgrade left an old-name binary"; exit 1
+          fi
 
       - name: Say so
         run: |
           echo "### brew install verified" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`brew install fredericrous/tap/greenpiste\` produces v$VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`brew install fredericrous/tap/greenbelay\` produces v$VERSION" >> "$GITHUB_STEP_SUMMARY"

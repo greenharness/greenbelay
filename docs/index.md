@@ -1,4 +1,4 @@
-# greenpiste
+# greenbelay
 
 A guard that reads a shell command before Claude Code runs it, and can
 observe it, advise against it, or refuse it.
@@ -15,7 +15,7 @@ at tailing an error message, so a rejected push, a push killed by a timeout,
 and a push that never left the machine all report success — and the trimming
 discards the error text too, so the failure is silent in both channels.
 
-`greenpiste` (formerly `amont-agent`) is a `PreToolUse` hook. It is a single binary, it is opt-in, and
+`greenbelay` (formerly `amont-agent`) is a `PreToolUse` hook. It is a single binary, it is opt-in, and
 it phones nothing home.
 
 ## The shape of it
@@ -30,16 +30,16 @@ Three stances, and the middle one is the point:
 
 Of the 40 rules, three ship as `deny`, twenty-four as `advise` and thirteen as
 `observe`. A rule is promoted only once your own transcripts say it should be
-— see [measuring and graduating](measuring.md) — and `greenpiste rules` shows
+— see [measuring and graduating](measuring.md) — and `greenbelay rules` shows
 the stance in force on your machine.
 
 ## Start here
 
 ```sh
-greenpiste install          # prints the settings block, writes nothing
-greenpiste install --write  # merges it into ~/.claude/settings.json
-greenpiste doctor           # is it installed, runnable, and actually firing?
-greenpiste status           # every rule, its stance, and what it has seen
+greenbelay install          # prints the settings block, writes nothing
+greenbelay install --write  # merges it into ~/.claude/settings.json
+greenbelay doctor           # is it installed, runnable, and actually firing?
+greenbelay status           # every rule, its stance, and what it has seen
 ```
 
 ## Relationship to amont

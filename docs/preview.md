@@ -24,7 +24,7 @@ terminal, a local page, and the app already open in their browser.
 1. **Verify.** The agent drives the changed route in a real browser, checks the
    console and network, and takes before and after screenshots.
 2. **Write the guide** — markdown, **outside the worktree**
-   (`~/.claude/greenpiste/attestations/<sha>/guide.md` by convention, the
+   (`~/.claude/greenbelay/attestations/<sha>/guide.md` by convention, the
    screenshots beside it), because a file inside it, or the page rendered
    beside it, would dirty the commit it describes. The format is
    [below](#the-guide).
@@ -33,20 +33,20 @@ terminal, a local page, and the app already open in their browser.
    (`attestations/<name>` in a Markdown file under a repository's `docs/`)
    or it holds a `.keep`; a removed directory sits in
    `.trash-<secs>-<name>` for 7 days (`mv` it back to undo).
-   `greenpiste attestations` shows what would go.
+   `greenbelay attestations` shows what would go.
 3. **Serve and register.** From the clean worktree, at the commit to be
    pushed:
 
    ```sh
-   greenpiste preview register --url http://localhost:5173/settings \
-     --guide ~/.claude/greenpiste/attestations/abc1234/guide.md
+   greenbelay preview register --url http://localhost:5173/settings \
+     --guide ~/.claude/greenbelay/attestations/abc1234/guide.md
    ```
 
    Run it in the foreground as the **last command of its line**. Anything
    may come before it, joined by `&&` or `;`:
 
    ```sh
-   cd ~/Developer/app-wt-settings && npm run build && greenpiste preview register --url … --guide …
+   cd ~/Developer/app-wt-settings && npm run build && greenbelay preview register --url … --guide …
    ```
 
    It refuses a dirty tree, a non-commit `HEAD`, a guide inside the worktree
@@ -65,7 +65,7 @@ terminal, a local page, and the app already open in their browser.
    | `attestation` | `guide` again, for hooks older than 2.21.0 |
 
    `--open` also opens the page through the machine's opener
-   (`greenpiste.opener`, see [configuration](configuration.md); the platform
+   (`greenbelay.opener`, see [configuration](configuration.md); the platform
    opener by default) and prints the JSON after the attempt with
    `"opened": true` or `"opened": false`; failing to open never fails the
    command.
@@ -81,7 +81,7 @@ terminal, a local page, and the app already open in their browser.
    bound, and the journal says why.
 
    A line an earlier clause printed cannot pass for the register's own
-   (`printf '<json>'; greenpiste preview register --bad`): the
+   (`printf '<json>'; greenbelay preview register --bad`): the
    `PreToolUse` hook stamps when the call started, in
    `previews/registers/<tool_use_id>`, and the bind requires that the id
    starts with the commit's sha7 and that the page exists, names the full
@@ -170,14 +170,14 @@ of `Reference`. The converter is hand-rolled for this subset — headings,
 paragraphs, bullet and numbered lists with one nested level, fenced code,
 quotes, **bold**, `code`, links, images and bare URLs — and escapes
 everything else; a link whose scheme is not http(s), mailto or file is text.
-No markdown crate: greenpiste is on a trust path and a page only the person
+No markdown crate: greenbelay is on a trust path and a page only the person
 reads does not clear `change.dependency-bar`.
 
 ## Mockup mode
 
 When the previewed branch commits a picked mockup — a `*.dc.html` artboard
 under `docs/mockups/<screen>/` (or the directory `git config
-greenpiste.preview.mockups` names; the application-landscape `ui-handoff`
+greenbelay.preview.mockups` names; the application-landscape `ui-handoff`
 PR check reads the same key) — the guide must prove fidelity
 (`handoff.prove-fidelity`, ADR-0016). Added to the five sections:
 
@@ -246,7 +246,7 @@ compares the guide's images itself. It approves the commit with channel
   call wrote, outside the repository, no larger than a guide may be.
 
 A hard link of one file to the other is one file, as a symlink is.
-`register` prints `"unchanged": true`, and on stderr: `greenpiste: before
+`register` prints `"unchanged": true`, and on stderr: `greenbelay: before
 and after are byte-identical; the hook approves this preview as unchanged
 when it binds it, if they still are`. The flag only informs: the hook
 compares the files again and never approves on what the command printed.
@@ -275,7 +275,7 @@ it runs.
 `push-preview` fires on a push only when all of these hold:
 
 - the repository has a user interface: a `dev` script in `package.json` at
-  the root or in `web/`, or `git config greenpiste.push-preview.ui true`
+  the root or in `web/`, or `git config greenbelay.push-preview.ui true`
   (`false` opts a repository out);
 - a pushed branch carries an **interface change** (below);
 - the plan the branch landed does not declare the evidence
@@ -302,7 +302,7 @@ Two hooks make it checkable:
    plan) and, when the result has the approve shape (`tool_response` an
    object carrying `plan`, no `is_error`), writes the plan's canonical body
    sha ([plan review](plan-review.md): front matter and review sections
-   left out) to `~/.claude/greenpiste/plan-approved/<sha>`, journalled
+   left out) to `~/.claude/greenbelay/plan-approved/<sha>`, journalled
    `plan-approved`.
 2. **The check, at the push.** For a branch whose interface change carries
    no picked mockup (mockup mode always asks; a screen list that cannot be
@@ -375,7 +375,7 @@ all. Within a gated repository, one changed file counts only when all hold:
    foo()`), a `*` line that reads like code (CSS `* {`), a binary file or a
    diff that cannot be taken all count. Any doubt counts.
 
-`git config greenpiste.push-preview.ui` still overrides the repository
+`git config greenbelay.push-preview.ui` still overrides the repository
 decision; it does not change how files are judged.
 
 A push to `main` or `master` is left to amont's `branch-protect`.
@@ -421,7 +421,7 @@ shell, and it is a workflow aid, not a Git enforcement boundary.
 ## Reading the soak
 
 ```sh
-grep -E 'push-(preview|published)' ~/.claude/greenpiste/journal.log
+grep -E 'push-(preview|published)' ~/.claude/greenbelay/journal.log
 ```
 
 Every line names the repository the push ran in or the registration

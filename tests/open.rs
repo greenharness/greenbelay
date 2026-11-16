@@ -13,7 +13,7 @@ struct Scratch(PathBuf);
 impl Scratch {
     fn new(name: &str) -> Scratch {
         let dir =
-            std::env::temp_dir().join(format!("greenpiste-open-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenbelay-open-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir); // a stale scratch directory may not exist
         std::fs::create_dir_all(dir.join("docs")).unwrap();
         // The binary reports its working directory as the OS spells it
@@ -25,20 +25,20 @@ impl Scratch {
         let ok = Command::new("git")
             .args(["config", "--file"])
             .arg(self.0.join("gitconfig"))
-            .args(["greenpiste.opener", template])
+            .args(["greenbelay.opener", template])
             .status()
             .unwrap();
         assert!(ok.success());
     }
 
     fn run(&self, args: &[&str]) -> Output {
-        greenpiste_command()
+        greenbelay_command()
             .arg("open")
             .args(args)
             .current_dir(&self.0)
             .env("GIT_CONFIG_GLOBAL", self.0.join("gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("GREENPISTE_OFF")
+            .env_remove("GREENBELAY_OFF")
             .output()
             .expect("the binary runs")
     }
@@ -138,7 +138,7 @@ fn no_argument_is_a_usage_error() {
     let s = Scratch::new("usage");
     let out = s.run(&[]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("usage: greenpiste open <url|path>"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("usage: greenbelay open <url|path>"));
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn help_exits_0() {
     let s = Scratch::new("help");
     let out = s.run(&["--help"]);
     assert_eq!(out.status.code(), Some(0));
-    assert!(String::from_utf8_lossy(&out.stdout).contains("usage: greenpiste open <url|path>"));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("usage: greenbelay open <url|path>"));
 }
 
 #[test]
@@ -164,7 +164,7 @@ fn an_opener_that_fails_fast_exits_1_naming_the_page_and_the_setting() {
         said.contains("No such file") || said.contains("cannot access"),
         "{said}"
     );
-    assert!(said.contains("greenpiste.opener"), "{said}");
+    assert!(said.contains("greenbelay.opener"), "{said}");
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn an_opener_that_is_not_found_exits_1() {
     s.with_opener("/nonexistent/opener {}");
     let out = s.run(&["http://localhost:1/"]);
     assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("greenpiste.opener"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("greenbelay.opener"));
 }
 
 #[test]
@@ -183,8 +183,8 @@ fn an_unknown_option_exits_2_with_the_option_and_the_usage() {
     assert_eq!(out.status.code(), Some(2));
     let said = String::from_utf8_lossy(&out.stderr);
     let lines: Vec<&str> = said.lines().collect();
-    assert_eq!(lines[0], "greenpiste: unknown option --bogus", "{said}");
-    assert_eq!(lines[1], "usage: greenpiste open <url|path>", "{said}");
+    assert_eq!(lines[0], "greenbelay: unknown option --bogus", "{said}");
+    assert_eq!(lines[1], "usage: greenbelay open <url|path>", "{said}");
 }
 
 #[test]
@@ -207,12 +207,12 @@ fn a_separator_lets_a_dash_named_file_open() {
     assert_eq!(wait_for(&got), expected);
 }
 
-/// The greenpiste binary pointed at scratch directories, so the migration every
+/// The greenbelay binary pointed at scratch directories, so the migration every
 /// subcommand runs first never touches the real home of whoever runs the tests.
 /// A caller that sets one of these variables itself overrides it afterwards.
-fn greenpiste_command() -> Command {
+fn greenbelay_command() -> Command {
     let scratch = fresh_scratch("open");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_greenpiste"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
     command
         .env("CLAUDE_CONFIG_DIR", scratch.join("claude"))
         .env("XDG_STATE_HOME", scratch.join("state"))

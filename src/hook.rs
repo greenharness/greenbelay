@@ -35,10 +35,10 @@ pub fn run() -> ExitCode {
     // on stdin forever with no indication why.
     if std::io::stdin().is_terminal() {
         eprintln!(concat!(
-            greenpiste_guard::bin!(),
+            greenbelay_guard::bin!(),
             ": `hook` reads a Claude Code payload on stdin.\n\
              Try `",
-            greenpiste_guard::bin!(),
+            greenbelay_guard::bin!(),
             " check '<command>'` to test a command by hand."
         ));
         return ExitCode::from(2);
@@ -56,7 +56,7 @@ pub fn run() -> ExitCode {
         Ok(d) => d.emit(),
         Err(_) => {
             eprintln!(concat!(
-                greenpiste_guard::bin!(),
+                greenbelay_guard::bin!(),
                 ": internal error; allowing the command through"
             ));
             Decision::Silent.emit()
@@ -67,7 +67,7 @@ pub fn run() -> ExitCode {
 /// `ask-unopened-page`: a question that names a local page nobody opened for
 /// the person. The stance is looked up only once a page is named.
 fn ask_unopened_page(ask: &payload::Ask) -> Decision {
-    use greenpiste_guard::page_open::{self, Verdict};
+    use greenbelay_guard::page_open::{self, Verdict};
     let rule = &rules::ask_unopened_page::RULE;
     let (pages, why) = match page_open::judge(ask) {
         Verdict::Shown => return Decision::Silent,
@@ -143,7 +143,7 @@ fn decide(raw: &str) -> Decision {
         .ok()
         .and_then(|v| v.get("session_id")?.as_str().map(str::to_string))
     {
-        greenpiste_guard::shadow::enter_session(&session);
+        greenbelay_guard::shadow::enter_session(&session);
     }
     match payload::parse(raw) {
         Event::SessionStart(session) => {
@@ -231,7 +231,7 @@ fn decide(raw: &str) -> Decision {
 /// The environment variable that replaces the clock the activity record and
 /// `work-overlap` read, as epoch seconds. For tests: the hook is a process per
 /// call, so a test cannot pass a clock any other way.
-const ENV_NOW: &str = greenpiste_guard::env_var!("TEST_NOW");
+const ENV_NOW: &str = greenbelay_guard::env_var!("TEST_NOW");
 
 fn clock() -> std::time::SystemTime {
     std::env::var(ENV_NOW)
@@ -325,8 +325,8 @@ fn work_overlap(
     if candidates.is_empty() {
         return Decision::Silent;
     }
-    let window = greenpiste_guard::gitconfig::duration_or(
-        greenpiste_guard::config_key!("work-overlap.window"),
+    let window = greenbelay_guard::gitconfig::duration_or(
+        greenbelay_guard::config_key!("work-overlap.window"),
         crate::activity::DEFAULT_WINDOW,
     );
     let live: Vec<crate::activity::Peer> = candidates
@@ -415,7 +415,7 @@ fn stale_checkout_notice(session: &Session) -> Option<String> {
     match stance {
         Stance::Observe => None,
         Stance::Advise | Stance::Deny => Some(format!(
-            concat!(greenpiste_guard::bin!(), "/{}: {}"),
+            concat!(greenbelay_guard::bin!(), "/{}: {}"),
             rule.id,
             crate::stale::notice(&drift)
         )),
@@ -943,7 +943,7 @@ fn suppressions_after_bash(bash: &Bash) -> Option<String> {
         };
         journal_outcome(outcome, what);
     };
-    let Some(top) = greenpiste_guard::git::stdout_bounded(
+    let Some(top) = greenbelay_guard::git::stdout_bounded(
         &bash.cwd,
         &["rev-parse", "--show-toplevel"],
         deadline,
@@ -952,7 +952,7 @@ fn suppressions_after_bash(bash: &Bash) -> Option<String> {
         return None;
     };
     let root = std::path::PathBuf::from(top);
-    let Some(status) = greenpiste_guard::git::bytes_bounded(
+    let Some(status) = greenbelay_guard::git::bytes_bounded(
         &root,
         &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
         None,
@@ -988,7 +988,7 @@ fn suppressions_after_bash(bash: &Bash) -> Option<String> {
             input.extend_from_slice(name.as_bytes());
             input.push(b'\n');
         }
-        let Some(sizes) = greenpiste_guard::git::bytes_bounded(
+        let Some(sizes) = greenbelay_guard::git::bytes_bounded(
             &root,
             &["cat-file", "--batch-check=%(objectsize)"],
             Some(&input),
@@ -1023,7 +1023,7 @@ fn suppressions_after_bash(bash: &Bash) -> Option<String> {
                 }
             }
         }
-        let Some(blobs) = greenpiste_guard::git::cat_file_batch_bounded(&root, &readable, deadline)
+        let Some(blobs) = greenbelay_guard::git::cat_file_batch_bounded(&root, &readable, deadline)
         else {
             failure("cat-file");
             return None;
@@ -1713,9 +1713,9 @@ fn run_with_deadline(
     }
 }
 
-/// The `adr-lint` program to run: `GREENPISTE_ADR_LINT`, else PATH's.
+/// The `adr-lint` program to run: `GREENBELAY_ADR_LINT`, else PATH's.
 fn adr_lint_program() -> std::ffi::OsString {
-    std::env::var_os(greenpiste_guard::env_var!("ADR_LINT"))
+    std::env::var_os(greenbelay_guard::env_var!("ADR_LINT"))
         .filter(|program| !program.is_empty())
         .unwrap_or_else(|| std::ffi::OsString::from("adr-lint"))
 }
@@ -1774,7 +1774,7 @@ fn adr_lint_gate(op: &crate::payload::FileOp, root: &std::path::Path) -> bool {
     }
     let shown = root.display().to_string();
     let answer = run_with_deadline(
-        std::ffi::OsStr::new(greenpiste_guard::gate::gate_binary()),
+        std::ffi::OsStr::new(greenbelay_guard::gate::gate_binary()),
         &["list", "--json"],
         root,
         AMONT_LIST_DEADLINE,
@@ -1810,7 +1810,7 @@ fn on_post_write(op: &crate::payload::FileOp) -> Decision {
     let Some(dir) = op.path.parent() else {
         return Decision::Silent;
     };
-    let Some(top) = greenpiste_guard::git::stdout_in(dir, &["rev-parse", "--show-toplevel"]) else {
+    let Some(top) = greenbelay_guard::git::stdout_in(dir, &["rev-parse", "--show-toplevel"]) else {
         return Decision::Silent;
     };
     let root = crate::lsp::normal(std::path::Path::new(&top));

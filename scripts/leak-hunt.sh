@@ -1,7 +1,7 @@
 #!/bin/bash
 # Which tests would touch the machine they run on?
 #
-# Every greenpiste subcommand except `migrate` and `doctor` migrates the
+# Every greenbelay subcommand except `migrate` and `doctor` migrates the
 # machine first, so a test that starts the built binary without pointing it at
 # a scratch config directory, state home and git config migrates the REAL home
 # of whoever runs `cargo test`; a unit test that writes the journal or settings
@@ -11,10 +11,10 @@
 #
 #   scripts/leak-hunt.sh                       every target
 #   scripts/leak-hunt.sh block shipped         those tests/*.rs files
-#   scripts/leak-hunt.sh lib:greenpiste-guard  a crate's unit tests
+#   scripts/leak-hunt.sh lib:greenbelay-guard  a crate's unit tests
 #
-# Targets: each tests/<name>.rs by its name, lib:greenpiste-guard,
-# lib:greenpiste-process and bin:greenpiste (the binary's own unit tests).
+# Targets: each tests/<name>.rs by its name, lib:greenbelay-guard,
+# lib:greenbelay-process and bin:greenbelay (the binary's own unit tests).
 #
 # A canary changed means: the listing of its claude/, state/ and home/ trees
 # (each path, and a checksum of each file) differs after the run, which covers
@@ -24,7 +24,7 @@
 # `test result:` line) is BUILD-FAIL; one whose tests ran and failed is
 # TEST-FAIL, and its canary is still checked, so a failing test that leaks is
 # also LEAK; a canary that cannot be listed is SNAPSHOT-FAIL. None is ever ok. See also tests/spawn_isolation.rs, the
-# static check. A test that only writes its own `greenpiste.*` keys into the
+# static check. A test that only writes its own `greenbelay.*` keys into the
 # inherited git config is not a leak and is not reported.
 #
 # LEAK_HUNT_SNAPSHOT_FAIL=1 makes every listing fail, to check that a failed
@@ -36,20 +36,20 @@ cd "$root" || exit 2
 real_home=$HOME
 
 usage() {
-    echo "usage: scripts/leak-hunt.sh [<tests/*.rs name> | lib:greenpiste-guard | lib:greenpiste-process | bin:greenpiste]..." >&2
+    echo "usage: scripts/leak-hunt.sh [<tests/*.rs name> | lib:greenbelay-guard | lib:greenbelay-process | bin:greenbelay]..." >&2
     exit 2
 }
 
 # The cargo arguments of a target, one per line; `--features test-hooks` only
-# for the packages that declare it (the root package and greenpiste-guard).
+# for the packages that declare it (the root package and greenbelay-guard).
 # Unit tests run on one thread: some set CLAUDE_CONFIG_DIR process-wide while
 # they run, and a test writing beside them in parallel would land in their
 # scratch dir, hiding its leak from the canary.
 cargo_args() {
     case "$1" in
-        lib:greenpiste-guard) printf '%s\n' -p greenpiste-guard --lib --features test-hooks --no-fail-fast -- --test-threads=1 ;;
-        lib:greenpiste-process) printf '%s\n' -p greenpiste-process --lib --no-fail-fast -- --test-threads=1 ;;
-        bin:greenpiste) printf '%s\n' -p greenpiste --bins --features test-hooks --no-fail-fast -- --test-threads=1 ;;
+        lib:greenbelay-guard) printf '%s\n' -p greenbelay-guard --lib --features test-hooks --no-fail-fast -- --test-threads=1 ;;
+        lib:greenbelay-process) printf '%s\n' -p greenbelay-process --lib --no-fail-fast -- --test-threads=1 ;;
+        bin:greenbelay) printf '%s\n' -p greenbelay --bins --features test-hooks --no-fail-fast -- --test-threads=1 ;;
         *) printf '%s\n' --features test-hooks --test "$1" --no-fail-fast ;;
     esac
 }
@@ -60,12 +60,12 @@ else
     targets=()
     while IFS= read -r name; do targets+=("$name"); done \
         < <(cd tests && command ls ./*.rs | sed 's|^\./||;s|\.rs$||' | sort)
-    targets+=(lib:greenpiste-guard lib:greenpiste-process bin:greenpiste)
+    targets+=(lib:greenbelay-guard lib:greenbelay-process bin:greenbelay)
 fi
 # Every name is checked before the first target runs, so a usage error runs nothing.
 for t in "${targets[@]}"; do
     case "$t" in
-        lib:greenpiste-guard | lib:greenpiste-process | bin:greenpiste) ;;
+        lib:greenbelay-guard | lib:greenbelay-process | bin:greenbelay) ;;
         lib:* | bin:*) echo "leak-hunt: unknown target $t" >&2; usage ;;
         *) [ -f "tests/$t.rs" ] || { echo "leak-hunt: no tests/$t.rs" >&2; usage; } ;;
     esac
@@ -95,7 +95,7 @@ canary=
 # An interrupted run removes the canary it was filling; nothing else is touched.
 trap '[ -n "$canary" ] && rm -rf "$canary"; exit 130' INT TERM
 for t in "${targets[@]}"; do
-    canary=$(mktemp -d "${TMPDIR:-/tmp}/greenpiste-canary.XXXXXX")
+    canary=$(mktemp -d "${TMPDIR:-/tmp}/greenbelay-canary.XXXXXX")
     mkdir -p "$canary/home" "$canary/claude/amont-agent" "$canary/state/amont-agent"
     printf 'amont-agent-v1\n' > "$canary/claude/amont-agent/journal"
     printf '[amont "agent"]\n\tenabled = true\n' > "$canary/gitconfig"

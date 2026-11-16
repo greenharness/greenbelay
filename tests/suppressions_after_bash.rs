@@ -28,7 +28,7 @@ fn git(dir: &Path, args: &[&str]) {
 impl World {
     fn new(name: &str) -> World {
         let root =
-            std::env::temp_dir().join(format!("greenpiste-sab-{}-{name}", std::process::id()));
+            std::env::temp_dir().join(format!("greenbelay-sab-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root); // a leftover from an earlier run may or may not exist
         let repo = root.join("repo");
         std::fs::create_dir_all(repo.join("src")).expect("scratch repo");
@@ -49,7 +49,7 @@ impl World {
     fn stance(&self, stance: &str) {
         std::fs::write(
             self.home.join("no-global-gitconfig"),
-            format!("[greenpiste \"lint-suppression-added\"]\n\tstance = {stance}\n"),
+            format!("[greenbelay \"lint-suppression-added\"]\n\tstance = {stance}\n"),
         )
         .expect("global gitconfig");
     }
@@ -79,14 +79,14 @@ impl World {
             Some(dir) => format!("{}:{search}", dir.display()),
             None => search,
         };
-        let mut child = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
             .arg("hook")
             .env("CLAUDE_CONFIG_DIR", &self.home)
             .env_remove("XDG_STATE_HOME")
             .env("PATH", search)
             .env("GIT_CONFIG_GLOBAL", self.home.join("no-global-gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("GREENPISTE_OFF")
+            .env_remove("GREENBELAY_OFF")
             .env_remove("GREENHARNESS_HOST_SLOT")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

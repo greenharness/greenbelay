@@ -1,5 +1,4 @@
-//! The tool's name is said from `names` alone (ADR-0064, plan "amont-agent
-//! ships as greenpiste"). This test fails on `amont-agent` inside any Rust
+//! The tool's name is said from `names` alone (ADR-0064, ADR-0071). This test fails on `amont-agent` inside any Rust
 //! string literal under `crates/*/src`, `src` and `tests`, except in a
 //! `names.rs`, except the alias binary's file name.
 
@@ -15,7 +14,7 @@ const KEPT_LINES: &[(&str, &str)] = &[];
 const OLD_PREFIXES: &[&str] = &["amont.agent.", "AMONT_AGENT_"];
 
 /// The module that says the names, and this test, which spells them out.
-const NAMES_MODULES: &[&str] = &["crates/greenpiste-guard/src/names.rs", "tests/names.rs"];
+const NAMES_MODULES: &[&str] = &["crates/greenbelay-guard/src/names.rs", "tests/names.rs"];
 
 /// A string literal: where its text starts in the source, and the text
 /// between the quotes as written (escapes and all).
@@ -126,7 +125,7 @@ fn is_kept_data_name(source: &str, literal: &Literal, at: usize) -> bool {
         .map_or(0, |i| i + 1);
     let before_on_line = &source[line_start..literal.text_start];
 
-    // The word is longer than the name: `CARGO_BIN_EXE_greenpiste`.
+    // The word is longer than the name: `CARGO_BIN_EXE_greenbelay`.
     if before.bytes().last().is_some_and(is_word_byte) {
         return true;
     }
@@ -237,7 +236,7 @@ fn a_planted_message_is_found_and_the_alias_file_name_is_not() {
     );
     for kept in [
         "let a = dir.join(\"amont-agent\");",
-        "let e = env!(\"CARGO_BIN_EXE_greenpiste\");",
+        "let e = env!(\"CARGO_BIN_EXE_greenbelay\");",
     ] {
         assert_eq!(stray_names(kept), Vec::<usize>::new(), "{kept}");
     }
@@ -297,6 +296,6 @@ fn a_planted_old_prefix_literal_is_found() {
     assert!(has_old_prefix_literal("std::env::var(\"AMONT_AGENT_OFF\")"));
     assert!(has_old_prefix_literal("let k = \"AMONT.agent.x.STANCE\";"));
     assert!(!has_old_prefix_literal(
-        "// amont.agent.stance in a comment\nlet k = \"greenpiste.stance\";"
+        "// amont.agent.stance in a comment\nlet k = \"greenbelay.stance\";"
     ));
 }

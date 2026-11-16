@@ -11,7 +11,7 @@
 ## it is a file in the repository that the site does not have.
 
 [book]
-title = "greenpiste"
+title = "greenbelay"
 description = "A guard that reads a shell command before Claude Code runs it, and can observe, advise, or refuse — with the evidence for each rule kept as reviewed judgements rather than as an assertion."
 authors = ["Frederic Rousseau"]
 language = "en"
@@ -29,9 +29,9 @@ create-missing = false
 [output.html]
 default-theme = "rust"
 preferred-dark-theme = "ayu"
-git-repository-url = "https://github.com/greenharness/greenpiste"
-edit-url-template = "https://github.com/greenharness/greenpiste/edit/main/docs/{path}"
-site-url = "/greenpiste/"
+git-repository-url = "https://github.com/greenharness/greenbelay"
+edit-url-template = "https://github.com/greenharness/greenbelay/edit/main/docs/{path}"
+site-url = "/greenbelay/"
 
 [output.html.fold]
 enable = true

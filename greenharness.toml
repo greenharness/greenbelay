@@ -1,4 +1,4 @@
-# greenpiste's manifest for grh (Green Harness), the v2 format of grh's
+# greenbelay's manifest for grh (Green Harness), the v2 format of grh's
 # docs/extension-manifest.md. grh pins the copy each release publishes.
 #
 # No sums here, and no [tool.release]: the tarballs this would describe do
@@ -8,18 +8,16 @@
 # The release guard checks [extension] version against the tag.
 
 [extension]
-name = "greenpiste"
-version = "5.1.0"
+name = "greenbelay"
+version = "6.0.0"
 harness = ">=0.3"
 summary = "what an agent's tool call may do: a Claude Code hook"
 needs = []
 aliases = ["guardrails"]
 
-# `amont-agent` is the old name, kept as a copy beside the binary until the
-# programme's census finds no program still calling it.
+# One name, no alias binary (ADR-0071).
 [tool]
-bin = "greenpiste"
-bin_aliases = ["amont-agent"]
+bin = "greenbelay"
 
 [tool.machine]
 install = ["{bin}", "install", "--write"]
@@ -32,7 +30,7 @@ json = ["integration", "state"]
 [[recommend]]
 when = ["machine_present"]
 verdict = "already here"
-reason = "greenpiste's integration is installed"
+reason = "greenbelay's integration is installed"
 
 [[recommend]]
 when = []
