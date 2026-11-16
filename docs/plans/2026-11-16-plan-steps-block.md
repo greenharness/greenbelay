@@ -58,7 +58,7 @@ The time-to-done programme (decisions t09, closed 2026-11-16) found that a plan'
 
 ## Phases
 
-- [ ] Phase 1 — greenpiste: the `steps` count, the parser stop, `next_open`, the warning, docs. `crates/greenpiste-process/src/file_types.rs`, `plan_phases.rs`, `plan_time.rs` (`phase_count` stops at the steps heading), `plan_review.rs`, `docs/plan-review.md`. Release greenpiste (minor).
+- [x] Phase 1 — greenpiste: the `steps` count, the parser stop, `next_open`, the warning, docs. `crates/greenpiste-process/src/file_types.rs`, `plan_phases.rs`, `plan_time.rs` (`phase_count` stops at the steps heading), `plan_review.rs`, `docs/plan-review.md`. Release greenpiste (minor).
 - [ ] Phase 2 — greenharness-skills: the template block and the finish report; then pin the new greenpiste in grh, release skills and grh, and install them. `parts/workflow/skills/worktree-task/plan-template.md`, `parts/workflow/skills/worktree-task/SKILL.md`, and `plan-review/SKILL.md` (the counts line, in greenharness-skills).
 
 ## Decision log
@@ -86,3 +86,8 @@ The time-to-done programme (decisions t09, closed 2026-11-16) found that a plan'
 - tui: round 1 approve-with-changes (4); round 2 approve-with-changes (2, low, applied).
 - unix: round 1 approve-with-changes (3); round 2 approve (none).
 <!-- panel: repos=amont-agent,greenharness-skills adds=lang:rust reviewers=backend,lang:rust,tui,unix body-sha=2f02846765ca -->
+
+## Implementation review
+- Phase 1 observed: `cargo test -p greenpiste-process` 278 passed, 0 failed; the next_open test fails with the steps mask disabled (mutation run, then restored); `plan-panel` on a fixture with two steps and one decision → `person:1`, `steps:2`, `phases:2`; the same fixture with the heading under `## Notes` → stderr `…:19: steps block outside ## Phases; not counted…`, exit 0, `steps:0`.
+- Review: implementation-review, backend and rust each approve-with-changes in round 1, all fixed in 43286e00 and 04acc3cc; delta 2 approve on tree 2b1da3cd (backend and rust approve too).
+- Carried into the skills phase: the finish report restates the parser's rule rather than calling greenpiste (unix, low).
