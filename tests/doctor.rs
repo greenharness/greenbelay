@@ -1188,7 +1188,9 @@ fn an_unreadable_registry_file_says_could_not_read() {
     let home = Home::new("registry-unreadable");
     home.old_style();
     home.registry(old::DATA_DIR);
-    let file = home.0.join("plugins/known_marketplaces.json");
+    // Joined a component at a time, as the code names it: a `/` inside one
+    // literal would print differently on Windows.
+    let file = home.0.join("plugins").join("known_marketplaces.json");
     std::fs::remove_file(&file).unwrap();
     std::fs::create_dir(&file).unwrap();
     let before = snapshot(&home);

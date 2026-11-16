@@ -908,7 +908,10 @@ fn an_unreadable_registry_file_is_said_without_commands() {
     let output = machine.run(&["migrate"]);
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
     let said = stderr(&output);
-    let path = machine.claude().join("plugins/installed_plugins.json");
+    let path = machine
+        .claude()
+        .join("plugins")
+        .join("installed_plugins.json");
     assert!(
         said.contains(&format!(
             "could not read Claude Code's plugin registry {}: ",
