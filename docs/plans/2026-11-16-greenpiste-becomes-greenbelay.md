@@ -10,7 +10,7 @@ plan-id: p-01M7JVP8V0JEC3J525R31J0SXY
 ## Review panel
 
 👉 **Decide:** none — approve if greenpiste becomes greenbelay by sed in 7 repos, this Mac switched by one rehearsed script.
-📍 7 repos · nothing built · next: Phase 0 ADR. Panel: backend, lang:rust, lang:python, platform, tui, unix, architect, po (opus-5-5), codex (gpt).
+📍 7 repos · Phase 0 merged (ADR-0071, decisions#213); Phase 1 reviewed · next: greenbelay 6.0.0 PR and release. Panel: backend, lang:rust, lang:python, platform, tui, unix, architect, po (opus-5-5), codex (gpt).
 **Changed by review:** relais's `amont-agent` lookups renamed; switch order rebuilt (pin, atomic local copy, settings sed, no evidence deleted); ADR replaces the rename rule first.
 📄 Full reviews: [2026-11-16-greenpiste-becomes-greenbelay.reviews.md](2026-11-16-greenpiste-becomes-greenbelay.reviews.md)
 **Verdicts:** round 1 approve-with-changes 5, rework 1; final bind approve 3, approve-with-changes 5; codex rework (3 applied); 0 rework left; 17 carried into implementation (listed below).
@@ -200,7 +200,7 @@ plans, ADR records, programme maps).
 
 ## Phases
 
-- [ ] Phase 0 — the decision, before any code: a new ADR in
+- [x] Phase 0 — the decision, before any code: a new ADR in
   `decisions/docs/adr/` with `decisions/.adr.yaml` that replaces ADR-0064's
   `harness.bundle-names` (greenbelay names the part) and the rename clause of
   ADR-0068's `harness.renames` (a tool with no outside users may hard-rename
@@ -287,7 +287,18 @@ plans, ADR records, programme maps).
   greenbelay's binary), then greenpiste 5.1.0 reinstalled from its GitHub
   release archive (the tap no longer has its formula).
 
+## Implementation review
+
+- greenbelay (Phase 1): implementation-review approve after 2 deltas (the committed `.pyc` fixed; all 33 candidates fine); backend approve (caveat names the real fix; upgrade test checks amont-agent too); lang:rust, lang:python, platform approve; unix approve with installer `AMONT_AGENT_*` fallbacks, stderr colour and old comments deliberate (amont-agent era, the census owns them).
+- Deliberate: Apple-silicon prefix in the caveat (the only machine is Intel `/usr/local`); malformed-JSON traceback in the tap heredoc (the workflow writes the file).
+- Done before the tag (platform high): `/usr/local/bin/greenpiste` replaced by a regular-file copy of 5.1.0 (`cmp` equal), so a brew rename migration cannot remove the hook path before the switch; `brew pin greenpiste` set.
+
 ## Outcome
+
+Observed before the push (2026-11-16):
+
+- Phase 0: ADR-0071 merged (decisions#213, 419c7418); `aval resolve harness.bundle-names` and `harness.renames` return ADR-0071, no contradiction.
+- Phase 1: GitHub repo renamed `greenharness/greenpiste` → `greenharness/greenbelay` (old name resolves); `git grep -i greenpiste` outside history shows only the allowlist (release.yaml's tap rename and upgrade test, the formula's caveat and history line, test fixtures); `cargo test --workspace --features test-hooks --no-fail-fast` 45 targets ok; `scripts/leak-hunt.sh` 43 ok; `python3 -m unittest discover -s scripts` 22 ok.
 
 ## Decision log
 
