@@ -785,6 +785,12 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), raw);
     }
 
+    /// A path as the commands print it: a Windows path holds backslashes, so
+    /// it is single-quoted. `shell_quote` has its own literal cases above.
+    fn quoted(dir: &Path) -> String {
+        shell_quote(&dir.display().to_string())
+    }
+
     fn write_registry(env: &Env, marketplace_entries: &[(&str, &Path)], plugin_ids: &[&str]) {
         let plugins = env.config_dir.join("plugins");
         fs::create_dir_all(&plugins).unwrap();
@@ -866,7 +872,7 @@ mod tests {
         assert_eq!(
             commands(registry_state_for(&env, Direction::Forward)),
             vec![
-                format!("claude plugin marketplace add {}", new_dir.display()),
+                format!("claude plugin marketplace add {}", quoted(&new_dir)),
                 format!("claude plugin install {}", new_side(&env).plugin_id),
                 format!("claude plugin uninstall {}", old_side(&env).plugin_id),
                 format!("claude plugin marketplace remove {}", old::DATA_DIR),
@@ -880,7 +886,7 @@ mod tests {
         assert_eq!(
             commands(registry_state_for(&env, Direction::Reverse)),
             vec![
-                format!("claude plugin marketplace add {}", old_dir.display()),
+                format!("claude plugin marketplace add {}", quoted(&old_dir)),
                 format!("claude plugin install {}", old_side(&env).plugin_id),
                 format!("claude plugin uninstall {}", new_side(&env).plugin_id),
                 format!("claude plugin marketplace remove {}", names::DATA_DIR),
@@ -921,7 +927,7 @@ mod tests {
             commands(registry_state_for(&env, Direction::Forward)),
             vec![format!(
                 "claude plugin marketplace add {}",
-                new_dir.display()
+                quoted(&new_dir)
             )]
         );
     }
@@ -938,7 +944,8 @@ mod tests {
             fs::create_dir_all(plugins.join(file)).unwrap();
             match registry_state_for(&env, Direction::Forward) {
                 RegistryState::Unknown { what, hint } => {
-                    assert!(what.contains(&format!("/{file}: ")), "{what}");
+                    let named = plugins.join(file);
+                    assert!(what.contains(&format!("{}: ", named.display())), "{what}");
                     assert_eq!(hint, REGISTRY_HINT);
                 }
                 other => panic!("{other:?}"),
@@ -1026,8 +1033,11 @@ mod tests {
             .join(names::DATA_DIR);
         let listed = commands(registry_state_for(&env, Direction::Forward));
         assert!(listed[0].contains("add '"), "{listed:?}");
+        let tail = Path::new("my state")
+            .join(names::DATA_DIR)
+            .join("claude-marketplace");
         assert!(
-            listed[0].ends_with("my state/greenpiste/claude-marketplace'"),
+            listed[0].ends_with(&format!("{}'", tail.display())),
             "{listed:?}"
         );
     }
