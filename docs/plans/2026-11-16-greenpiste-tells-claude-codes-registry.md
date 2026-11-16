@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 branch: fix/greenpiste-plugin-registry
 repos: [amont-agent, grh]
 adrs: [ADR-0068]
@@ -10,7 +10,7 @@ plan-id: p-01M7H8RWZF2TBZTBW0BCZQ5ANA
 ## Review panel
 
 👉 **Decide:** none — approve if greenpiste should name the `claude plugin` commands that fix Claude Code's registry, and never run them itself.
-📍 amont-agent, grh · Phases 1–2 built and reviewed · next: PR, merge, then Phase 3 (release 5.0.1). Panel: backend, lang:rust, tui, unix (opus-5-5), codex (gpt).
+📍 amont-agent, grh · all phases shipped: greenpiste 5.0.1, grh 0.7.1 · next: none. Panel: backend, lang:rust, tui, unix (opus-5-5), codex (gpt).
 **Changed by review:** doctor prints one command per line (its sanitiser escaped `\n`); the leak hunt catches a write into the canary and passes features per package; previews and already-migrated machines are judged against the side they will write.
 📄 Full reviews: [the sidecar](2026-11-16-greenpiste-tells-claude-codes-registry.reviews.md).
 **Verdicts:** round 1 approve-with-changes 4; round 2 approve 1, approve-with-changes 3; Codex rework (2 high applied); final backend bind approve-with-changes; 0 rework left; 9 carried into implementation.
@@ -151,7 +151,7 @@ test target of the workspace.
   `amont-agent/tests/doctor.rs`, `amont-agent/docs/migrate.md`,
   `amont-agent/CHANGELOG.md`.
 - [x] Phase 2 — leak hunt covers unit tests: `amont-agent/scripts/leak-hunt.sh`.
-- [ ] Phase 3 — release 5.0.1 and pin it: `amont-agent/Cargo.toml`,
+- [x] Phase 3 — release 5.0.1 and pin it: `amont-agent/Cargo.toml`,
   `amont-agent/greenharness.toml`, `grh/manifests/greenpiste.toml`,
   `grh/catalog.toml`, `grh/CHANGELOG.md`, `grh/Cargo.toml`; released,
   installed here.
@@ -215,6 +215,32 @@ Observed before the push (2026-11-16):
   `LEAK lib:greenpiste-guard`, rc 1, plant removed; clean → 43 `ok`, rc 0.
 - `LEAK_HUNT_SNAPSHOT_FAIL=1 scripts/leak-hunt.sh migrate` → `SNAPSHOT-FAIL`,
   rc 1; `scripts/leak-hunt.sh lib:nope migrate` → usage on stderr, rc 2, nothing run.
+- CI on #271 took four pushes to go green, all in the tests, none in the code:
+  Windows prints and quotes paths with backslashes, so expected text built with
+  a `/` literal or unquoted failed in `tests/doctor.rs`, `tests/migrate.rs` and
+  `migrate_plugin.rs`'s unit tests, and the no-home install test still found a
+  home through `USERPROFILE`. Merged as 929a3fb7 with every check `pass`
+  (Windows included).
+
+Observed after the merge (2026-11-16):
+
+- Phase 3, greenpiste: #272 (`chore(release): 5.0.1`) merged as 40b934cb, tag
+  `v5.0.1` on it through `greengate land --tag`; the release run concluded
+  `success` (every job: build ×6, crates.io, the tap, `brew can install what
+  was published`); crates.io lists greenpiste, greenpiste-guard and
+  greenpiste-process at 5.0.1; the release carries the `greenpiste-5.0.1-*`
+  archives, `SHA256SUMS` and `greenharness.toml`.
+- Phase 3, this machine, `brew upgrade fredericrous/tap/greenpiste` →
+  `greenpiste 5.0.1`; `greenpiste doctor` → `migration: done in 3811 ms,
+  nothing left` and no registry line; `greenpiste migrate --dry-run` →
+  `nothing to do: already migrated`; the installed binary on a scratch copy of
+  the pre-fix registry → `migrate` stderr and `doctor` both name the four
+  commands in order, ending `; run:`.
+- Phase 3, grh: #44 merged as 1ec67e52 (`manifests/greenpiste.toml` is the
+  release's `greenharness.toml`, sha256 `c240dd27…` in `catalog.toml`; its four
+  tarball sums match the release's `SHA256SUMS`; grh backend review approve);
+  tag `v0.7.1`; the release run concluded `success`; crates.io lists grh
+  0.7.1; `grh --version` → `grh 0.7.1`, `grh status` → `greenpiste 5.0.1`.
 
 ## Implementation review
 
