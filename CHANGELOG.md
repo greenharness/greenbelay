@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v5.1.0
+
+greenpiste 5.1.0 counts the steps a person must take, so a plan shows them.
+
+- A `### 🧑 Your steps` block under `## Phases` lists the actions only the person can run, one plain `- ` bullet each. It is neither a phase nor a decision, and it ends at the next heading or Phase or decision item.
+- `plan-panel`'s `counts=` token gains `steps:N`, placed after `words` and before `merge-candidates`, and printed as `steps:0` when there are none. Readers take keys by name; `merge-candidates` stays the last field.
+- A steps heading outside `## Phases` counts nothing, and `plan-panel` names its file and line on stderr.
+
 ## v5.0.1
 
 greenpiste 5.0.1 tells you how to fix Claude Code's plugin registry after the
