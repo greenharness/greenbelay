@@ -2275,6 +2275,9 @@ pub struct Panel {
     pub sliced: BTreeSet<String>,
     /// What happened to the plan's `plan-id:`, for stderr.
     pub id_note: Option<String>,
+    /// The lines of a `### 🧑 Your steps` heading outside `## Phases`, for
+    /// stderr: such a block counts nothing.
+    pub misplaced_steps: Vec<usize>,
     /// The plan's size, printed as the `counts=` token that ends line 1.
     pub counts: Counts,
 }
@@ -2291,12 +2294,7 @@ pub fn panel(plan_file: &Path) -> Result<Panel, String> {
         crate::plan_id::ensure(plan_file, &text).map_err(|e| format!("plan-panel: {e}"))?;
     let id_note = assigned.note();
     let plan_id = assigned.id().clone();
-    for line in crate::file_types::misplaced_steps_headings(&text) {
-        eprintln!(
-            "{BIN}: plan-panel: {}:{line}: `### 🧑 Your steps` sits outside `## Phases` and counts nothing; move it under `## Phases`",
-            plan_file.display()
-        );
-    }
+    let misplaced_steps = crate::file_types::misplaced_steps_headings(&text);
     let seated = seating(&m, &text)?;
     let advice = seated.advice().map(|a| a.text);
     let (classes, source) = (seated.classes, seated.source);
@@ -2319,6 +2317,7 @@ pub fn panel(plan_file: &Path) -> Result<Panel, String> {
         advice,
         sliced: slices.into_keys().collect(),
         id_note,
+        misplaced_steps,
         counts: counts(
             &text,
             &m.repos,

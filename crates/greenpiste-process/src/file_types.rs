@@ -162,10 +162,19 @@ pub fn misplaced_steps_headings(body: &str) -> Vec<usize> {
     scan(body).misplaced
 }
 
+/// One flag per line of `body`: true for the lines of a steps block (its
+/// heading and the lines under it, up to the next heading or the next phase
+/// or decision item). `next_open` and `phase_count` skip them, so the block
+/// is walked here and nowhere else.
+pub(crate) fn steps_mask(body: &str) -> Vec<bool> {
+    scan(body).steps_mask
+}
+
 struct Scan {
     spans: Vec<PhaseSpan>,
     steps: Vec<String>,
     misplaced: Vec<usize>,
+    steps_mask: Vec<bool>,
 }
 
 fn item_text(line: &str) -> &str {
@@ -184,6 +193,7 @@ fn scan(body: &str) -> Scan {
     let mut out: Vec<PhaseSpan> = Vec::new();
     let mut steps: Vec<String> = Vec::new();
     let mut misplaced: Vec<usize> = Vec::new();
+    let mut steps_mask: Vec<bool> = Vec::new();
     let close = |out: &mut Vec<PhaseSpan>, at: usize| {
         if let Some(last) = out.last_mut() {
             if last.lines.end == usize::MAX {
@@ -194,6 +204,7 @@ fn scan(body: &str) -> Scan {
     let mut count = 0;
     for (i, line) in body.lines().enumerate() {
         count = i + 1;
+        steps_mask.push(false);
         let prose = fence.prose(line);
         if let Some(title) = prose.and_then(|t| t.strip_prefix("## ")) {
             if inside {
@@ -204,10 +215,11 @@ fn scan(body: &str) -> Scan {
             continue;
         }
         if let Some(t) = prose {
-            if t.starts_with('#') && t.trim_end() == STEPS_HEADING {
+            if t.trim_end() == STEPS_HEADING {
                 if inside {
                     close(&mut out, i);
                     in_steps = true;
+                    steps_mask[i] = true;
                 } else {
                     misplaced.push(i + 1);
                 }
@@ -220,15 +232,20 @@ fn scan(body: &str) -> Scan {
         if !inside || fence.open.is_some() {
             // A fenced example belongs to its phase's lines, but the paths
             // it shows are an example's, not the phase's (as before).
+            if in_steps {
+                steps_mask[i] = true;
+            }
             continue;
         }
         let top = line.starts_with("- ") || line.starts_with("* ");
         if in_steps {
             if !top {
+                steps_mask[i] = true;
                 continue;
             }
             let text = item_text(line);
             if !(text.starts_with("Phase ") || text.starts_with('🧑')) {
+                steps_mask[i] = true;
                 if line.starts_with("- ") {
                     steps.push(text.to_string());
                 }
@@ -273,6 +290,7 @@ fn scan(body: &str) -> Scan {
         spans: out,
         steps,
         misplaced,
+        steps_mask,
     }
 }
 
@@ -603,5 +621,26 @@ mod steps_tests {
         let b = "## Phases\n\n- Phase 1 — x\n\n### 🧑 Your steps\n\n- s\n- Phase 4 — y\n";
         assert_eq!(steps(b), vec!["s"]);
         assert_eq!(phases(b).len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod misplaced_steps_tests {
+    use super::{misplaced_steps_headings, phase_spans};
+
+    /// A steps heading outside `## Phases` is reported with its line, and the
+    /// last phase's span ends before the heading, so `release` in a step is in
+    /// no phase.
+    #[test]
+    fn a_misplaced_heading_is_reported_and_a_release_step_stays_out_of_its_phase() {
+        let misplaced = "## Notes\n\n### 🧑 Your steps\n\n- `x`\n";
+        assert_eq!(misplaced_steps_headings(misplaced), vec![3]);
+        let plan = "## Phases\n\n- Phase 1 — `a.rs`\n\n### 🧑 Your steps\n\n- `cut a release` — because it needs a token\n";
+        let spans = phase_spans(plan);
+        let last = spans.last().expect("one phase");
+        assert!(
+            last.lines.end <= 4,
+            "the span ends at the heading: {last:?}"
+        );
     }
 }

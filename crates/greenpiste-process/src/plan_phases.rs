@@ -500,42 +500,24 @@ fn choose(root: &Path, names: &[String], branch: &str) -> Option<Plan> {
 }
 
 /// The first unindented `- [ ] ` line inside `## Phases`, without its marker.
+/// A line of a `### 🧑 Your steps` block is never an open phase.
 fn next_open(body: &str) -> Option<String> {
+    let mask = crate::file_types::steps_mask(body);
     let mut in_phases = false;
-    let mut in_steps = false;
     let mut fenced = false;
-    for line in body.lines() {
+    for (i, line) in body.lines().enumerate() {
         if line.trim_start().starts_with("```") {
             fenced = !fenced;
             continue;
         }
-        if fenced {
+        if fenced || mask.get(i).copied().unwrap_or(false) {
             continue;
         }
         if line.starts_with("## ") {
             in_phases = line.trim_end() == "## Phases";
-            in_steps = false;
             continue;
         }
         if in_phases {
-            if line.trim_end() == "### 🧑 Your steps" {
-                in_steps = true;
-                continue;
-            }
-            if in_steps {
-                let item = line.strip_prefix("- ").map(|r| {
-                    let r = r.trim_start();
-                    r.strip_prefix("[ ] ")
-                        .or_else(|| r.strip_prefix("[x] "))
-                        .or_else(|| r.strip_prefix("[X] "))
-                        .unwrap_or(r)
-                        .trim_start()
-                });
-                match item {
-                    Some(t) if t.starts_with("Phase ") || t.starts_with('🧑') => in_steps = false,
-                    _ => continue,
-                }
-            }
             if let Some(rest) = line.strip_prefix("- [ ] ") {
                 return Some(rest.trim().to_string());
             }
@@ -689,5 +671,17 @@ mod tests {
                 PhaseFact::TimedOut
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod steps_block_tests {
+    use super::next_open;
+
+    /// A step written as a checkbox is never the next open phase.
+    #[test]
+    fn a_step_written_as_a_checkbox_is_never_the_next_open_phase() {
+        let plan = "## Phases\n\n- [x] Phase 1 — `a.rs` done\n- [x] Phase 2 — `b.rs` done\n- [ ] Phase 3 — `c.rs` next\n\n### 🧑 Your steps\n\n- [ ] `brew x` — because it needs sudo\n";
+        assert_eq!(next_open(plan).as_deref(), Some("Phase 3 — `c.rs` next"));
     }
 }

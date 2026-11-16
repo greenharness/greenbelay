@@ -356,40 +356,19 @@ fn word_count(text: &str) -> usize {
     crate::plan_text::canonical(text).split_whitespace().count()
 }
 
-/// Distinct `Phase N` labels under the `## Phases` heading.
+/// Distinct `Phase N` labels under the `## Phases` heading. A line of a
+/// `### 🧑 Your steps` block is a step, never a phase.
 fn phase_count(text: &str) -> usize {
+    let mask = crate::file_types::steps_mask(text);
     let mut inside = false;
-    let mut in_steps = false;
     let mut seen = std::collections::BTreeSet::new();
-    for l in text.lines() {
+    for (i, l) in text.lines().enumerate() {
         if l.starts_with("## ") {
             inside = l.trim() == "## Phases";
-            in_steps = false;
             continue;
         }
-        if !inside {
+        if !inside || mask.get(i).copied().unwrap_or(false) {
             continue;
-        }
-        if l.trim_end() == "### 🧑 Your steps" {
-            in_steps = true;
-            continue;
-        }
-        if in_steps {
-            let item = l.strip_prefix("- ").map(|r| {
-                let r = r.trim_start();
-                r.strip_prefix("[ ] ")
-                    .or_else(|| r.strip_prefix("[x] "))
-                    .or_else(|| r.strip_prefix("[X] "))
-                    .unwrap_or(r)
-                    .trim_start()
-            });
-            match item {
-                Some(t) if t.starts_with("Phase ") || t.starts_with('🧑') => in_steps = false,
-                _ => continue,
-            }
-        }
-        if l.trim_end().starts_with("### 🧑 Your steps") {
-            break;
         }
         if let Some(i) = l.find("Phase ") {
             let label: String = l[i + 6..]
@@ -1824,5 +1803,20 @@ mod tests {
         assert!(a(&["--time", "--since", "2026-13-01"]).is_err());
         assert!(a(&["--time", "--since", "2026-11-01", "--json"]).is_ok());
         assert!(a(&["--time", "--nosuchflag"]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod steps_block_tests {
+    use super::phase_count;
+
+    /// A step that names a phase does not add one, and a `Phase N` item
+    /// after the steps block still counts.
+    #[test]
+    fn a_step_naming_a_phase_does_not_count_and_a_later_phase_does() {
+        let plan = "## Phases\n\n- Phase 1 — `a.rs`\n- Phase 2 — `b.rs`\n- Phase 3 — `c.rs`\n\n### 🧑 Your steps\n\n- `cargo x` — because Phase 5 needs a login\n";
+        assert_eq!(phase_count(plan), 3);
+        let later = format!("{plan}\n- Phase 4 — `d.rs`\n");
+        assert_eq!(phase_count(&later), 4);
     }
 }

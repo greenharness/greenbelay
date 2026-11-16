@@ -2763,6 +2763,11 @@ fn run_plan_panel(args: &[OsString]) -> ExitCode {
             if let Some(note) = &p.id_note {
                 eprintln!("{BIN}: plan-panel: {note}");
             }
+            for line in &p.misplaced_steps {
+                eprintln!(
+                    "{BIN}: plan-panel: {file}:{line}: `### 🧑 Your steps` sits outside `## Phases` and counts nothing; move it under `## Phases`"
+                );
+            }
             let areas = p.classes.iter().cloned().collect::<Vec<_>>().join(",");
             println!(
                 "repos={} areas={} body={} panel={} seats={} {}",
