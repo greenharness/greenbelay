@@ -2765,7 +2765,7 @@ fn run_plan_panel(args: &[OsString]) -> ExitCode {
             }
             for line in &p.misplaced_steps {
                 eprintln!(
-                    "{BIN}: plan-panel: {file}:{line}: `### 🧑 Your steps` sits outside `## Phases` and counts nothing; move it under `## Phases`"
+                    "{BIN}: plan-panel: {file}:{line}: steps block outside ## Phases; not counted. Move it under ## Phases."
                 );
             }
             let areas = p.classes.iter().cloned().collect::<Vec<_>>().join(",");

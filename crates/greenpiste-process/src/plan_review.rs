@@ -2480,12 +2480,12 @@ mod tests {
     #[test]
     fn steps_is_printed_after_words_and_before_merge_candidates() {
         let plan = "## Phases\n\n- Phase 1 — `a.rs` do\n\n### 🧑 Your steps\n\n- `cargo x` — because it needs a login\n- `brew y` — because it needs sudo\n";
-        let c = counts(
+        let with_steps = counts(
             plan,
             &["r".to_string()],
             Some("## Phases\n\n- Phase 1 — `a.rs` do\n"),
         );
-        let token = c.to_string();
+        let token = with_steps.to_string();
         let words = token.find(",words:").expect("words");
         let steps = token.find(",steps:2").expect("steps:2 is printed");
         let merge = token.find(",merge-candidates:").expect("merge-candidates");

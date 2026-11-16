@@ -618,9 +618,9 @@ mod steps_tests {
 
     #[test]
     fn phase_after_steps_ends_the_block() {
-        let b = "## Phases\n\n- Phase 1 — x\n\n### 🧑 Your steps\n\n- s\n- Phase 4 — y\n";
-        assert_eq!(steps(b), vec!["s"]);
-        assert_eq!(phases(b).len(), 2);
+        let plan = "## Phases\n\n- Phase 1 — x\n\n### 🧑 Your steps\n\n- s\n- Phase 4 — y\n";
+        assert_eq!(steps(plan), vec!["s"]);
+        assert_eq!(phases(plan).len(), 2);
     }
 }
 
@@ -638,9 +638,6 @@ mod misplaced_steps_tests {
         let plan = "## Phases\n\n- Phase 1 — `a.rs`\n\n### 🧑 Your steps\n\n- `cut a release` — because it needs a token\n";
         let spans = phase_spans(plan);
         let last = spans.last().expect("one phase");
-        assert!(
-            last.lines.end <= 4,
-            "the span ends at the heading: {last:?}"
-        );
+        assert_eq!(last.lines.end, 4, "the span ends at the heading: {last:?}");
     }
 }

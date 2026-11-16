@@ -58,8 +58,8 @@ The time-to-done programme (decisions t09, closed 2026-11-16) found that a plan'
 
 ## Phases
 
-- [ ] Phase 1 — greenpiste: the `steps` count, the parser stop, `next_open`, the warning, docs. `crates/greenpiste-process/src/file_types.rs`, `plan_phases.rs`, `plan_time.rs` (`phase_count` stops at the steps heading, fence-aware), `plan_review.rs`, `docs/plan-review.md`, `plan-review/SKILL.md`. Release greenpiste (minor).
-- [ ] Phase 2 — greenharness-skills: the template block and the finish report; then pin the new greenpiste in grh, release skills and grh, and install them. `parts/workflow/skills/worktree-task/plan-template.md`, `parts/workflow/skills/worktree-task/SKILL.md`.
+- [ ] Phase 1 — greenpiste: the `steps` count, the parser stop, `next_open`, the warning, docs. `crates/greenpiste-process/src/file_types.rs`, `plan_phases.rs`, `plan_time.rs` (`phase_count` stops at the steps heading), `plan_review.rs`, `docs/plan-review.md`. Release greenpiste (minor).
+- [ ] Phase 2 — greenharness-skills: the template block and the finish report; then pin the new greenpiste in grh, release skills and grh, and install them. `parts/workflow/skills/worktree-task/plan-template.md`, `parts/workflow/skills/worktree-task/SKILL.md`, and `plan-review/SKILL.md` (the counts line, in greenharness-skills).
 
 ## Decision log
 
@@ -72,7 +72,7 @@ The time-to-done programme (decisions t09, closed 2026-11-16) found that a plan'
 - Phase 1, counts: input, a fixture plan with three phases, one 🧑 decision, and two steps (one written `- [ ]`) → `phases:3`, `person:1`, `steps:2`, and `next_open` returns Phase 3.
 - Phase 1, fences: input, the same plan with a fenced example of `### 🧑 Your steps` inside a phase → `phases` and `person` unchanged, `steps:0`.
 - Phase 1, stop: input, a `Phase 4` item placed after the block → it counts as a phase, and the block ends at it.
-- Phase 1, range: input, the fixture with the steps block after Phase 3 → `phase_spans` for Phase 3 ends on the line before the heading; the step text containing "release" is in no phase's span, in `file_types` and `plan_time` alike; removing the close-at-heading line fails this test.
+- Phase 1, range: input, the fixture with the steps block after Phase 3 → `phase_spans` for Phase 3 ends on the line before the heading; the step text containing "release" is in no phase's span (`phase_spans` and the `releases` count built on it); removing the close-at-heading line fails this test.
 - Phase 1, time: input, a step whose text says "Phase 5" → `plan_time`'s phase count is 3, not 4.
 - Phase 1, warning: input, the heading under `## Notes` → stderr carries the file name, the line number and the move, `steps:0`, and exit status 0.
 - Phase 2, finish: input, a plan with steps `a`, `b` → the report's last lines are the two numbered steps; a plan without a block → `Your steps: none.`
