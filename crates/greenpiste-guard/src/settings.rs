@@ -31,7 +31,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Map, Value};
 
-/// What one of Claude Code's plugin registry files holds.
+/// What `<config>/plugins/installed_plugins.json`, Claude Code's manifest of
+/// installed plugins, holds.
 pub enum InstalledPlugins {
     /// No such file: nothing is installed through the manifest.
     Missing,
@@ -42,7 +43,9 @@ pub enum InstalledPlugins {
 
 /// What `<config>/plugins/known_marketplaces.json` holds.
 pub enum KnownMarketplaces {
+    /// No such file: Claude Code has registered no marketplace.
     Missing,
+    /// The file is there but cannot be read or parsed; the text says why.
     Unreadable(String),
     Document(Value),
 }

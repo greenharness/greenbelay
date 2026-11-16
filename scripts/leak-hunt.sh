@@ -21,8 +21,9 @@
 # a done-marker, an old root turned into a symlink, a new state root, and any
 # file a test wrote there; or the old key `amont.agent.enabled` is gone from its
 # git config. A target whose `cargo test` fails to build or run (no
-# `test result:` line) is BUILD-FAIL, and a canary that cannot be listed is
-# SNAPSHOT-FAIL: neither is ever ok. See also tests/spawn_isolation.rs, the
+# `test result:` line) is BUILD-FAIL; one whose tests ran and failed is
+# TEST-FAIL, and its canary is still checked, so a failing test that leaks is
+# also LEAK; a canary that cannot be listed is SNAPSHOT-FAIL. None is ever ok. See also tests/spawn_isolation.rs, the
 # static check. A test that only writes its own `greenpiste.*` keys into the
 # inherited git config is not a leak and is not reported.
 #
@@ -90,6 +91,9 @@ snapshot() {
 }
 
 failures=0
+canary=
+# An interrupted run removes the canary it was filling; nothing else is touched.
+trap '[ -n "$canary" ] && rm -rf "$canary"; exit 130' INT TERM
 for t in "${targets[@]}"; do
     canary=$(mktemp -d "${TMPDIR:-/tmp}/greenpiste-canary.XXXXXX")
     mkdir -p "$canary/home" "$canary/claude/amont-agent" "$canary/state/amont-agent"
@@ -98,6 +102,7 @@ for t in "${targets[@]}"; do
     if ! snapshot "$canary" > "$canary/before.txt"; then
         echo "SNAPSHOT-FAIL  $t (the canary could not be listed before the run; kept at $canary)"
         failures=$((failures + 1))
+        canary=
         continue
     fi
     args=()
@@ -110,14 +115,20 @@ for t in "${targets[@]}"; do
         cargo test --locked "${args[@]}" \
         > "$canary/test.log" 2>&1
     cargo_status=$?
-    if [ "$cargo_status" -ne 0 ] || ! command grep -q '^test result:' "$canary/test.log"; then
+    if ! command grep -q '^test result:' "$canary/test.log"; then
         echo "BUILD-FAIL  $t (cargo test exited $cargo_status; log kept at $canary/test.log)"
         failures=$((failures + 1))
+        canary=
         continue
+    fi
+    if [ "$cargo_status" -ne 0 ]; then
+        echo "TEST-FAIL  $t (cargo test exited $cargo_status; log kept at $canary/test.log)"
+        failures=$((failures + 1))
     fi
     if ! snapshot "$canary" > "$canary/after.txt"; then
         echo "SNAPSHOT-FAIL  $t (the canary could not be listed after the run; kept at $canary)"
         failures=$((failures + 1))
+        canary=
         continue
     fi
     changed=
@@ -130,10 +141,11 @@ for t in "${targets[@]}"; do
     if [ -n "$changed" ]; then
         echo "LEAK  $t: $changed (canary kept at $canary)"
         failures=$((failures + 1))
-    else
+    elif [ "$cargo_status" -eq 0 ]; then
         echo "ok    $t"
         rm -rf "$canary"
     fi
+    canary=
 done
 if [ "$failures" -gt 0 ]; then
     echo "$failures target(s) changed the machine they ran on, or could not be checked" >&2

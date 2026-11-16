@@ -112,8 +112,12 @@ pub fn old_registration(env: &Env) -> Result<Option<PathBuf>, StepError> {
 pub enum RegistryState {
     Current,
     Stale(Stale),
-    /// A file could not be read; the text names the file and why.
-    Unknown(String),
+    /// A file could not be read: `what` names it by its full path and says
+    /// why; `hint` is what the person can do about it.
+    Unknown {
+        what: String,
+        hint: &'static str,
+    },
     /// settings.json registers the plugin under neither id.
     NotUsed,
 }
@@ -138,6 +142,8 @@ pub struct RegistryReport {
     /// What Claude Code lists or lacks, without a trailing colon.
     pub what: String,
     pub commands: Vec<String>,
+    /// What to do when there is no command to run (an unreadable file).
+    pub hint: Option<&'static str>,
 }
 
 impl Stale {
@@ -191,14 +197,14 @@ impl RegistryState {
         match self {
             RegistryState::Current | RegistryState::NotUsed => None,
             RegistryState::Stale(stale) => Some(RegistryReport {
-                what: format!("Claude Code {}", stale.what()),
+                what: format!("Claude Code's plugin registry {}", stale.what()),
                 commands: stale.commands(),
+                hint: None,
             }),
-            RegistryState::Unknown(reason) => Some(RegistryReport {
-                what: format!(
-                    "could not read Claude Code's plugin registry: {reason}; check the file, or run claude plugin list"
-                ),
+            RegistryState::Unknown { what, hint } => Some(RegistryReport {
+                what: what.clone(),
                 commands: Vec::new(),
+                hint: Some(hint),
             }),
         }
     }
@@ -219,7 +225,27 @@ fn shell_quote(argument: &str) -> String {
 fn same_path(registered: &str, wanted: &Path) -> bool {
     match (fs::canonicalize(registered), fs::canonicalize(wanted)) {
         (Ok(left), Ok(right)) => left == right,
-        _ => registered == wanted.display().to_string(),
+        _ => Path::new(registered) == wanted,
+    }
+}
+
+const REGISTRY_HINT: &str = "check the file, or run claude plugin list";
+const SETTINGS_HINT: &str = "fix the file and run again";
+
+fn unreadable_registry(env: &Env, file: &str, why: &str) -> RegistryState {
+    RegistryState::Unknown {
+        what: format!(
+            "could not read Claude Code's plugin registry {}: {why}",
+            env.config_dir.join("plugins").join(file).display()
+        ),
+        hint: REGISTRY_HINT,
+    }
+}
+
+fn unreadable_settings(path_and_why: String) -> RegistryState {
+    RegistryState::Unknown {
+        what: format!("could not read {path_and_why}"),
+        hint: SETTINGS_HINT,
     }
 }
 
@@ -227,14 +253,14 @@ fn classify(env: &Env, side: &Side, other: &Side) -> RegistryState {
     let marketplaces = match known_marketplaces(&env.config_dir) {
         KnownMarketplaces::Missing => None,
         KnownMarketplaces::Unreadable(why) => {
-            return RegistryState::Unknown(format!("known_marketplaces.json: {why}"))
+            return unreadable_registry(env, "known_marketplaces.json", &why)
         }
         KnownMarketplaces::Document(doc) => Some(doc),
     };
     let installed = match installed_plugins(&env.config_dir) {
         InstalledPlugins::Missing => None,
         InstalledPlugins::Unreadable(why) => {
-            return RegistryState::Unknown(format!("installed_plugins.json: {why}"))
+            return unreadable_registry(env, "installed_plugins.json", &why)
         }
         InstalledPlugins::Document(doc) => Some(doc),
     };
@@ -273,41 +299,70 @@ fn classify(env: &Env, side: &Side, other: &Side) -> RegistryState {
     }
 }
 
-/// The registry judged against the side `direction` ends on (a dry run, an
-/// install preview). Reads only the registry files.
+/// The registry judged against the side `direction` ends on, whatever
+/// settings.json says (an install preview, which is about to register it).
+/// Reads only the registry files.
 pub fn registry_state_for(env: &Env, direction: Direction) -> RegistryState {
     let (other, side) = sides(env, direction);
     classify(env, &side, &other)
 }
 
+/// The registry judged against the side a migration in `direction` leaves
+/// settings.json on (a dry run): `NotUsed` when settings.json registers the
+/// plugin under neither id, as the run that follows would say. Reads only.
+pub fn registry_state_after(env: &Env, direction: Direction) -> RegistryState {
+    match registered_sides(env) {
+        Registered::Old | Registered::New => registry_state_for(env, direction),
+        Registered::Neither => RegistryState::NotUsed,
+        Registered::Unreadable(what) => unreadable_settings(what),
+    }
+}
+
 /// The registry judged against the side settings.json registers now. Reads
 /// only; `NotUsed` when it registers neither.
 pub fn registry_state(env: &Env) -> RegistryState {
+    let (old, new) = sides(env, Direction::Forward);
+    match registered_sides(env) {
+        Registered::New => classify(env, &new, &old),
+        Registered::Old => classify(env, &old, &new),
+        Registered::Neither => RegistryState::NotUsed,
+        Registered::Unreadable(what) => unreadable_settings(what),
+    }
+}
+
+/// Which id settings.json registers the plugin under (the new one when both).
+enum Registered {
+    Old,
+    New,
+    /// Missing, empty, or registering neither id.
+    Neither,
+    /// settings.json cannot be read; the text names it and says why.
+    Unreadable(String),
+}
+
+fn registered_sides(env: &Env) -> Registered {
     let path = env.config_dir.join(SETTINGS_FILE);
+    let unreadable = |why: &str| Registered::Unreadable(format!("{}: {why}", path.display()));
     let raw = match fs::read_to_string(&path) {
         Ok(raw) => raw,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-            return RegistryState::NotUsed
-        }
-        Err(source) => return RegistryState::Unknown(format!("{SETTINGS_FILE}: {source}")),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Registered::Neither,
+        Err(source) => return unreadable(&source.to_string()),
     };
     if raw.trim().is_empty() {
-        return RegistryState::NotUsed;
+        return Registered::Neither;
     }
     let root = match serde_json::from_str::<Value>(&raw) {
         Ok(Value::Object(root)) => root,
-        Ok(_) => return RegistryState::Unknown(format!("{SETTINGS_FILE}: not a JSON object")),
-        Err(why) => {
-            return RegistryState::Unknown(format!("{SETTINGS_FILE}: does not parse: {why}"))
-        }
+        Ok(_) => return unreadable("not a JSON object"),
+        Err(why) => return unreadable(&format!("does not parse: {why}")),
     };
     let (old, new) = sides(env, Direction::Forward);
     if new.registered(&root) {
-        classify(env, &new, &old)
+        Registered::New
     } else if old.registered(&root) {
-        classify(env, &old, &new)
+        Registered::Old
     } else {
-        RegistryState::NotUsed
+        Registered::Neither
     }
 }
 
@@ -882,7 +937,10 @@ mod tests {
         for file in ["installed_plugins.json", "known_marketplaces.json"] {
             fs::create_dir_all(plugins.join(file)).unwrap();
             match registry_state_for(&env, Direction::Forward) {
-                RegistryState::Unknown(why) => assert!(why.starts_with(file), "{why}"),
+                RegistryState::Unknown { what, hint } => {
+                    assert!(what.contains(&format!("/{file}: ")), "{what}");
+                    assert_eq!(hint, REGISTRY_HINT);
+                }
                 other => panic!("{other:?}"),
             }
             fs::remove_dir(plugins.join(file)).unwrap();
@@ -905,10 +963,35 @@ mod tests {
         );
         assert_eq!(registry_state(&env), RegistryState::Current);
         fs::write(env.config_dir.join(SETTINGS_FILE), "{nope").unwrap();
-        assert!(matches!(registry_state(&env), RegistryState::Unknown(_)));
+        assert!(matches!(
+            registry_state(&env),
+            RegistryState::Unknown { .. }
+        ));
         fs::remove_file(env.config_dir.join(SETTINGS_FILE)).unwrap();
         fs::create_dir(env.config_dir.join(SETTINGS_FILE)).unwrap();
-        assert!(matches!(registry_state(&env), RegistryState::Unknown(_)));
+        assert!(matches!(
+            registry_state(&env),
+            RegistryState::Unknown { .. }
+        ));
+    }
+
+    #[test]
+    fn a_dry_run_says_nothing_when_settings_registers_no_plugin() {
+        let (_scratch, env) = machine();
+        assert_eq!(
+            registry_state_after(&env, Direction::Forward),
+            RegistryState::NotUsed
+        );
+        write_settings(&env, &json!({ "model": "opus" }));
+        assert_eq!(
+            registry_state_after(&env, Direction::Reverse),
+            RegistryState::NotUsed
+        );
+        write_settings(&env, &registration(&old_side(&env), json!(true)));
+        assert_eq!(
+            commands(registry_state_after(&env, Direction::Forward)).len(),
+            2
+        );
     }
 
     #[cfg(unix)]

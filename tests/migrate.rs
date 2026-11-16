@@ -359,7 +359,9 @@ fn dry_run_says_what_would_change_and_changes_nothing() {
         assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
         assert!(stdout(&output)
             .lines()
-            .all(|line| line.starts_with("would: ") || line.starts_with("nothing to do: ")));
+            .all(|line| line.starts_with("would: ")
+                || line.starts_with("nothing to do: ")
+                || line.starts_with("nothing to move: ")));
         assert_eq!(machine.snapshot(), before);
         assert_eq!(machine.git_keys(), keys);
     }
@@ -860,7 +862,10 @@ fn migrate_names_the_claude_plugin_commands_and_never_writes_the_registry() {
     assert_eq!(first.status.code(), Some(0), "{}", stderr(&first));
     assert_eq!(stdout(&first), "");
     let said = stderr(&first);
-    assert!(said.contains("Claude Code still lists"), "{said}");
+    assert!(
+        said.contains("Claude Code's plugin registry still lists"),
+        "{said}"
+    );
     assert_in_order(&said, &forward_commands(&machine));
     assert_eq!(machine.registry_bytes(), registry);
 
@@ -879,6 +884,7 @@ fn migrate_names_the_claude_plugin_commands_and_never_writes_the_registry() {
     machine.write_registry(names::DATA_DIR);
     let registry = machine.registry_bytes();
     let reversed = machine.run(&["migrate", "--reverse"]);
+    assert_eq!(reversed.status.code(), Some(0), "{}", stderr(&reversed));
     assert_in_order(&stderr(&reversed), &reverse_commands(&machine));
     assert_eq!(machine.registry_bytes(), registry);
 }
@@ -902,25 +908,86 @@ fn an_unreadable_registry_file_is_said_without_commands() {
     let output = machine.run(&["migrate"]);
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
     let said = stderr(&output);
+    let path = machine.claude().join("plugins/installed_plugins.json");
     assert!(
-        said.contains("could not read Claude Code's plugin registry: installed_plugins.json: "),
+        said.contains(&format!(
+            "could not read Claude Code's plugin registry {}: ",
+            path.display()
+        )),
+        "{said}"
+    );
+    assert!(
+        said.contains("  check the file, or run claude plugin list"),
         "{said}"
     );
     assert!(!said.contains("claude plugin install"), "{said}");
 }
 
+fn would_then_need(commands: &[String]) -> Vec<String> {
+    commands
+        .iter()
+        .map(|c| format!("would then need: {c}"))
+        .collect()
+}
+
 #[test]
-fn dry_run_says_the_intended_registry_commands_as_would_lines() {
+fn dry_run_says_the_intended_registry_commands_as_would_then_need_lines() {
     let machine = Machine::old_style("registry-dry");
     machine.write_registry(old::DATA_DIR);
     let registry = machine.registry_bytes();
-    let forward = stdout(&machine.run(&["migrate", "--dry-run"]));
-    let would: Vec<String> = forward_commands(&machine)
-        .iter()
-        .map(|c| format!("would: {c}"))
-        .collect();
-    assert_in_order(&forward, &would);
+    let forward = machine.run(&["migrate", "--dry-run"]);
+    assert_eq!(forward.status.code(), Some(0), "{}", stderr(&forward));
+    assert_in_order(
+        &stderr(&forward),
+        &would_then_need(&forward_commands(&machine)),
+    );
+    // stdout is the migration's own plan; the commands are the person's.
+    assert!(
+        !stdout(&forward).contains("claude plugin"),
+        "{}",
+        stdout(&forward)
+    );
     assert_eq!(machine.registry_bytes(), registry);
+
+    assert_eq!(machine.run(&["migrate"]).status.code(), Some(0));
+    let already = machine.run(&["migrate", "--dry-run"]);
+    assert_eq!(stdout(&already).trim(), "nothing to move: already migrated");
+    assert_in_order(
+        &stderr(&already),
+        &would_then_need(&forward_commands(&machine)),
+    );
+
+    machine.write_registry(names::DATA_DIR);
+    let registry = machine.registry_bytes();
+    let backward = machine.run(&["migrate", "--dry-run", "--reverse"]);
+    assert_eq!(backward.status.code(), Some(0), "{}", stderr(&backward));
+    assert_in_order(
+        &stderr(&backward),
+        &would_then_need(&reverse_commands(&machine)),
+    );
+    assert_eq!(machine.registry_bytes(), registry);
+}
+
+#[test]
+fn a_dry_run_names_no_commands_when_settings_registers_no_plugin() {
+    let machine = Machine::old_style("registry-dry-unused");
+    machine.write_registry(old::DATA_DIR);
+    fs::write(machine.claude().join("settings.json"), "{}").unwrap();
+    let dry = machine.run(&["migrate", "--dry-run"]);
+    let real = machine.run(&["migrate"]);
+    for output in [&dry, &real] {
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(output));
+        assert!(
+            !stderr(output).contains("claude plugin"),
+            "{}",
+            stderr(output)
+        );
+        assert!(
+            !stdout(output).contains("claude plugin"),
+            "{}",
+            stdout(output)
+        );
+    }
 }
 
 #[test]
@@ -946,26 +1013,23 @@ fn an_install_preview_names_the_commands_the_write_then_prints() {
     assert_eq!(machine.run(&["migrate"]).status.code(), Some(0));
     machine.write_registry(old::DATA_DIR);
     let registry = machine.registry_bytes();
-    let wanted = [
-        format!("claude plugin marketplace add {}", new_dir(&machine)),
-        format!("claude plugin install {}", new_id()),
-    ];
+    let wanted = forward_commands(&machine);
     for extra in [&[][..], &["--project"], &["--local"]] {
         let mut args = vec!["install"];
         args.extend_from_slice(extra);
         let preview = machine.run(&args);
-        let said = stderr(&preview);
-        for command in &wanted {
-            assert!(
-                said.contains(&format!("would then need: {command}")),
-                "{said}"
-            );
+        assert_eq!(preview.status.code(), Some(0), "{}", stderr(&preview));
+        assert_in_order(&stderr(&preview), &would_then_need(&wanted));
+        args.push("--write");
+        // Twice: the second finds the plugin files already placed, and still
+        // names the commands its preview named.
+        for _ in 0..2 {
+            let output = machine.run(&args);
+            assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+            let said = stderr(&output);
+            assert!(said.contains("; run:"), "{said}");
+            assert_in_order(&said, &wanted);
         }
-    }
-    let output = machine.run(&["install", "--write"]);
-    let said = stderr(&output);
-    for command in &wanted {
-        assert!(said.contains(command.as_str()), "{said}");
     }
     assert_eq!(machine.registry_bytes(), registry);
 }

@@ -546,19 +546,19 @@ fn record(env: &Env, outcome: &str, excerpt: &str) {
 /// Written to the journal beside `env.state`, the directory this sweep was
 /// handed, never the process's own: live they are the same directory, and a
 /// test's sweep stays inside its scratch tree.
-fn journal_report(env: &Env, r: &Report) {
-    for (name, bytes) in &r.removed {
+fn journal_report(env: &Env, report: &Report) {
+    for (name, bytes) in &report.removed {
         record(env, "attestation-swept", &format!("{name} {bytes}"));
     }
-    let gone: Vec<&str> = r.removed.iter().map(|(n, _)| n.as_str()).collect();
-    let kept: Vec<&Row> = r
+    let gone: Vec<&str> = report.removed.iter().map(|(n, _)| n.as_str()).collect();
+    let kept: Vec<&Row> = report
         .rows
         .iter()
         .filter(|x| !gone.contains(&x.name.as_str()))
         .collect();
     let bytes: u64 = kept.iter().map(|x| x.bytes).sum();
     record(env, "attestations-kept", &format!("{} {bytes}", kept.len()));
-    if let Some(f) = &r.failure {
+    if let Some(f) = &report.failure {
         record(env, "attestations-scan-failed", &f.path);
     }
 }

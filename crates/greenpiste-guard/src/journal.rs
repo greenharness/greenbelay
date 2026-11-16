@@ -362,9 +362,7 @@ pub fn record(entry: &Entry) {
     // the rule look more necessary the more often you check on it — the
     // observer changing what it observes, which is the exact distinction
     // `observe` and `advise` exist to keep clean.
-    if std::env::var_os(ENV_PROBE).is_some() {
-        return;
-    }
+    // `record_in` honours ENV_PROBE.
     let Some(dir) = dir() else { return };
     record_in(&dir, entry);
 }

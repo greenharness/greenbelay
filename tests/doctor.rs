@@ -1118,35 +1118,35 @@ fn a_settings_file_that_does_not_parse_is_said_not_assumed_clean() {
     );
 }
 
-fn snapshot(h: &Home) -> BTreeMap<String, Vec<u8>> {
-    let mut t = BTreeMap::new();
-    tree(&h.0, &mut t);
-    t
+fn snapshot(home: &Home) -> BTreeMap<String, Vec<u8>> {
+    let mut tree_bytes = BTreeMap::new();
+    tree(&home.0, &mut tree_bytes);
+    tree_bytes
 }
 
 #[test]
 fn a_stale_registry_is_a_failing_finding_with_one_command_per_line() {
-    let h = Home::new("registry-stale");
-    h.old_style();
-    h.registry(old::DATA_DIR);
+    let home = Home::new("registry-stale");
+    home.old_style();
+    home.registry(old::DATA_DIR);
     let migrated = Command::new(env!("CARGO_BIN_EXE_greenpiste"))
         .arg("migrate")
-        .current_dir(&h.0)
-        .env("CLAUDE_CONFIG_DIR", &h.0)
-        .env("HOME", h.0.join("home"))
-        .env("XDG_CONFIG_HOME", h.0.join("xdg-config"))
-        .env("XDG_STATE_HOME", h.0.join("state"))
-        .env("GIT_CONFIG_GLOBAL", h.0.join("home").join(".gitconfig"))
+        .current_dir(&home.0)
+        .env("CLAUDE_CONFIG_DIR", &home.0)
+        .env("HOME", home.0.join("home"))
+        .env("XDG_CONFIG_HOME", home.0.join("xdg-config"))
+        .env("XDG_STATE_HOME", home.0.join("state"))
+        .env("GIT_CONFIG_GLOBAL", home.0.join("home").join(".gitconfig"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env_remove("GREENPISTE_OFF")
         .output()
         .unwrap();
     assert!(migrated.status.success(), "{migrated:?}");
-    let before = snapshot(&h);
-    let (_, out) = h.run(&["doctor"]);
-    assert_eq!(snapshot(&h), before, "doctor wrote to the tree");
+    let before = snapshot(&home);
+    let (_, out) = home.run(&["doctor"]);
+    assert_eq!(snapshot(&home), before, "doctor wrote to the tree");
     let line = line_with(&out, "plugin registry still lists");
-    assert!(line.contains('✗'), "{line}");
+    assert!(line.contains('✗') && line.ends_with("; run:"), "{line}");
     assert!(!out.contains("\\x0a"), "{out}");
     let lines: Vec<&str> = out.lines().collect();
     let at = lines
@@ -1170,33 +1170,37 @@ fn a_stale_registry_is_a_failing_finding_with_one_command_per_line() {
 
 #[test]
 fn a_current_registry_adds_no_finding() {
-    let h = Home::new("registry-current");
-    h.old_style();
-    h.registry(names::DATA_DIR);
+    let home = Home::new("registry-current");
+    home.old_style();
+    home.registry(names::DATA_DIR);
     let id = format!("clear-relay@{}", names::DATA_DIR);
     std::fs::write(
-        h.settings(),
+        home.settings(),
         serde_json::json!({"enabledPlugins": {id: true}}).to_string(),
     )
     .unwrap();
-    let (_, out) = h.run(&["doctor"]);
+    let (_, out) = home.run(&["doctor"]);
     assert!(!out.contains("plugin registry"), "{out}");
 }
 
 #[test]
 fn an_unreadable_registry_file_says_could_not_read() {
-    let h = Home::new("registry-unreadable");
-    h.old_style();
-    h.registry(old::DATA_DIR);
-    let file = h.0.join("plugins/known_marketplaces.json");
+    let home = Home::new("registry-unreadable");
+    home.old_style();
+    home.registry(old::DATA_DIR);
+    let file = home.0.join("plugins/known_marketplaces.json");
     std::fs::remove_file(&file).unwrap();
     std::fs::create_dir(&file).unwrap();
-    let before = snapshot(&h);
-    let (_, out) = h.run(&["doctor"]);
+    let before = snapshot(&home);
+    let (_, out) = home.run(&["doctor"]);
     let line = line_with(&out, "could not read Claude Code's plugin registry");
     assert!(
-        line.contains('✗') && line.contains("known_marketplaces.json"),
+        line.contains('✗') && line.contains(&file.display().to_string()),
         "{line}"
     );
-    assert_eq!(snapshot(&h), before, "doctor wrote to the tree");
+    assert!(
+        out.contains("\n    check the file, or run claude plugin list"),
+        "{out}"
+    );
+    assert_eq!(snapshot(&home), before, "doctor wrote to the tree");
 }

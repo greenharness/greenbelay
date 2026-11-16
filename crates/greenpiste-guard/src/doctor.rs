@@ -411,7 +411,9 @@ fn migration_findings(env: Option<&crate::migrate::Env>, variables: &[String]) -
             }
             Err(why) => blocking.push(format!("could not read the git config keys: {why}")),
         }
-        match crate::migrate_plugin::old_registration(env) {
+        let registration = crate::migrate_plugin::old_registration(env);
+        let settings_readable = registration.is_ok();
+        match registration {
             Ok(Some(settings)) => blocking.push(format!(
                 "old plugin registration in {}; run {fix}",
                 settings.display()
@@ -419,9 +421,13 @@ fn migration_findings(env: Option<&crate::migrate::Env>, variables: &[String]) -
             Ok(None) => {}
             Err(why) => blocking.push(format!("could not read the plugin registration: {why}")),
         }
-        registry.extend(registry_finding(&crate::migrate_plugin::registry_state(
-            env,
-        )));
+        // An unreadable settings.json is already a finding above; the
+        // registry is judged against it, so it would say the same again.
+        if settings_readable {
+            registry.extend(registry_finding(&crate::migrate_plugin::registry_state(
+                env,
+            )));
+        }
     }
     for name in variables {
         let rest = name.strip_prefix(names::old::ENV_PREFIX).unwrap_or(name);
@@ -466,15 +472,10 @@ fn registry_finding(state: &crate::migrate_plugin::RegistryState) -> Option<Find
     match state {
         RegistryState::Current | RegistryState::NotUsed => None,
         RegistryState::Stale(stale) => Some(Finding::bad(
-            format!("Claude Code's plugin registry {}", stale.what()),
+            format!("Claude Code's plugin registry {}; run:", stale.what()),
             stale.commands().join("\n"),
         )),
-        RegistryState::Unknown(_) => state.report().map(|report| Finding {
-            ok: false,
-            advisory: false,
-            line: report.what,
-            detail: None,
-        }),
+        RegistryState::Unknown { what, hint } => Some(Finding::bad(what.clone(), hint.to_string())),
     }
 }
 

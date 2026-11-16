@@ -68,6 +68,7 @@ pub(crate) mod test_support {
     /// Puts `CLAUDE_CONFIG_DIR` back as it was when dropped, a panic included:
     /// a test that leaves it pointing at its own scratch dir sends every later
     /// test's writes there, which hides a leak from `scripts/leak-hunt.sh`.
+    #[must_use = "dropping it restores CLAUDE_CONFIG_DIR at once"]
     pub(crate) struct RestoreConfigDir(Option<std::ffi::OsString>);
 
     impl RestoreConfigDir {

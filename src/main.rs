@@ -469,8 +469,15 @@ fn run_migrate(args: &[OsString]) -> ExitCode {
     if request.dry_run {
         return match migrate::machine_plan(&env, direction) {
             Ok(lines) => {
+                let registry = migrate_plugin::registry_state_after(&env, direction);
                 if lines.is_empty() {
-                    println!("nothing to do: {}", already(direction));
+                    // "nothing to do" only when Claude Code's registry needs
+                    // nothing either: a script reading it must not be told so
+                    // while the plugin stays off.
+                    match registry.report() {
+                        None => println!("nothing to do: {}", already(direction)),
+                        Some(_) => println!("nothing to move: {}", already(direction)),
+                    }
                 }
                 let mut refused = false;
                 for line in lines {
@@ -482,10 +489,7 @@ fn run_migrate(args: &[OsString]) -> ExitCode {
                         }
                     }
                 }
-                print_registry(
-                    &migrate_plugin::registry_state_for(&env, direction),
-                    RegistryVoice::WouldStdout,
-                );
+                print_registry(&registry, RegistryVoice::WouldThenNeed);
                 if refused {
                     eprintln!("migrate would stop: fix what is named above first");
                     return ExitCode::FAILURE;
@@ -523,47 +527,41 @@ fn run_migrate(args: &[OsString]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// How the registry diagnostics are phrased and where they go.
+/// How the registry diagnostics are phrased. Both go to stderr: they are
+/// commands for the person to run, never something greenpiste does.
 #[derive(Clone, Copy)]
 enum RegistryVoice {
-    /// An explicit run that settled: say what to run, on stderr.
+    /// An explicit run that settled: say what to run.
     Run,
-    /// A dry run: `would:` lines on stdout, beside the other `would:` lines.
-    WouldStdout,
-    /// An install preview: `would then need:` lines on stderr.
+    /// A dry run or an install preview: `would then need:` lines.
     WouldThenNeed,
 }
 
 /// Say what Claude Code's plugin registry needs, never doing it.
 fn print_registry(state: &migrate_plugin::RegistryState, voice: RegistryVoice) {
+    use greenpiste_guard::ui::sanitize;
     let Some(report) = state.report() else {
         return;
     };
+    let what = sanitize(&report.what);
+    if report.commands.is_empty() {
+        eprintln!("{what}");
+        if let Some(hint) = report.hint {
+            eprintln!("  {hint}");
+        }
+        return;
+    }
     match voice {
         RegistryVoice::Run => {
-            if report.commands.is_empty() {
-                eprintln!("{}", report.what);
-            } else {
-                eprintln!("{}; run:", report.what);
-                for command in &report.commands {
-                    eprintln!("  {command}");
-                }
-            }
-        }
-        RegistryVoice::WouldStdout => {
-            if report.commands.is_empty() {
-                eprintln!("{}", report.what);
-            }
+            eprintln!("{what}; run:");
             for command in &report.commands {
-                println!("would: {command}");
+                eprintln!("  {}", sanitize(command));
             }
         }
         RegistryVoice::WouldThenNeed => {
-            if report.commands.is_empty() {
-                eprintln!("{}", report.what);
-            }
+            eprintln!("{what}; you would then need to run:");
             for command in &report.commands {
-                eprintln!("would then need: {command}");
+                eprintln!("would then need: {}", sanitize(command));
             }
         }
     }
@@ -3418,8 +3416,12 @@ fn run_install(args: &[OsString], adding: bool) -> ExitCode {
                     eprintln!(
                         "  clears the session after 10 s, then submits <prompt> (type or /stay to keep it); remove: {BIN} uninstall --write"
                     );
-                    print_install_registry(RegistryVoice::Run);
                 }
+            }
+            // The same condition as the preview's, so a preview never names
+            // commands its --write leaves unsaid (plugin files already placed).
+            if adding && plugin.is_some() {
+                print_install_registry(RegistryVoice::Run);
             }
             if let Some(dir) = &plan.remove_dir {
                 eprintln!("removed {}", dir.display());
