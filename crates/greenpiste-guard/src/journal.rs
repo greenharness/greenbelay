@@ -362,18 +362,26 @@ pub fn record(entry: &Entry) {
     // the rule look more necessary the more often you check on it — the
     // observer changing what it observes, which is the exact distinction
     // `observe` and `advise` exist to keep clean.
+    // `record_in` honours ENV_PROBE.
+    let Some(dir) = dir() else { return };
+    record_in(&dir, entry);
+}
+
+/// [`record`] into the journal of `dir`, for a caller that was handed its data
+/// directory (the attestations sweep's `Env`) and must not write the process's
+/// own: its tests then write into their scratch tree, never the real journal.
+pub fn record_in(dir: &std::path::Path, entry: &Entry) {
     if std::env::var_os(ENV_PROBE).is_some() {
         return;
     }
-    let _ = try_record(entry); // a journal that cannot be written never fails the caller
+    let _ = try_record(&dir.join("journal.log"), entry); // a journal that cannot be written never fails the caller
 }
 
-fn try_record(entry: &Entry) -> Option<()> {
-    let path = path()?;
+fn try_record(path: &std::path::Path, entry: &Entry) -> Option<()> {
     let dir = path.parent()?;
     fs::create_dir_all(dir).ok()?;
     private(dir, 0o700);
-    append(&path, MAX_BYTES, &line_for(entry))
+    append(path, MAX_BYTES, &line_for(entry))
 }
 
 /// Rotate if needed, then append one record. Split from [`try_record`] so a

@@ -329,8 +329,9 @@ mod tests {
             std::env::temp_dir().join(format!("greenpiste-state-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        std::env::set_var("CLAUDE_CONFIG_DIR", &dir);
+        let restore = crate::assertions::test_support::RestoreConfigDir::set(&dir);
         let out = f(&dir);
+        drop(restore);
         let _ = std::fs::remove_dir_all(&dir);
         out
     }

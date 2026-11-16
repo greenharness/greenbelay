@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Claude Code keeps its own plugin registry, which greenpiste does not change: `migrate`, `install` and `doctor` now read it and print the `claude plugin` commands to run when it does not match the clear-relay plugin registered in `settings.json`; `doctor` reports a stale registry as a failing finding.
+- The unit tests of the attestation sweep wrote their journal rows into the journal of whoever ran `cargo test`; they now write into their scratch state directory. Two test helpers that set `CLAUDE_CONFIG_DIR` now put it back, so a later test no longer writes into an earlier one's scratch directory.
+- `scripts/leak-hunt.sh` also runs each crate's unit tests (`lib:greenpiste-guard`, `lib:greenpiste-process`, `bin:greenpiste`) and reports `LEAK` when a test writes any file into the canary, not only when it migrates it; a canary that cannot be listed, or a test target that does not build, is never reported `ok`.
+
 ## v5.0.0
 
 greenpiste 5.0.0 writes only its own data names. The first command after

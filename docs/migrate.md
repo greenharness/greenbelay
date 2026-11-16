@@ -49,3 +49,14 @@ old names, and leaves nothing at the new paths.
   until the old names are retired.
 - The installers accept `AMONT_AGENT_BIN_DIR` and `AMONT_AGENT_VERSION` with a
   warning; the new names are `GREENPISTE_BIN_DIR` and `GREENPISTE_VERSION`.
+
+Claude Code keeps its own plugin registry (`plugins/installed_plugins.json` and
+`plugins/known_marketplaces.json` under the Claude config directory).
+greenpiste never changes it and never runs `claude`; `migrate`, `install` and
+`doctor` read it, and when it does not match the clear-relay plugin that
+`settings.json` registers they print the `claude plugin` commands to run
+(`doctor` as a failing finding, since the plugin stays off until they are run).
+The commands always go to stderr; `migrate --dry-run` and `install` without
+`--write` print them as `would then need:` lines, and a dry run with nothing
+to move but a registry to fix says `nothing to move` rather than `nothing to
+do`.

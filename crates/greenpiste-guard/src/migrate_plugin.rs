@@ -12,7 +12,10 @@
 
 use crate::migrate::{Direction, Env, Step, StepError};
 use crate::names::{self, old};
-use crate::settings::{render, shape, would_reformat};
+use crate::settings::{
+    installed_plugins, known_marketplaces, render, shape, would_reformat, InstalledPlugins,
+    KnownMarketplaces,
+};
 use serde_json::{Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -101,6 +104,266 @@ pub fn old_registration(env: &Env) -> Result<Option<PathBuf>, StepError> {
     };
     let (old_side, _) = sides(env, Direction::Forward);
     Ok(old_side.registered(&root).then_some(path))
+}
+
+/// What Claude Code's own plugin registry says about one side's plugin.
+/// greenpiste only reads it; the fix is `claude plugin` commands the person runs.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RegistryState {
+    Current,
+    Stale(Stale),
+    /// A file could not be read: `what` names it by its full path and says
+    /// why; `hint` is what the person can do about it.
+    Unknown {
+        what: String,
+        hint: &'static str,
+    },
+    /// settings.json registers the plugin under neither id.
+    NotUsed,
+}
+
+/// What differs between the registry and the side settings.json registers.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Stale {
+    marketplace: String,
+    plugin_id: String,
+    marketplace_dir: PathBuf,
+    other_marketplace: String,
+    other_plugin_id: String,
+    other_plugin_listed: bool,
+    other_marketplace_listed: bool,
+    missing_marketplace: bool,
+    missing_plugin: bool,
+}
+
+/// The words that say what is wrong and the commands that fix it.
+#[derive(Debug, PartialEq, Eq)]
+pub struct RegistryReport {
+    /// What Claude Code lists or lacks, without a trailing colon.
+    pub what: String,
+    pub commands: Vec<String>,
+    /// What to do when there is no command to run (an unreadable file).
+    pub hint: Option<&'static str>,
+}
+
+impl Stale {
+    pub fn what(&self) -> String {
+        if self.other_plugin_listed {
+            format!("still lists {}", self.other_plugin_id)
+        } else if self.other_marketplace_listed {
+            format!("still lists the marketplace {}", self.other_marketplace)
+        } else if self.missing_plugin {
+            format!("has not registered {}", self.plugin_id)
+        } else {
+            format!("has not registered the marketplace {}", self.marketplace)
+        }
+    }
+
+    /// The `claude plugin` commands that bring the registry to this side, in
+    /// the order to run them.
+    pub fn commands(&self) -> Vec<String> {
+        let mut commands = Vec::new();
+        if self.missing_marketplace {
+            commands.push(format!(
+                "claude plugin marketplace add {}",
+                shell_quote(&self.marketplace_dir.display().to_string())
+            ));
+        }
+        if self.missing_plugin {
+            commands.push(format!(
+                "claude plugin install {}",
+                shell_quote(&self.plugin_id)
+            ));
+        }
+        if self.other_plugin_listed {
+            commands.push(format!(
+                "claude plugin uninstall {}",
+                shell_quote(&self.other_plugin_id)
+            ));
+        }
+        if self.other_marketplace_listed {
+            commands.push(format!(
+                "claude plugin marketplace remove {}",
+                shell_quote(&self.other_marketplace)
+            ));
+        }
+        commands
+    }
+}
+
+impl RegistryState {
+    /// What to tell the person; `None` when there is nothing to say.
+    pub fn report(&self) -> Option<RegistryReport> {
+        match self {
+            RegistryState::Current | RegistryState::NotUsed => None,
+            RegistryState::Stale(stale) => Some(RegistryReport {
+                what: format!("Claude Code's plugin registry {}", stale.what()),
+                commands: stale.commands(),
+                hint: None,
+            }),
+            RegistryState::Unknown { what, hint } => Some(RegistryReport {
+                what: what.clone(),
+                commands: Vec::new(),
+                hint: Some(hint),
+            }),
+        }
+    }
+}
+
+fn shell_quote(argument: &str) -> String {
+    let plain = !argument.is_empty()
+        && argument
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c));
+    if plain {
+        argument.to_string()
+    } else {
+        format!("'{}'", argument.replace('\'', "'\\''"))
+    }
+}
+
+fn same_path(registered: &str, wanted: &Path) -> bool {
+    match (fs::canonicalize(registered), fs::canonicalize(wanted)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => Path::new(registered) == wanted,
+    }
+}
+
+const REGISTRY_HINT: &str = "check the file, or run claude plugin list";
+const SETTINGS_HINT: &str = "fix the file and run again";
+
+fn unreadable_registry(env: &Env, file: &str, why: &str) -> RegistryState {
+    RegistryState::Unknown {
+        what: format!(
+            "could not read Claude Code's plugin registry {}: {why}",
+            env.config_dir.join("plugins").join(file).display()
+        ),
+        hint: REGISTRY_HINT,
+    }
+}
+
+fn unreadable_settings(path_and_why: String) -> RegistryState {
+    RegistryState::Unknown {
+        what: format!("could not read {path_and_why}"),
+        hint: SETTINGS_HINT,
+    }
+}
+
+fn classify(env: &Env, side: &Side, other: &Side) -> RegistryState {
+    let marketplaces = match known_marketplaces(&env.config_dir) {
+        KnownMarketplaces::Missing => None,
+        KnownMarketplaces::Unreadable(why) => {
+            return unreadable_registry(env, "known_marketplaces.json", &why)
+        }
+        KnownMarketplaces::Document(doc) => Some(doc),
+    };
+    let installed = match installed_plugins(&env.config_dir) {
+        InstalledPlugins::Missing => None,
+        InstalledPlugins::Unreadable(why) => {
+            return unreadable_registry(env, "installed_plugins.json", &why)
+        }
+        InstalledPlugins::Document(doc) => Some(doc),
+    };
+    let marketplace = |name: &str| marketplaces.as_ref().and_then(|doc| doc.get(name));
+    let plugin_listed = |id: &str| {
+        installed
+            .as_ref()
+            .and_then(|doc| doc.get("plugins"))
+            .and_then(Value::as_object)
+            .is_some_and(|plugins| plugins.contains_key(id))
+    };
+    let wanted_dir = side.marketplace_dir();
+    let marketplace_current = marketplace(side.marketplace)
+        .and_then(|entry| entry.pointer("/source/path"))
+        .and_then(Value::as_str)
+        .is_some_and(|path| same_path(path, &wanted_dir));
+    let stale = Stale {
+        marketplace: side.marketplace.to_string(),
+        plugin_id: side.plugin_id.clone(),
+        marketplace_dir: wanted_dir,
+        other_marketplace: other.marketplace.to_string(),
+        other_plugin_id: other.plugin_id.clone(),
+        other_plugin_listed: plugin_listed(&other.plugin_id),
+        other_marketplace_listed: marketplace(other.marketplace).is_some(),
+        missing_marketplace: !marketplace_current,
+        missing_plugin: !plugin_listed(&side.plugin_id),
+    };
+    if stale.other_plugin_listed
+        || stale.other_marketplace_listed
+        || stale.missing_marketplace
+        || stale.missing_plugin
+    {
+        RegistryState::Stale(stale)
+    } else {
+        RegistryState::Current
+    }
+}
+
+/// The registry judged against the side `direction` ends on, whatever
+/// settings.json says (an install preview, which is about to register it).
+/// Reads only the registry files.
+pub fn registry_state_for(env: &Env, direction: Direction) -> RegistryState {
+    let (other, side) = sides(env, direction);
+    classify(env, &side, &other)
+}
+
+/// The registry judged against the side a migration in `direction` leaves
+/// settings.json on (a dry run): `NotUsed` when settings.json registers the
+/// plugin under neither id, as the run that follows would say. Reads only.
+pub fn registry_state_after(env: &Env, direction: Direction) -> RegistryState {
+    match registered_sides(env) {
+        Registered::Old | Registered::New => registry_state_for(env, direction),
+        Registered::Neither => RegistryState::NotUsed,
+        Registered::Unreadable(what) => unreadable_settings(what),
+    }
+}
+
+/// The registry judged against the side settings.json registers now. Reads
+/// only; `NotUsed` when it registers neither.
+pub fn registry_state(env: &Env) -> RegistryState {
+    let (old, new) = sides(env, Direction::Forward);
+    match registered_sides(env) {
+        Registered::New => classify(env, &new, &old),
+        Registered::Old => classify(env, &old, &new),
+        Registered::Neither => RegistryState::NotUsed,
+        Registered::Unreadable(what) => unreadable_settings(what),
+    }
+}
+
+/// Which id settings.json registers the plugin under (the new one when both).
+enum Registered {
+    Old,
+    New,
+    /// Missing, empty, or registering neither id.
+    Neither,
+    /// settings.json cannot be read; the text names it and says why.
+    Unreadable(String),
+}
+
+fn registered_sides(env: &Env) -> Registered {
+    let path = env.config_dir.join(SETTINGS_FILE);
+    let unreadable = |why: &str| Registered::Unreadable(format!("{}: {why}", path.display()));
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Registered::Neither,
+        Err(source) => return unreadable(&source.to_string()),
+    };
+    if raw.trim().is_empty() {
+        return Registered::Neither;
+    }
+    let root = match serde_json::from_str::<Value>(&raw) {
+        Ok(Value::Object(root)) => root,
+        Ok(_) => return unreadable("not a JSON object"),
+        Err(why) => return unreadable(&format!("does not parse: {why}")),
+    };
+    let (old, new) = sides(env, Direction::Forward);
+    if new.registered(&root) {
+        Registered::New
+    } else if old.registered(&root) {
+        Registered::Old
+    } else {
+        Registered::Neither
+    }
 }
 
 /// One file to write, and the line that says so.
@@ -520,5 +783,262 @@ mod tests {
         fs::write(&path, &raw).unwrap();
         assert!(PluginRegistration::new().forward(&env).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), raw);
+    }
+
+    /// A path as the commands print it: a Windows path holds backslashes, so
+    /// it is single-quoted. `shell_quote` has its own literal cases above.
+    fn quoted(dir: &Path) -> String {
+        shell_quote(&dir.display().to_string())
+    }
+
+    fn write_registry(env: &Env, marketplace_entries: &[(&str, &Path)], plugin_ids: &[&str]) {
+        let plugins = env.config_dir.join("plugins");
+        fs::create_dir_all(&plugins).unwrap();
+        let mut known = serde_json::Map::new();
+        for (name, dir) in marketplace_entries {
+            let dir = dir.display().to_string();
+            known.insert(
+                name.to_string(),
+                json!({ "source": { "source": "directory", "path": dir },
+                    "installLocation": dir, "lastUpdated": "2026-11-15T10:00:00.000Z" }),
+            );
+        }
+        let mut installed = serde_json::Map::new();
+        for id in plugin_ids {
+            installed.insert(
+                id.to_string(),
+                json!([{ "scope": "user", "installPath": "/cache/x", "version": "1.0.0" }]),
+            );
+        }
+        fs::write(
+            plugins.join("known_marketplaces.json"),
+            Value::Object(known).to_string(),
+        )
+        .unwrap();
+        fs::write(
+            plugins.join("installed_plugins.json"),
+            json!({ "version": 2, "plugins": installed }).to_string(),
+        )
+        .unwrap();
+    }
+
+    fn commands(state: RegistryState) -> Vec<String> {
+        match state {
+            RegistryState::Stale(stale) => stale.commands(),
+            other => panic!("expected stale, got {other:?}"),
+        }
+    }
+
+    fn both_dirs(env: &Env) -> (PathBuf, PathBuf) {
+        (
+            old_side(env).marketplace_dir(),
+            new_side(env).marketplace_dir(),
+        )
+    }
+
+    #[test]
+    fn a_registry_on_the_side_is_current_in_both_directions() {
+        let (_scratch, env) = machine();
+        let (old_dir, new_dir) = both_dirs(&env);
+        write_registry(
+            &env,
+            &[(names::DATA_DIR, &new_dir)],
+            &[&new_side(&env).plugin_id],
+        );
+        assert_eq!(
+            registry_state_for(&env, Direction::Forward),
+            RegistryState::Current
+        );
+        write_registry(
+            &env,
+            &[(old::DATA_DIR, &old_dir)],
+            &[&old_side(&env).plugin_id],
+        );
+        assert_eq!(
+            registry_state_for(&env, Direction::Reverse),
+            RegistryState::Current
+        );
+    }
+
+    #[test]
+    fn the_old_registry_gives_the_four_commands_in_order() {
+        let (_scratch, env) = machine();
+        let (old_dir, new_dir) = both_dirs(&env);
+        write_registry(
+            &env,
+            &[(old::DATA_DIR, &old_dir)],
+            &[&old_side(&env).plugin_id],
+        );
+        assert_eq!(
+            commands(registry_state_for(&env, Direction::Forward)),
+            vec![
+                format!("claude plugin marketplace add {}", quoted(&new_dir)),
+                format!("claude plugin install {}", new_side(&env).plugin_id),
+                format!("claude plugin uninstall {}", old_side(&env).plugin_id),
+                format!("claude plugin marketplace remove {}", old::DATA_DIR),
+            ]
+        );
+        write_registry(
+            &env,
+            &[(names::DATA_DIR, &new_dir)],
+            &[&new_side(&env).plugin_id],
+        );
+        assert_eq!(
+            commands(registry_state_for(&env, Direction::Reverse)),
+            vec![
+                format!("claude plugin marketplace add {}", quoted(&old_dir)),
+                format!("claude plugin install {}", old_side(&env).plugin_id),
+                format!("claude plugin uninstall {}", new_side(&env).plugin_id),
+                format!("claude plugin marketplace remove {}", names::DATA_DIR),
+            ]
+        );
+    }
+
+    #[test]
+    fn each_leftover_or_gap_is_named_alone() {
+        let (_scratch, env) = machine();
+        let (old_dir, new_dir) = both_dirs(&env);
+        let new_id = new_side(&env).plugin_id;
+        let old_id = old_side(&env).plugin_id;
+        write_registry(&env, &[(names::DATA_DIR, &new_dir)], &[&new_id, &old_id]);
+        assert_eq!(
+            commands(registry_state_for(&env, Direction::Forward)),
+            vec![format!("claude plugin uninstall {old_id}")]
+        );
+        write_registry(
+            &env,
+            &[(names::DATA_DIR, &new_dir), (old::DATA_DIR, &old_dir)],
+            &[&new_id],
+        );
+        assert_eq!(
+            commands(registry_state_for(&env, Direction::Forward)),
+            vec![format!(
+                "claude plugin marketplace remove {}",
+                old::DATA_DIR
+            )]
+        );
+        write_registry(&env, &[(names::DATA_DIR, &new_dir)], &[]);
+        assert_eq!(
+            commands(registry_state_for(&env, Direction::Forward)),
+            vec![format!("claude plugin install {new_id}")]
+        );
+        write_registry(&env, &[], &[&new_id]);
+        assert_eq!(
+            commands(registry_state_for(&env, Direction::Forward)),
+            vec![format!(
+                "claude plugin marketplace add {}",
+                quoted(&new_dir)
+            )]
+        );
+    }
+
+    #[test]
+    fn a_missing_file_counts_as_missing_pieces_and_an_unreadable_one_is_unknown() {
+        let (_scratch, env) = machine();
+        assert_eq!(
+            commands(registry_state_for(&env, Direction::Forward)).len(),
+            2
+        );
+        let plugins = env.config_dir.join("plugins");
+        for file in ["installed_plugins.json", "known_marketplaces.json"] {
+            fs::create_dir_all(plugins.join(file)).unwrap();
+            match registry_state_for(&env, Direction::Forward) {
+                RegistryState::Unknown { what, hint } => {
+                    let named = plugins.join(file);
+                    assert!(what.contains(&format!("{}: ", named.display())), "{what}");
+                    assert_eq!(hint, REGISTRY_HINT);
+                }
+                other => panic!("{other:?}"),
+            }
+            fs::remove_dir(plugins.join(file)).unwrap();
+        }
+    }
+
+    #[test]
+    fn settings_decides_the_observed_side() {
+        let (_scratch, env) = machine();
+        assert_eq!(registry_state(&env), RegistryState::NotUsed);
+        write_settings(&env, &json!({ "model": "opus" }));
+        assert_eq!(registry_state(&env), RegistryState::NotUsed);
+        write_settings(&env, &registration(&new_side(&env), json!(true)));
+        assert!(matches!(registry_state(&env), RegistryState::Stale(_)));
+        let (_, new_dir) = both_dirs(&env);
+        write_registry(
+            &env,
+            &[(names::DATA_DIR, &new_dir)],
+            &[&new_side(&env).plugin_id],
+        );
+        assert_eq!(registry_state(&env), RegistryState::Current);
+        fs::write(env.config_dir.join(SETTINGS_FILE), "{nope").unwrap();
+        assert!(matches!(
+            registry_state(&env),
+            RegistryState::Unknown { .. }
+        ));
+        fs::remove_file(env.config_dir.join(SETTINGS_FILE)).unwrap();
+        fs::create_dir(env.config_dir.join(SETTINGS_FILE)).unwrap();
+        assert!(matches!(
+            registry_state(&env),
+            RegistryState::Unknown { .. }
+        ));
+    }
+
+    #[test]
+    fn a_dry_run_says_nothing_when_settings_registers_no_plugin() {
+        let (_scratch, env) = machine();
+        assert_eq!(
+            registry_state_after(&env, Direction::Forward),
+            RegistryState::NotUsed
+        );
+        write_settings(&env, &json!({ "model": "opus" }));
+        assert_eq!(
+            registry_state_after(&env, Direction::Reverse),
+            RegistryState::NotUsed
+        );
+        write_settings(&env, &registration(&old_side(&env), json!(true)));
+        assert_eq!(
+            commands(registry_state_after(&env, Direction::Forward)).len(),
+            2
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_marketplace_added_through_a_symlink_is_current() {
+        let (scratch, env) = machine();
+        let (_, new_dir) = both_dirs(&env);
+        fs::create_dir_all(&new_dir).unwrap();
+        let link = scratch.0.join("link");
+        std::os::unix::fs::symlink(&new_dir, &link).unwrap();
+        write_registry(
+            &env,
+            &[(names::DATA_DIR, &link)],
+            &[&new_side(&env).plugin_id],
+        );
+        assert_eq!(
+            registry_state_for(&env, Direction::Forward),
+            RegistryState::Current
+        );
+    }
+
+    #[test]
+    fn a_path_with_a_space_or_metacharacter_is_single_quoted() {
+        assert_eq!(shell_quote("/a b/c"), "'/a b/c'");
+        assert_eq!(shell_quote("/a'b"), "'/a'\\''b'");
+        assert_eq!(shell_quote("a;b"), "'a;b'");
+        assert_eq!(shell_quote("clear-relay@x"), "clear-relay@x");
+        let (_scratch, mut env) = machine();
+        env.state_root = env
+            .state_root
+            .with_file_name("my state")
+            .join(names::DATA_DIR);
+        let listed = commands(registry_state_for(&env, Direction::Forward));
+        assert!(listed[0].contains("add '"), "{listed:?}");
+        let tail = Path::new("my state")
+            .join(names::DATA_DIR)
+            .join("claude-marketplace");
+        assert!(
+            listed[0].ends_with(&format!("{}'", tail.display())),
+            "{listed:?}"
+        );
     }
 }

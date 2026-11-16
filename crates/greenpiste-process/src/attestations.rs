@@ -526,34 +526,40 @@ pub fn run(env: &Env, now: u64, apply: bool) -> Report {
     report
 }
 
-fn record(outcome: &str, excerpt: &str) {
-    journal::record(&Entry {
-        rule: "-",
-        stance: "-",
-        outcome,
-        session: "-",
-        repo: "-",
-        mode: "-",
-        excerpt,
-    });
+fn record(env: &Env, outcome: &str, excerpt: &str) {
+    journal::record_in(
+        &env.state,
+        &Entry {
+            rule: "-",
+            stance: "-",
+            outcome,
+            session: "-",
+            repo: "-",
+            mode: "-",
+            excerpt,
+        },
+    );
 }
 
 /// One line per removal, one per run with what remains, and a failed scan last
 /// so that it is the final word `doctor` reads.
-fn journal_report(r: &Report) {
-    for (name, bytes) in &r.removed {
-        record("attestation-swept", &format!("{name} {bytes}"));
+/// Written to the journal beside `env.state`, the directory this sweep was
+/// handed, never the process's own: live they are the same directory, and a
+/// test's sweep stays inside its scratch tree.
+fn journal_report(env: &Env, report: &Report) {
+    for (name, bytes) in &report.removed {
+        record(env, "attestation-swept", &format!("{name} {bytes}"));
     }
-    let gone: Vec<&str> = r.removed.iter().map(|(n, _)| n.as_str()).collect();
-    let kept: Vec<&Row> = r
+    let gone: Vec<&str> = report.removed.iter().map(|(n, _)| n.as_str()).collect();
+    let kept: Vec<&Row> = report
         .rows
         .iter()
         .filter(|x| !gone.contains(&x.name.as_str()))
         .collect();
     let bytes: u64 = kept.iter().map(|x| x.bytes).sum();
-    record("attestations-kept", &format!("{} {bytes}", kept.len()));
-    if let Some(f) = &r.failure {
-        record("attestations-scan-failed", &f.path);
+    record(env, "attestations-kept", &format!("{} {bytes}", kept.len()));
+    if let Some(f) = &report.failure {
+        record(env, "attestations-scan-failed", &f.path);
     }
 }
 
@@ -683,7 +689,7 @@ pub fn sweep_at(env: &Env, now: u64) -> Option<Report> {
     // Before the scan: a failed scan must not rescan every session.
     touch(&env.stamp(), now).ok()?;
     let report = run(env, now, true);
-    journal_report(&report);
+    journal_report(env, &report);
     Some(report)
 }
 
@@ -834,7 +840,7 @@ pub fn run_cli(args: &[OsString]) -> ExitCode {
     };
     let report = run(&env, now, apply);
     if apply {
-        journal_report(&report);
+        journal_report(&env, &report);
     }
     // Not `print!`: nothing on the hook path writes stdout but the emitter.
     let table = render(&report.rows, io::stdout().is_terminal());

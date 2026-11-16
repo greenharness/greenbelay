@@ -31,6 +31,7 @@ use greenpiste_guard::git;
 use greenpiste_guard::graduate;
 use greenpiste_guard::guidance;
 use greenpiste_guard::harness_review;
+use greenpiste_guard::migrate_plugin;
 use greenpiste_guard::names::BIN;
 use greenpiste_process::attestations;
 use greenpiste_process::block_fingerprint;
@@ -468,8 +469,15 @@ fn run_migrate(args: &[OsString]) -> ExitCode {
     if request.dry_run {
         return match migrate::machine_plan(&env, direction) {
             Ok(lines) => {
+                let registry = migrate_plugin::registry_state_after(&env, direction);
                 if lines.is_empty() {
-                    println!("nothing to do: {}", already(direction));
+                    // "nothing to do" only when Claude Code's registry needs
+                    // nothing either: a script reading it must not be told so
+                    // while the plugin stays off.
+                    match registry.report() {
+                        None => println!("nothing to do: {}", already(direction)),
+                        Some(_) => println!("nothing to move: {}", already(direction)),
+                    }
                 }
                 let mut refused = false;
                 for line in lines {
@@ -481,6 +489,7 @@ fn run_migrate(args: &[OsString]) -> ExitCode {
                         }
                     }
                 }
+                print_registry(&registry, RegistryVoice::WouldThenNeed);
                 if refused {
                     eprintln!("migrate would stop: fix what is named above first");
                     return ExitCode::FAILURE;
@@ -514,7 +523,48 @@ fn run_migrate(args: &[OsString]) -> ExitCode {
         return ExitCode::FAILURE;
     }
     eprintln!("{verdict}");
+    print_registry(&migrate_plugin::registry_state(&env), RegistryVoice::Run);
     ExitCode::SUCCESS
+}
+
+/// How the registry diagnostics are phrased. Both go to stderr: they are
+/// commands for the person to run, never something greenpiste does.
+#[derive(Clone, Copy)]
+enum RegistryVoice {
+    /// An explicit run that settled: say what to run.
+    Run,
+    /// A dry run or an install preview: `would then need:` lines.
+    WouldThenNeed,
+}
+
+/// Say what Claude Code's plugin registry needs, never doing it.
+fn print_registry(state: &migrate_plugin::RegistryState, voice: RegistryVoice) {
+    use greenpiste_guard::ui::sanitize;
+    let Some(report) = state.report() else {
+        return;
+    };
+    let what = sanitize(&report.what);
+    if report.commands.is_empty() {
+        eprintln!("{what}");
+        if let Some(hint) = report.hint {
+            eprintln!("  {hint}");
+        }
+        return;
+    }
+    match voice {
+        RegistryVoice::Run => {
+            eprintln!("{what}; run:");
+            for command in &report.commands {
+                eprintln!("  {}", sanitize(command));
+            }
+        }
+        RegistryVoice::WouldThenNeed => {
+            eprintln!("{what}; you would then need to run:");
+            for command in &report.commands {
+                eprintln!("would then need: {}", sanitize(command));
+            }
+        }
+    }
 }
 
 /// What a finished state is called in a "nothing to do" line.
@@ -3341,6 +3391,9 @@ fn run_install(args: &[OsString], adding: bool) -> ExitCode {
         }
         println!("Nothing written. Re-run with --write to apply:\n");
         print!("{}", plan.after);
+        if adding && plugin.is_some() {
+            print_install_registry(RegistryVoice::WouldThenNeed);
+        }
         return ExitCode::SUCCESS;
     }
     if matches!(plan.change, settings::Change::WouldReformat) {
@@ -3365,6 +3418,11 @@ fn run_install(args: &[OsString], adding: bool) -> ExitCode {
                     );
                 }
             }
+            // The same condition as the preview's, so a preview never names
+            // commands its --write leaves unsaid (plugin files already placed).
+            if adding && plugin.is_some() {
+                print_install_registry(RegistryVoice::Run);
+            }
             if let Some(dir) = &plan.remove_dir {
                 eprintln!("removed {}", dir.display());
             }
@@ -3377,6 +3435,20 @@ fn run_install(args: &[OsString], adding: bool) -> ExitCode {
             );
             ExitCode::from(2)
         }
+    }
+}
+
+/// The registry lines of an install: judged against the side the plugin is
+/// installed under, from the Claude config directory whatever the scope.
+fn print_install_registry(voice: RegistryVoice) {
+    if let Some(env) = greenpiste_guard::migrate::Env::from_process() {
+        print_registry(
+            &migrate_plugin::registry_state_for(
+                &env,
+                greenpiste_guard::migrate::Direction::Forward,
+            ),
+            voice,
+        );
     }
 }
 
