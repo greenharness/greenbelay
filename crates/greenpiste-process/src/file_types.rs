@@ -142,9 +142,48 @@ pub struct PhaseSpan {
 /// lines each covers. The section's text before its first item belongs to
 /// no item. [`phases`] is this without the decisions.
 pub fn phase_spans(body: &str) -> Vec<PhaseSpan> {
+    scan(body).spans
+}
+
+/// The heading of the person's checklist inside `## Phases`.
+const STEPS_HEADING: &str = "### 🧑 Your steps";
+
+/// The plain `- ` step bullets of a `### 🧑 Your steps` block inside
+/// `## Phases`, without the marker or a `[ ] `/`[x] ` checkbox. The block is
+/// neither a phase nor a decision; it ends at the next heading or the next
+/// phase or decision item.
+pub fn steps(body: &str) -> Vec<String> {
+    scan(body).steps
+}
+
+/// The 1-based lines of a `### 🧑 Your steps` heading outside `## Phases`,
+/// where it counts nothing.
+pub fn misplaced_steps_headings(body: &str) -> Vec<usize> {
+    scan(body).misplaced
+}
+
+struct Scan {
+    spans: Vec<PhaseSpan>,
+    steps: Vec<String>,
+    misplaced: Vec<usize>,
+}
+
+fn item_text(line: &str) -> &str {
+    let after_marker = line[2..].trim_start();
+    ["[ ] ", "[x] ", "[X] "]
+        .iter()
+        .find_map(|checkbox| after_marker.strip_prefix(checkbox))
+        .unwrap_or(after_marker)
+        .trim_start()
+}
+
+fn scan(body: &str) -> Scan {
     let mut fence = crate::plan_text::Fence::default();
     let mut inside = false;
+    let mut in_steps = false;
     let mut out: Vec<PhaseSpan> = Vec::new();
+    let mut steps: Vec<String> = Vec::new();
+    let mut misplaced: Vec<usize> = Vec::new();
     let close = |out: &mut Vec<PhaseSpan>, at: usize| {
         if let Some(last) = out.last_mut() {
             if last.lines.end == usize::MAX {
@@ -155,12 +194,28 @@ pub fn phase_spans(body: &str) -> Vec<PhaseSpan> {
     let mut count = 0;
     for (i, line) in body.lines().enumerate() {
         count = i + 1;
-        if let Some(title) = fence.h2(line) {
+        let prose = fence.prose(line);
+        if let Some(title) = prose.and_then(|t| t.strip_prefix("## ")) {
             if inside {
                 close(&mut out, i);
             }
-            inside = title == "Phases";
+            inside = title.trim().trim_end_matches('#').trim_end() == "Phases";
+            in_steps = false;
             continue;
+        }
+        if let Some(t) = prose {
+            if t.starts_with('#') && t.trim_end() == STEPS_HEADING {
+                if inside {
+                    close(&mut out, i);
+                    in_steps = true;
+                } else {
+                    misplaced.push(i + 1);
+                }
+                continue;
+            }
+            if in_steps && t.starts_with('#') && t.trim_start_matches('#').starts_with(' ') {
+                in_steps = false;
+            }
         }
         if !inside || fence.open.is_some() {
             // A fenced example belongs to its phase's lines, but the paths
@@ -168,14 +223,22 @@ pub fn phase_spans(body: &str) -> Vec<PhaseSpan> {
             continue;
         }
         let top = line.starts_with("- ") || line.starts_with("* ");
+        if in_steps {
+            if !top {
+                continue;
+            }
+            let text = item_text(line);
+            if !(text.starts_with("Phase ") || text.starts_with('🧑')) {
+                if line.starts_with("- ") {
+                    steps.push(text.to_string());
+                }
+                continue;
+            }
+            in_steps = false;
+        }
         if top {
             close(&mut out, i);
-            let after_marker = line[2..].trim_start();
-            let item_text = ["[ ] ", "[x] ", "[X] "]
-                .iter()
-                .find_map(|checkbox| after_marker.strip_prefix(checkbox))
-                .unwrap_or(after_marker)
-                .trim_start();
+            let item_text = item_text(line);
             let label = if item_text.starts_with('🧑') {
                 // A decision for the person ends the phase before it.
                 String::new()
@@ -195,7 +258,7 @@ pub fn phase_spans(body: &str) -> Vec<PhaseSpan> {
                 lines: i..usize::MAX,
             });
         }
-        if let Some(current) = out.last_mut() {
+        if let Some(current) = out.last_mut().filter(|c| c.lines.end == usize::MAX) {
             for span in spans(line) {
                 if let Some(p) = path_in_span(span) {
                     if !current.paths.contains(&p) {
@@ -206,7 +269,11 @@ pub fn phase_spans(body: &str) -> Vec<PhaseSpan> {
         }
     }
     close(&mut out, count);
-    out
+    Scan {
+        spans: out,
+        steps,
+        misplaced,
+    }
 }
 
 /// Every path the plan's Phases name, in order, once each.
@@ -502,5 +569,39 @@ mod tests {
         for whole in ["backend", "architect", "unix", "tui"] {
             assert!(profile_reads(whole).is_none(), "{whole}");
         }
+    }
+}
+
+#[cfg(test)]
+mod steps_tests {
+    use super::*;
+
+    const PLAN: &str = "## Goal\n\ng\n\n## Phases\n\n- Phase 1 — `a.rs` do\n- Phase 2 — `b.rs`\n- 🧑 decide\n- Phase 3 — `c.rs` last\n\n### 🧑 Your steps\n\n- [ ] cut a release\n- merge Phase 5\n\n## Other\n";
+
+    #[test]
+    fn steps_block_is_not_a_phase_and_ends_the_last_span() {
+        let spans = phase_spans(PLAN);
+        assert_eq!(phases(PLAN).len(), 3);
+        assert_eq!(spans.len(), 4);
+        let last = spans.last().unwrap();
+        assert_eq!(PLAN.lines().nth(last.lines.end), Some("### 🧑 Your steps"));
+        assert_eq!(steps(PLAN), vec!["cut a release", "merge Phase 5"]);
+    }
+
+    #[test]
+    fn fenced_example_and_misplaced_heading_count_nothing() {
+        let fenced = "## Phases\n\n- Phase 1 — x\n\n  ```\n### 🧑 Your steps\n- a\n  ```\n";
+        assert!(steps(fenced).is_empty());
+        assert_eq!(phases(fenced).len(), 1);
+        let off = "## Notes\n\n### 🧑 Your steps\n\n- a\n\n## Phases\n\n- Phase 1 — x\n";
+        assert!(steps(off).is_empty());
+        assert_eq!(misplaced_steps_headings(off), vec![3]);
+    }
+
+    #[test]
+    fn phase_after_steps_ends_the_block() {
+        let b = "## Phases\n\n- Phase 1 — x\n\n### 🧑 Your steps\n\n- s\n- Phase 4 — y\n";
+        assert_eq!(steps(b), vec!["s"]);
+        assert_eq!(phases(b).len(), 2);
     }
 }

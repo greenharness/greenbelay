@@ -502,6 +502,7 @@ fn choose(root: &Path, names: &[String], branch: &str) -> Option<Plan> {
 /// The first unindented `- [ ] ` line inside `## Phases`, without its marker.
 fn next_open(body: &str) -> Option<String> {
     let mut in_phases = false;
+    let mut in_steps = false;
     let mut fenced = false;
     for line in body.lines() {
         if line.trim_start().starts_with("```") {
@@ -513,9 +514,28 @@ fn next_open(body: &str) -> Option<String> {
         }
         if line.starts_with("## ") {
             in_phases = line.trim_end() == "## Phases";
+            in_steps = false;
             continue;
         }
         if in_phases {
+            if line.trim_end() == "### 🧑 Your steps" {
+                in_steps = true;
+                continue;
+            }
+            if in_steps {
+                let item = line.strip_prefix("- ").map(|r| {
+                    let r = r.trim_start();
+                    r.strip_prefix("[ ] ")
+                        .or_else(|| r.strip_prefix("[x] "))
+                        .or_else(|| r.strip_prefix("[X] "))
+                        .unwrap_or(r)
+                        .trim_start()
+                });
+                match item {
+                    Some(t) if t.starts_with("Phase ") || t.starts_with('🧑') => in_steps = false,
+                    _ => continue,
+                }
+            }
             if let Some(rest) = line.strip_prefix("- [ ] ") {
                 return Some(rest.trim().to_string());
             }

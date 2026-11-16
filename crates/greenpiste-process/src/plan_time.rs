@@ -359,14 +359,37 @@ fn word_count(text: &str) -> usize {
 /// Distinct `Phase N` labels under the `## Phases` heading.
 fn phase_count(text: &str) -> usize {
     let mut inside = false;
+    let mut in_steps = false;
     let mut seen = std::collections::BTreeSet::new();
     for l in text.lines() {
         if l.starts_with("## ") {
             inside = l.trim() == "## Phases";
+            in_steps = false;
             continue;
         }
         if !inside {
             continue;
+        }
+        if l.trim_end() == "### 🧑 Your steps" {
+            in_steps = true;
+            continue;
+        }
+        if in_steps {
+            let item = l.strip_prefix("- ").map(|r| {
+                let r = r.trim_start();
+                r.strip_prefix("[ ] ")
+                    .or_else(|| r.strip_prefix("[x] "))
+                    .or_else(|| r.strip_prefix("[X] "))
+                    .unwrap_or(r)
+                    .trim_start()
+            });
+            match item {
+                Some(t) if t.starts_with("Phase ") || t.starts_with('🧑') => in_steps = false,
+                _ => continue,
+            }
+        }
+        if l.trim_end().starts_with("### 🧑 Your steps") {
+            break;
         }
         if let Some(i) = l.find("Phase ") {
             let label: String = l[i + 6..]
