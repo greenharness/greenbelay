@@ -10,7 +10,7 @@ plan-id: p-01M7H8RWZF2TBZTBW0BCZQ5ANA
 ## Review panel
 
 👉 **Decide:** none — approve if greenpiste should name the `claude plugin` commands that fix Claude Code's registry, and never run them itself.
-📍 amont-agent, grh · nothing built · next: Phase 1 (registry state and messages). Panel: backend, lang:rust, tui, unix (opus-5-5), codex (gpt).
+📍 amont-agent, grh · Phases 1–2 built · next: implementation review, then Phase 3 (release 5.0.1). Panel: backend, lang:rust, tui, unix (opus-5-5), codex (gpt).
 **Changed by review:** doctor prints one command per line (its sanitiser escaped `\n`); the leak hunt catches a write into the canary and passes features per package; previews and already-migrated machines are judged against the side they will write.
 📄 Full reviews: [the sidecar](2026-11-16-greenpiste-tells-claude-codes-registry.reviews.md).
 **Verdicts:** round 1 approve-with-changes 4; round 2 approve 1, approve-with-changes 3; Codex rework (2 high applied); final backend bind approve-with-changes; 0 rework left; 9 carried into implementation.
@@ -134,7 +134,7 @@ test target of the workspace.
 
 ## Phases
 
-- [ ] Phase 1 — registry state and messages:
+- [x] Phase 1 — registry state and messages:
   `amont-agent/crates/greenpiste-guard/src/settings.rs`,
   `amont-agent/crates/greenpiste-guard/src/lsp.rs`,
   `amont-agent/crates/greenpiste-process/src/agents.rs` (its import of the moved reader, and the `InstalledPlugins::Unreadable` match at :200 now that the variant carries a reason),
@@ -143,7 +143,7 @@ test target of the workspace.
   `amont-agent/src/main.rs`, `amont-agent/tests/migrate.rs`,
   `amont-agent/tests/doctor.rs`, `amont-agent/docs/migrate.md`,
   `amont-agent/CHANGELOG.md`.
-- [ ] Phase 2 — leak hunt covers unit tests: `amont-agent/scripts/leak-hunt.sh`.
+- [x] Phase 2 — leak hunt covers unit tests: `amont-agent/scripts/leak-hunt.sh`.
 - [ ] Phase 3 — release 5.0.1 and pin it: `amont-agent/Cargo.toml`,
   `amont-agent/greenharness.toml`, `grh/manifests/greenpiste.toml`,
   `grh/catalog.toml`, `grh/CHANGELOG.md`, `grh/Cargo.toml`; released,
@@ -185,7 +185,31 @@ test target of the workspace.
 
 ## Outcome
 
+Observed before the push (2026-11-16):
+
+- Phase 1: `cargo test` green on the branch (a514bd75); `tests/migrate.rs` and
+  `tests/doctor.rs` cover the stale, current, unreadable and preview cases.
+- Phase 2, planted unit test calling `journal::record` with no scratch dir →
+  expected `LEAK` → `LEAK lib:greenpiste-guard: the canary changed
+  (> claude/amont-agent/journal.log …)`, twice; the plant removed (`cmp` with
+  the clean copy, 0 `planted_leak` lines).
+- Phase 2, two clean runs of every target → expected all `ok` → 43 `ok`, rc 0,
+  both runs.
+- `LEAK_HUNT_SNAPSHOT_FAIL=1 scripts/leak-hunt.sh migrate` → `SNAPSHOT-FAIL`,
+  rc 1; `scripts/leak-hunt.sh lib:nope migrate` → usage on stderr, rc 2, nothing run.
+
 ## Decision log
+
+- 2026-11-16 — Context was wrong: unit tests did write outside their scratch
+  dirs. The attestation sweep's tests wrote the shared journal (now
+  `journal::record_in` with the scratch state dir), and two `with_home` test
+  helpers left `CLAUDE_CONFIG_DIR` set, so every later test wrote into their
+  scratch dir; that hid the planted leak (`ok`) until a `RestoreConfigDir`
+  guard put the variable back. Phase 2 therefore also touched
+  `crates/greenpiste-guard/src/{journal.rs,assertions/mod.rs,assertions/bug_nudge.rs,session_state.rs}`
+  and `crates/greenpiste-process/src/attestations.rs`. Unit-test targets run
+  with `--test-threads=1`, so a test holding the variable cannot redirect a
+  concurrent one.
 
 - 2026-11-16 — say the commands rather than run them: the registry is Claude
   Code's, its CLI is the supported writer, and a hook may never spawn it.

@@ -64,6 +64,29 @@ pub mod land_retry;
 #[cfg(test)]
 pub(crate) mod test_support {
     pub(crate) static CONFIG_DIR_TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Puts `CLAUDE_CONFIG_DIR` back as it was when dropped, a panic included:
+    /// a test that leaves it pointing at its own scratch dir sends every later
+    /// test's writes there, which hides a leak from `scripts/leak-hunt.sh`.
+    pub(crate) struct RestoreConfigDir(Option<std::ffi::OsString>);
+
+    impl RestoreConfigDir {
+        /// Remembers the current value and sets `CLAUDE_CONFIG_DIR` to `dir`.
+        pub(crate) fn set(dir: &std::path::Path) -> Self {
+            let prior = std::env::var_os("CLAUDE_CONFIG_DIR");
+            std::env::set_var("CLAUDE_CONFIG_DIR", dir);
+            RestoreConfigDir(prior)
+        }
+    }
+
+    impl Drop for RestoreConfigDir {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(v) => std::env::set_var("CLAUDE_CONFIG_DIR", v),
+                None => std::env::remove_var("CLAUDE_CONFIG_DIR"),
+            }
+        }
+    }
 }
 pub mod push_landed;
 pub mod push_published;
