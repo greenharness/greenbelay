@@ -46,11 +46,12 @@ class Greenbelay < Formula
     <<~EOS
       greenpiste is now greenbelay, and no greenpiste or amont-agent binary
       is installed. Hook entries in ~/.claude/settings.json that call
-      greenpiste fail until their command is renamed to greenbelay (greenbelay
-      install does not recognise greenpiste entries as its own, and would add
-      a second handler beside each). Check with:
+      greenpiste fail until their command is renamed: replace the greenpiste
+      path in each command with the greenbelay one (greenbelay install does not
+      recognise greenpiste entries as its own, and would add a second handler
+      beside each). When none is left, this prints nothing:
 
-        greenbelay doctor
+        grep -n greenpiste ~/.claude/settings.json
 
       Rules that refuse by default: #{refusing_by_default.join(", ")}
     EOS

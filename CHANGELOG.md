@@ -16,8 +16,11 @@ plugin id (`clear-relay@greenbelay`). Hook messages read `greenbelay/<rule>`.
   formula, the installers or `make install`; the release ships no alias
   archive, and `scripts/release-manifest.py` refuses a manifest declaring
   `bin_aliases`. Hook entries calling `greenpiste` fail until their command
-  is renamed to `greenbelay`: `greenbelay install` does not recognise them as
-  its own and would add a second handler beside each.
+  is renamed: replace the `greenpiste` path in each command of
+  `~/.claude/settings.json` with the `greenbelay` one (`grep -n greenpiste
+  ~/.claude/settings.json` then prints nothing). `greenbelay install` does not
+  recognise them as its own and would add a second handler beside each, and
+  `greenbelay doctor` does not see them.
 - **No migration from greenpiste names.** greenbelay reads only its own names
   (and, until the 2026-12-13 census, the amont-agent ones). The only machine
   that ran greenpiste is switched once by a script outside this repository.
