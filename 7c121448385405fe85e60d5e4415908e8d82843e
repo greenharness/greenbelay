@@ -1,0 +1,20 @@
+greengate-provenance-v1
+commit 49cfd064d3efaaf090d938cc1f135ad25abd7ac3
+tree 7c121448385405fe85e60d5e4415908e8d82843e
+canon 603269dc8402b327a0a5caad17c9ad11d13e7531
+patch be5100c310e3eccdcbb24e4291f68d4076785bdb
+plan docs/plans/2026-11-16-greenpiste-tells-claude-codes-registry.md 06ee0b7c8b9f6430b58a938b4c121e95df07f2e70f92d2db645e036b850791c2
+review reviewed e524dc54d9eaeadec386d5908ae48ec2e8c0df62806f57eb332ebfd5445ac0a6
+code-review backend carried edaa599384af1fa404ae446215b618c76f1c28e7a20fa14029341c34785d49af
+code-review lang:rust reviewed e524dc54d9eaeadec386d5908ae48ec2e8c0df62806f57eb332ebfd5445ac0a6
+code-review unix reviewed e524dc54d9eaeadec386d5908ae48ec2e8c0df62806f57eb332ebfd5445ac0a6
+code-review tui reviewed e524dc54d9eaeadec386d5908ae48ec2e8c0df62806f57eb332ebfd5445ac0a6
+preview not-required
+producer greenpiste 5.0.0
+
+-----BEGIN SSH SIGNATURE-----
+U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg7UOvJ8myo4dhW907VFty7T/bUV
+RFQerK+MWJ4bjChwcAAAAUZ3JlZW5nYXRlLXByb3ZlbmFuY2UAAAAAAAAABnNoYTUxMgAA
+AFMAAAALc3NoLWVkMjU1MTkAAABAJDPXsXZdsGOv2qRTaNeaLK1rc+PlXQ5MJ3yqFh5bGf
+HsqTcAkGKeY4E0J68zWsFl0N+PTapxRNsnMtoj8qymAg==
+-----END SSH SIGNATURE-----
