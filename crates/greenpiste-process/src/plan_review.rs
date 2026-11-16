@@ -2275,6 +2275,9 @@ pub struct Panel {
     pub sliced: BTreeSet<String>,
     /// What happened to the plan's `plan-id:`, for stderr.
     pub id_note: Option<String>,
+    /// The lines of a `### 🧑 Your steps` heading outside `## Phases`, for
+    /// stderr: such a block counts nothing.
+    pub misplaced_steps: Vec<usize>,
     /// The plan's size, printed as the `counts=` token that ends line 1.
     pub counts: Counts,
 }
@@ -2291,6 +2294,7 @@ pub fn panel(plan_file: &Path) -> Result<Panel, String> {
         crate::plan_id::ensure(plan_file, &text).map_err(|e| format!("plan-panel: {e}"))?;
     let id_note = assigned.note();
     let plan_id = assigned.id().clone();
+    let misplaced_steps = crate::file_types::misplaced_steps_headings(&text);
     let seated = seating(&m, &text)?;
     let advice = seated.advice().map(|a| a.text);
     let (classes, source) = (seated.classes, seated.source);
@@ -2313,6 +2317,7 @@ pub fn panel(plan_file: &Path) -> Result<Panel, String> {
         advice,
         sliced: slices.into_keys().collect(),
         id_note,
+        misplaced_steps,
         counts: counts(
             &text,
             &m.repos,
@@ -2332,6 +2337,8 @@ pub struct Counts {
     pub releases: usize,
     /// 🧑 items under Phases.
     pub person: usize,
+    /// Plain step bullets of the `### 🧑 Your steps` block under Phases.
+    pub steps: usize,
     pub words: usize,
     /// The words of the plan's round 1, when it has one on record.
     pub round1_words: Option<usize>,
@@ -2344,6 +2351,7 @@ impl Counts {
         serde_json::json!({
             "repos": self.repos, "phases": self.phases, "prs": self.prs,
             "releases": self.releases, "person": self.person,
+            "steps": self.steps,
             "words": self.words, "round1_words": self.round1_words,
             "merge_candidates": self.merge_candidates,
         })
@@ -2360,6 +2368,7 @@ impl std::fmt::Display for Counts {
         if let Some(first) = self.round1_words {
             write!(f, "/{first}")?;
         }
+        write!(f, ",steps:{}", self.steps)?;
         f.write_str(",merge-candidates:")?;
         if self.merge_candidates.is_empty() {
             return f.write_str("-");
@@ -2449,6 +2458,7 @@ pub fn counts(text: &str, repos: &[String], round1: Option<&str>) -> Counts {
         prs: repos.len(),
         releases,
         person: spans.len() - labelled.len(),
+        steps: crate::file_types::steps(text).len(),
         words: words(text),
         round1_words: round1.map(words),
         merge_candidates,
@@ -2465,6 +2475,31 @@ pub fn agent_for(role: &str) -> (String, Option<&str>) {
 
 #[cfg(test)]
 mod tests {
+    /// `steps:N` sits after `words:` (and its round-1 suffix) and before
+    /// `merge-candidates:`, and is printed even when zero.
+    #[test]
+    fn steps_is_printed_after_words_and_before_merge_candidates() {
+        let plan = "## Phases\n\n- Phase 1 — `a.rs` do\n\n### 🧑 Your steps\n\n- `cargo x` — because it needs a login\n- `brew y` — because it needs sudo\n";
+        let with_steps = counts(
+            plan,
+            &["r".to_string()],
+            Some("## Phases\n\n- Phase 1 — `a.rs` do\n"),
+        );
+        let token = with_steps.to_string();
+        let words = token.find(",words:").expect("words");
+        let steps = token.find(",steps:2").expect("steps:2 is printed");
+        let merge = token.find(",merge-candidates:").expect("merge-candidates");
+        assert!(words < steps && steps < merge, "{token}");
+        assert!(token.contains(",steps:2,merge-candidates:"), "{token}");
+        let none = counts(
+            "## Phases\n\n- Phase 1 — `a.rs` do\n",
+            &["r".to_string()],
+            None,
+        )
+        .to_string();
+        assert!(none.contains(",steps:0,merge-candidates:-"), "{none}");
+    }
+
     #[test]
     fn counts_are_one_token_and_count_what_the_plan_names() {
         let body = "# T\n\n## Phases\n\

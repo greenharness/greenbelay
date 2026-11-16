@@ -500,15 +500,13 @@ fn choose(root: &Path, names: &[String], branch: &str) -> Option<Plan> {
 }
 
 /// The first unindented `- [ ] ` line inside `## Phases`, without its marker.
+/// A line of a `### 🧑 Your steps` block is never an open phase.
 fn next_open(body: &str) -> Option<String> {
+    let mask = crate::file_types::steps_mask(body);
+    let mut fence = crate::plan_text::Fence::default();
     let mut in_phases = false;
-    let mut fenced = false;
-    for line in body.lines() {
-        if line.trim_start().starts_with("```") {
-            fenced = !fenced;
-            continue;
-        }
-        if fenced {
+    for (i, line) in body.lines().enumerate() {
+        if fence.prose(line).is_none() || mask.get(i).copied().unwrap_or(false) {
             continue;
         }
         if line.starts_with("## ") {
@@ -669,5 +667,21 @@ mod tests {
                 PhaseFact::TimedOut
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod steps_block_tests {
+    use super::next_open;
+
+    /// A step written as a checkbox is never the next open phase.
+    #[test]
+    fn a_step_written_as_a_checkbox_is_never_the_next_open_phase() {
+        // Every phase is ticked, so the only open checkbox is the step: only
+        // the steps mask keeps it from being returned.
+        let plan = "## Phases\n\n- [x] Phase 1 — `a.rs` done\n- [x] Phase 2 — `b.rs` done\n- [x] Phase 3 — `c.rs` done\n\n### 🧑 Your steps\n\n- [ ] `brew x` — because it needs sudo\n";
+        assert_eq!(next_open(plan), None);
+        let later = format!("{plan}\n- [ ] Phase 4 — `d.rs` next\n");
+        assert_eq!(next_open(&later).as_deref(), Some("Phase 4 — `d.rs` next"));
     }
 }

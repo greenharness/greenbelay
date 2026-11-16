@@ -98,7 +98,7 @@ file shows: `cli`, `ui`, `screen`, `ops`, `contract` (or its old name
 `greenpiste plan-panel <plan.md>` answers with the hook's own code:
 
 ```
-repos=greenpiste areas=cli,lang:rust body=cf3f43c938c4 panel=full seats=paths counts=repos:1,phases:2,prs:1,releases:1,person:0,words:640,merge-candidates:-
+repos=greenpiste areas=cli,lang:rust body=cf3f43c938c4 panel=full seats=paths counts=repos:1,phases:2,prs:1,releases:1,person:0,words:640,steps:0,merge-candidates:-
 plan-review-backend
 plan-review-language --lang rust
 plan-review-tui
@@ -114,7 +114,8 @@ baseline stored before 3.22.0 reads in today's class names (`large` as
 
 `counts=` ends line 1 as one comma-separated token with no spaces, so a
 reader that splits line 1 on spaces still finds every other `key=value`,
-and agent lines still start on line 2:
+and agent lines still start on line 2. Readers take keys by name. A new key
+goes before `merge-candidates`, which stays the last comma field:
 
 - `repos`: the machine comment's list;
 - `phases`: the phases under `## Phases`;
@@ -125,6 +126,11 @@ and agent lines still start on line 2:
 - `person`: 🧑 items under Phases;
 - `words`: the body's words, as `words:<now>/<round 1>` once the plan's
   round 1 differs;
+- `steps`: actions only the person can run, the plain `- ` bullets of a
+  `### 🧑 Your steps` block inside `## Phases`; decisions stay in `person`.
+  It is printed even when zero, and sits after `words` and before
+  `merge-candidates`. A heading outside `## Phases` counts nothing and
+  `plan-panel` says so on stderr with its line;
 - `merge-candidates`: adjacent phase pairs (`2+3;5+6`) naming files in the
   same repositories with the same file-type classes, and no 🧑 item between
   them; `-` when there are none.
