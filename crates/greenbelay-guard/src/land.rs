@@ -61,17 +61,21 @@ pub fn wait_path(cmd: &Simple) -> Option<&str> {
     if words.iter().any(|w| w.expanded) || !cmd.redirects.is_empty() || cmd.heredoc {
         return None;
     }
-    // Only the path may be quoted: greengate prints the wait with the path in
-    // single quotes, and a quoted word that nothing expanded is one path.
-    let (path_at, path) = match words.as_slice() {
-        [_, _, flag, path] if !flag.quoted && flag.text == "--wait" => (3, path.text.as_str()),
-        [_, _, joined] => (2, joined.text.strip_prefix("--wait=")?),
-        _ => return None,
-    };
-    if words[..path_at].iter().any(|w| w.quoted) {
+    if words.iter().take(2).any(|w| w.quoted) {
         return None;
     }
-    plain_name(path).then_some(path)
+    // Only the path may be quoted, never `--wait` itself: greengate prints the
+    // wait with the path in single quotes, and a quoted word that nothing
+    // expanded is one path. A backslash is refused: inside double quotes the
+    // shell keeps most of them, so the path read here could name another file.
+    let (path_word, path) = match words.as_slice() {
+        [_, _, flag, path] if !flag.quoted && flag.text == "--wait" => (path, path.text.as_str()),
+        [_, _, joined] if joined.raw.starts_with("--wait=") => {
+            (joined, joined.text.strip_prefix("--wait=")?)
+        }
+        _ => return None,
+    };
+    (plain_name(path) && !path_word.raw.contains('\\')).then_some(path)
 }
 
 /// The tag an `amont land --tag <name>` (or `--tag=<name>`) pushes, if it
@@ -505,7 +509,14 @@ mod tests {
         let printed = "greengate land --wait '/r/.git/greengate/land/1-2.json'";
         assert!(lone(printed));
         assert!(lone("greengate land --wait \"/r/receipt.json\""));
+        assert!(lone("greengate land --wait='/r/receipt.json'"));
+        let spaced = lex("greengate land --wait '/r/a b.json'");
+        let land = spaced.judgeable().find(|c| is_land(c)).unwrap();
+        assert_eq!(wait_path(land), Some("/r/a b.json"));
         for cmd in [
+            "greengate land \"--wait=/r/x\"",
+            "greengate land --wait \"/r/\\a.json\"",
+            "greengate land --wait /r/\\a.json",
             "greengate land --wait \"$RECEIPT\"",
             "greengate land --wait \"/r/$(id)/x\"",
             "greengate land '--wait' /r/x",
