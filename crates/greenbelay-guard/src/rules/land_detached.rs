@@ -221,7 +221,7 @@ mod tests {
     }
 
     fn confirmed_through_context(
-        background: bool,
+        run: Run,
         timeout_ms: Option<u64>,
         probe: &dyn Fn(&str) -> Option<Version>,
     ) -> Confirmed {
@@ -232,7 +232,7 @@ mod tests {
             platform: None,
             cwd: std::path::Path::new("/"),
             parsed: &parsed,
-            background,
+            background: matches!(run, Run::Background),
             timeout_ms,
             tool_use_id: "",
             transcript: None,
@@ -249,7 +249,7 @@ mod tests {
     fn a_background_call_never_reaches_the_probe() {
         let never = |_: &str| -> Option<Version> { panic!("the probe must not run") };
         assert!(matches!(
-            confirmed_through_context(true, Some(600_000), &never),
+            confirmed_through_context(Run::Background, Some(600_000), &never),
             Confirmed::No(_)
         ));
     }
@@ -258,7 +258,7 @@ mod tests {
     fn a_short_timeout_never_reaches_the_probe() {
         let never = |_: &str| -> Option<Version> { panic!("the probe must not run") };
         assert!(matches!(
-            confirmed_through_context(false, Some(120_000), &never),
+            confirmed_through_context(Run::Foreground, Some(120_000), &never),
             Confirmed::No(_)
         ));
     }
@@ -267,7 +267,7 @@ mod tests {
     fn a_foreground_call_near_the_cap_probes_the_clauses_program() {
         let probe = |program: &str| (program == "greengate").then_some((4, 9, 0));
         assert!(matches!(
-            confirmed_through_context(false, Some(600_000), &probe),
+            confirmed_through_context(Run::Foreground, Some(600_000), &probe),
             Confirmed::Yes
         ));
     }

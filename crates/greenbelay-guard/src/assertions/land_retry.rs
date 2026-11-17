@@ -224,7 +224,7 @@ mod tests {
             failed: false,
         };
         let verdict = verify(&ctx, &claim);
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&dir); // cleanup of a scratch dir: the verdict is already taken
         verdict
     }
 
