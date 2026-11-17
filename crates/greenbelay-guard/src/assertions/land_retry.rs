@@ -248,12 +248,14 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("1.json");
         std::fs::write(&path, receipt_json).unwrap();
-        let command = format!("greengate land --wait {}", path.display());
+        // A relative path read from the call's directory: a Windows path's
+        // backslashes are shell escapes, and the join is what verify_wait does.
+        let command = "greengate land --wait 1.json".to_string();
         let parsed = lex(&command);
         let claim = examine(&parsed).expect("a lone wait is claimed");
         let context = Context {
             platform: None,
-            cwd: std::path::Path::new("/"),
+            cwd: &dir,
             parsed: &parsed,
             background: false,
             timeout_ms: None,
