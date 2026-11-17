@@ -4899,3 +4899,124 @@ fn relais_run_forks_advises_every_time_and_for_a_subagent() {
     );
     let _ = std::fs::remove_dir_all(&repo.root); // temp-dir cleanup: a leftover dir only costs disk, and forks_repo starts from a fresh name
 }
+
+const INBOX_OBSERVE: &str = "[greenbelay \"clear-at-boundary\"]\n\tstance = observe\n";
+const INBOX_DENY: &str = "[greenbelay \"clear-at-boundary\"]\n\tstance = deny\n";
+const OLD_ORPHAN: &str = "2020-01-01 abcd1234 file the old thing\n";
+
+/// A scratch repository with its own common dir, and the dir the inbox lives in.
+fn inbox_repo(name: &str) -> (PathBuf, PathBuf) {
+    let repo = home().join(name);
+    if repo.exists() {
+        std::fs::remove_dir_all(&repo).expect("clear the scratch repo");
+    }
+    std::fs::create_dir_all(&repo).expect("scratch repo");
+    let init = Command::new("git")
+        .args(["init", "-q"])
+        .arg(&repo)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .status()
+        .expect("git runs");
+    assert!(init.success(), "git init failed");
+    let dir = repo.join(".git").join("greenharness");
+    std::fs::create_dir_all(&dir).expect("inbox dir");
+    (repo, dir)
+}
+
+fn session_start_of(source: &str, session: &str, cwd: &std::path::Path) -> String {
+    format!(
+        r#"{{"hook_event_name":"SessionStart","source":"{source}","session_id":"{session}","cwd":{}}}"#,
+        serde_json::Value::String(cwd.to_string_lossy().into_owned())
+    )
+}
+
+fn old_take(dir: &std::path::Path) {
+    let take = dir.join("inbox.abandoned.filing");
+    std::fs::write(&take, OLD_ORPHAN).expect("take");
+    let file = std::fs::OpenOptions::new().write(true).open(&take).unwrap();
+    file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3 * 86400))
+        .expect("age the take");
+}
+
+#[test]
+fn startup_and_clear_show_the_inbox_orphans() {
+    let (repo, dir) = inbox_repo("inbox-orphan");
+    std::fs::write(dir.join("inbox.md"), OLD_ORPHAN).unwrap();
+    for source in ["startup", "clear"] {
+        let reply = send(&session_start_of(source, "inbox-sess-a", &repo));
+        let text = reply.reason();
+        assert!(text.contains("greenbelay/inbox:"), "{source}: {text}");
+        assert!(text.contains("file the old thing"), "{source}: {text}");
+        assert!(text.contains("nothing was moved"), "{source}: {text}");
+    }
+}
+
+#[test]
+fn resume_compact_and_fork_show_no_inbox_block() {
+    let (repo, dir) = inbox_repo("inbox-sources");
+    std::fs::write(dir.join("inbox.md"), OLD_ORPHAN).unwrap();
+    for source in ["resume", "compact", "fork"] {
+        let reply = send(&session_start_of(source, "inbox-sess-b", &repo));
+        assert!(
+            !reply.reason().contains("greenbelay/inbox"),
+            "{source}: {}",
+            reply.stdout
+        );
+    }
+    // The control: the same repository at a startup does show the block, so
+    // the silence above is the source's doing.
+    let reply = send(&session_start_of("startup", "inbox-sess-b", &repo));
+    assert!(
+        reply.reason().contains("greenbelay/inbox"),
+        "{}",
+        reply.stdout
+    );
+}
+
+#[test]
+fn no_inbox_prints_nothing() {
+    let (repo, _) = inbox_repo("inbox-none");
+    let reply = send(&session_start_of("startup", "inbox-sess-c", &repo));
+    assert!(
+        !reply.reason().contains("greenbelay/inbox"),
+        "{}",
+        reply.stdout
+    );
+}
+
+#[test]
+fn an_abandoned_take_shows_beside_a_missing_or_an_empty_inbox() {
+    for (name, empty_inbox) in [("inbox-take-missing", false), ("inbox-take-empty", true)] {
+        let (repo, dir) = inbox_repo(name);
+        if empty_inbox {
+            std::fs::write(dir.join("inbox.md"), "").unwrap();
+        }
+        old_take(&dir);
+        for global in ["", INBOX_DENY] {
+            let reply =
+                send_with_global(&session_start_of("startup", "inbox-sess-d", &repo), global);
+            let text = reply.reason();
+            assert!(text.contains("file the old thing"), "{name}: {text}");
+        }
+    }
+}
+
+#[test]
+fn observe_prints_no_block_but_journals_the_count() {
+    let (repo, dir) = inbox_repo("inbox-observe");
+    old_take(&dir);
+    let reply = send_with_global(&session_start_of("clear", "inbox-ob", &repo), INBOX_OBSERVE);
+    assert!(
+        !reply.reason().contains("greenbelay/inbox"),
+        "{}",
+        reply.stdout
+    );
+    let journal = std::fs::read_to_string(home().join("greenbelay").join("journal.log"))
+        .expect("the hook wrote a journal");
+    assert!(
+        journal.lines().any(|l| l.contains("inbox-ob")
+            && l.contains("session start clear: orphans 1, fresh 0, being filed 0")),
+        "{journal}"
+    );
+}
