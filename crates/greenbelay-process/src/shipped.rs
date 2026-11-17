@@ -11,7 +11,7 @@ use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
 use greenbelay_guard::git;
-use greenbelay_guard::notes_names::{NoteNames, ATTEST_HEADER, ATTEST_REF, NAMES};
+use greenbelay_guard::notes_names::{NoteNames, ATTEST_HEADER, ATTEST_REF, GREEN, NAMES};
 
 const SIG_END: &str = "-----END SSH SIGNATURE-----";
 const FETCH_BUDGET: Duration = Duration::from_secs(60);
@@ -55,8 +55,9 @@ struct Prov {
     flags: Vec<&'static str>,
 }
 
-/// One payload with its armored signature, and the name set of the ref it
-/// was read from (its header must be that set's).
+/// One payload with its armored signature, and the provenance name set of the
+/// ref it was read from (a record's header must be that set's). An
+/// attestation block's header is always [`ATTEST_HEADER`].
 struct Block {
     payload: String,
     sig: String,
@@ -196,11 +197,12 @@ fn read_refs() -> Vec<&'static str> {
         .collect()
 }
 
-/// Fetch the notes refs `shipped` reads, under either name set. One bounded
-/// `ls-remote` names those origin carries, and one bounded fetch takes them
-/// all; a ref the listing does not carry is absent on origin and skipped
-/// without a word (the green set before greengate writes it, the legacy one
-/// after the census). An `ls-remote` or a fetch that fails is warned on
+/// Fetch the notes refs `shipped` reads: provenance under either name set,
+/// and greensummit's attestation ref. One bounded `ls-remote` names those
+/// origin carries, and one bounded fetch takes them all; a ref the listing
+/// does not carry is absent on origin and skipped without a word (the
+/// greensummit ref before greengate 4.11.0 writes it, the legacy provenance
+/// ref after the census). An `ls-remote` or a fetch that fails is warned on
 /// stderr, naming the refs. False after any warning.
 fn fetch_notes(dir: &Path) -> bool {
     let wanted = read_refs();
@@ -537,8 +539,8 @@ fn gates_of(dir: &Path, object: &str) -> Vec<String> {
     let Some(text) = notes_show(dir, ATTEST_REF, object) else {
         return Vec::new();
     };
-    // A block's name set only matters for provenance; any set will do here.
-    let blocks = blocks(&text, NAMES[0]);
+    // A block's name set only matters for provenance records.
+    let blocks = blocks(&text, &GREEN);
     blocks
         .first()
         .filter(|b| b.is_attest())
