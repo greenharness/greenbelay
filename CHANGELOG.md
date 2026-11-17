@@ -1,5 +1,18 @@
 # Changelog
 
+## v6.3.0
+
+greenbelay 6.3.0 tells a new session about inbox lines nobody filed.
+
+- At a `startup` or `clear` session start, the session notice adds an inbox
+  block. It reads `<git-common-dir>/greenharness/inbox.md` and abandoned
+  `inbox.*.filing` takes, and moves nothing. It shows the orphans: lines two
+  or more local days old, or lines in a take older than 24 h. It counts the
+  fresh lines by session id, and the lines a live session is filing. It
+  follows the `clear-at-boundary` stance (`observe` journals only). The read
+  contract is `inbox-read/1` in docs/index.md: the filer touches a take after
+  moving it.
+
 ## v6.2.0
 
 greenbelay 6.2.0 reads greensummit attestations (ADR-0073).
@@ -18,10 +31,6 @@ greenbelay 6.2.0 reads greensummit attestations (ADR-0073).
 
 greenbelay 6.1.0 reads greengate's detached land (greengate 4.9.0 or later).
 
-- The session notice at a `startup` or `clear` session start adds an inbox
-  block: orphan lines of `<git-common-dir>/greenharness/inbox.md` and of
-  abandoned `inbox.*.filing` takes are shown, fresh ones counted. It follows
-  the `clear-at-boundary` stance.
 - The land guard reads `greengate land --detach` like a foreground land
   (same flags, same review and preview checks), and a lone
   `greengate land --wait <path>` as a wait that publishes nothing.
