@@ -1,5 +1,19 @@
 # Changelog
 
+## v6.2.0
+
+greenbelay 6.2.0 reads greensummit attestations (ADR-0073).
+
+- **Attestations are read under greensummit's names only** (ADR-0073):
+  `shipped` reads the `gates` line from `refs/notes/greensummit`, header
+  `greensummit-v2`, and no longer from `refs/notes/greengate-attest` or
+  `refs/notes/amont-attest`. Provenance records and gate stamps keep their
+  names. Install with greengate 4.11.0 or later, which writes them.
+- CI verifies with the greensummit Action (`greenharness/greensummit`
+  v2.0.0), and `.github/allowed_signers` names the `greensummit` namespace.
+- The land guard reads the `greengate land --wait '<receipt>'` command that
+  greengate prints, with its path quoted; 6.1.0 held it.
+
 ## v6.1.0
 
 greenbelay 6.1.0 reads greengate's detached land (greengate 4.9.0 or later).
@@ -15,13 +29,6 @@ greenbelay 6.1.0 reads greengate's detached land (greengate 4.9.0 or later).
   `amont land` with a timeout of 540 s or more, on greengate 4.9.0 or later,
   is advised to run with `--detach` and follow `greengate land --wait` under
   Monitor.
-- **Attestations are read under greensummit's names only** (ADR-0073):
-  `shipped` reads the `gates` line from `refs/notes/greensummit`, header
-  `greensummit-v2`, and no longer from `refs/notes/greengate-attest` or
-  `refs/notes/amont-attest`. Provenance records and gate stamps keep their
-  names. Install with greengate 4.11.0 or later, which writes them.
-- CI verifies with the greensummit Action (`greenharness/greensummit`
-  v2.0.0), and `.github/allowed_signers` names the `greensummit` namespace.
 
 ## v6.0.0
 
