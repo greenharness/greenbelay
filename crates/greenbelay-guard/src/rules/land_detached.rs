@@ -72,10 +72,17 @@ fn examine(parsed: &Parsed) -> Option<Finding> {
     })
 }
 
+/// Where the tool call runs: a background call is already off the turn.
+#[derive(Clone, Copy)]
+enum Run {
+    Foreground,
+    Background,
+}
+
 /// Pure: speaks only for a foreground call near the cap, on a gate that has
 /// `--detach`.
-fn decide(background: bool, timeout_ms: u64, gate: Option<Version>) -> Confirmed {
-    if background {
+fn decide(run: Run, timeout_ms: u64, gate: Option<Version>) -> Confirmed {
+    if let Run::Background = run {
         return Confirmed::No("the call already runs in the background");
     }
     if timeout_ms < NEAR_THE_CAP_MS {
@@ -97,7 +104,12 @@ fn confirm(context: &Context, _finding: &Finding) -> Confirmed {
     } else {
         gate_version::probe(program)
     };
-    decide(context.background, context.timeout_ms(), probed)
+    let run = if context.background {
+        Run::Background
+    } else {
+        Run::Foreground
+    };
+    decide(run, context.timeout_ms(), probed)
 }
 
 #[cfg(test)]
@@ -137,11 +149,11 @@ mod tests {
     #[test]
     fn it_confirms_near_the_cap_on_a_gate_with_detach() {
         assert!(matches!(
-            decide(false, 600_000, Some((4, 9, 0))),
+            decide(Run::Foreground, 600_000, Some((4, 9, 0))),
             Confirmed::Yes
         ));
         assert!(matches!(
-            decide(false, 600_000, Some((5, 0, 0))),
+            decide(Run::Foreground, 600_000, Some((5, 0, 0))),
             Confirmed::Yes
         ));
     }
@@ -149,16 +161,19 @@ mod tests {
     #[test]
     fn it_stays_silent_on_a_short_timeout_an_old_gate_or_a_background_call() {
         assert!(matches!(
-            decide(false, 120_000, Some((4, 9, 0))),
+            decide(Run::Foreground, 120_000, Some((4, 9, 0))),
             Confirmed::No(_)
         ));
         assert!(matches!(
-            decide(false, 600_000, Some((4, 8, 0))),
+            decide(Run::Foreground, 600_000, Some((4, 8, 0))),
             Confirmed::No(_)
         ));
-        assert!(matches!(decide(false, 600_000, None), Confirmed::No(_)));
         assert!(matches!(
-            decide(true, 600_000, Some((4, 9, 0))),
+            decide(Run::Foreground, 600_000, None),
+            Confirmed::No(_)
+        ));
+        assert!(matches!(
+            decide(Run::Background, 600_000, Some((4, 9, 0))),
             Confirmed::No(_)
         ));
     }
