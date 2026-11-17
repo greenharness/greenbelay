@@ -235,9 +235,11 @@ mod tests {
     fn waited_verdict(receipt_json: &str) -> Verdict {
         // One directory per call: tests run in parallel threads of one process.
         static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir =
-            std::env::temp_dir().join(format!("greenbelay-land-retry-{}-{n}", std::process::id()));
+        let serial = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "greenbelay-land-retry-{}-{serial}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("1.json");
         std::fs::write(&path, receipt_json).unwrap();
