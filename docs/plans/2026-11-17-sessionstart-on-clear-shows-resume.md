@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 plan-id: p-01M7M5THKW6CY49NCHMFMHC1JJ
 canonical: relais:docs/plans/2026-11-17-sessionstart-on-clear-shows-resume.md
 phases: 2, 3 (greenbelay's release)
@@ -25,4 +25,4 @@ carries greenbelay's share of Phase 3, its release.
 - unix: approve-with-changes on both rounds. `date` now has a 500 ms deadline. Deliberate: `git rev-parse` uses the same unbounded helper as the other session notices. 65k, 47 s + 19 s.
 - tui: approve-with-changes, then approve. The text says where to file an orphan, counts only unfiled lines, and says "session id". 44k, 22 s + 14 s.
 
-Phase 2 is done. Phase 3, greenbelay's release, is next.
+Phase 2 is done. Phase 3 is done too: greenbelay 6.3.0 (#285), installed with brew (the machine now runs 6.3.1). The plan is done. The live `/clear` proof and its miss (a session cleared outside a repository sees no notice, filed as decisions session-boundaries t19) are recorded in the canonical plan in relais.
