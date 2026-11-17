@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const BIN: &str = env!("CARGO_BIN_EXE_greenbelay");
 const PROV: &str = "refs/notes/amont-provenance";
@@ -49,7 +50,13 @@ fn plan_text(n: u32) -> String {
 
 impl World {
     fn new(tag: &str) -> World {
-        let top = std::env::temp_dir().join(format!("amont-shipped-{tag}-{}", std::process::id()));
+        // Tests run in parallel threads of one process, so the pid alone does
+        // not keep two worlds apart: a counter does, even when two tests share
+        // a tag (two did, and one deleted the other's directory mid-test).
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let top =
+            std::env::temp_dir().join(format!("amont-shipped-{tag}-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&top);
         let repo = top.join("root").join("repo");
         let origin = top.join("origin.git");
@@ -704,7 +711,7 @@ fn a_plan_line_that_differs_from_its_tree_is_flagged() {
 
 #[test]
 fn a_record_whose_commit_is_unreachable_is_ignored() {
-    let w = World::new("unreachable");
+    let w = World::new("commit-unreachable");
     w.feature();
     let merge = w.squash("feat: a (#6)");
     let tree = git(&w.repo, &["rev-parse", &format!("{merge}^{{tree}}")]);
