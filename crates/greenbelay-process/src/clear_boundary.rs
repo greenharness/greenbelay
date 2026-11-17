@@ -1205,10 +1205,11 @@ fn judge_boundary(
         Stance::Observe => watched(&format!("{} (observe)", boundary.what)),
         Stance::Advise => {
             record("advised", &boundary.what);
-            // Words that work with no handoff skill installed: the agent is
-            // asked for the exact line the clear-relay plugin reads.
+            // The agent hands off unasked (worktree-task `## Handoff`), so
+            // the note names that step; the line it quotes still works with
+            // no handoff skill installed.
             let remedy = format!(
-                "To clear and carry on, reply: write the handoff, then end with the line \"{MARKER}; next: `<the exact first prompt>`\"; the clear-relay plugin then clears and submits it. Or /clear yourself."
+                "The agent hands off by itself at a boundary (the worktree-task skill's Handoff section) and ends with the line \"{MARKER}; next: `<the exact first prompt>`\"; this turn did not. To clear and carry on, reply: hand off now. The clear-relay plugin then clears and submits that prompt. Or /clear yourself."
             );
             Some(Decision::UserNote(decision::phrase(
                 RULE.id, &fact, &remedy,
@@ -1217,7 +1218,7 @@ fn judge_boundary(
         Stance::Deny => {
             record("denied", &boundary.what);
             let remedy = format!(
-                "The handoff is then complete when the plan or ticket states the next action and the turn ends with one line: \"{MARKER}; next: `<the exact first prompt>`\"."
+                "Hand off now, as the worktree-task skill's Handoff section says. Without that skill, the handoff is complete when the plan or ticket states the next action and the turn ends with one line: \"{MARKER}; next: `<the exact first prompt>`\"."
             );
             Some(Decision::Continue(decision::phrase(
                 RULE.id, &fact, &remedy,

@@ -103,8 +103,11 @@ not a closing one) with the transcript's last main-chain context at 200,000
 tokens or more, no relais run still waiting on the session (read from the
 transcript only; greenbelay never runs `relais`), clean repositories and
 nothing unpushed outside `docs/plans/`, gets one note to the person with the
-reply to give: write the handoff, then end with that line; at `deny` the agent is sent on once to write the handoff and end
-with `safe to /clear; next: <the first prompt>`. It ships at `advise`: its
+reply to give: "hand off now". The note says the agent hands off by itself at a
+boundary (the worktree-task skill's Handoff section) and ends with that line.
+At `deny`, the agent is sent on once, pointed at that Handoff section, to end
+with `safe to /clear; next: <the first prompt>`; without the skill, the message
+still spells out that line. It ships at `advise`: its
 backtest advised 25 of 31 compacted sessions before their first compaction
 (the bar was 28), and 46 of 140 advices were followed by an editing turn (the
 bar was at most 10%). `deny` waits on the Outcome counts. It stays silent in
