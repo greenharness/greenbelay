@@ -63,7 +63,7 @@ pub const RULE: Rule = Rule {
 fn detect(parsed: &Parsed) -> Option<&Simple> {
     parsed.judgeable().find(|cmd| {
         // A land runs the same pre-push gate inside its push.
-        (crate::land::is_land(cmd) && !cmd.has_flag("--dry-run"))
+        (crate::land::is_land(cmd) && !cmd.has_flag("--dry-run") && !crate::land::is_wait_only(cmd))
             || cmd.program() == Some("git")
             && cmd.subcommand() == Some("push")
             && !cmd.has_flag("--dry-run")

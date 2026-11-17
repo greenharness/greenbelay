@@ -498,14 +498,21 @@ pub fn find(parsed: &crate::shell::Parsed) -> Option<&Simple> {
     parsed.judgeable().find(|c| publishes(c))
 }
 
+/// A clause that publishes: a `git push`, or a land that is not a lone
+/// `--wait` (which only follows a detached land's receipt).
 fn publishes(c: &Simple) -> bool {
-    (c.program() == Some("git") && c.subcommand() == Some("push")) || crate::land::is_land(c)
+    (c.program() == Some("git") && c.subcommand() == Some("push"))
+        || (crate::land::is_land(c) && !crate::land::is_wait_only(c))
 }
 
 /// [`resolve`], for a guard that has the whole call: a command with more
 /// than one push or land is unresolvable (only the first would be judged),
 /// and an `amont land` is resolved by asking amont what it would push.
 pub fn resolve_for(context: &crate::rules::Context, cmd: &Simple) -> Push {
+    // `greengate land --wait <path>` only waits on a detached land.
+    if crate::land::is_wait_only(cmd) {
+        return Push::DryRun;
+    }
     let cwd = match context.cwd_walk(cmd.at) {
         crate::rules::Walk::Walked(dir) => dir,
         crate::rules::Walk::VariableCd { session_cwd } => {
@@ -746,6 +753,18 @@ mod tests {
             read_of("git push --delete origin"),
             Read::Unresolvable("no refspec named; push.default decides")
         );
+    }
+
+    #[test]
+    fn a_wait_before_a_push_does_not_hide_the_push() {
+        let parsed = lex("greengate land --wait /r/x.json && git push origin feat");
+        let cmd = find(&parsed).expect("the push");
+        assert_eq!(cmd.program(), Some("git"));
+        assert!(matches!(read(cmd), Read::Spec(_)));
+        let lone = lex("greengate land --wait /r/x.json");
+        assert!(find(&lone).is_none());
+        let joined = lex("greengate land --wait=/r/x.json && git push origin feat");
+        assert_eq!(find(&joined).and_then(|c| c.program()), Some("git"));
     }
 
     #[test]

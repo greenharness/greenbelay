@@ -51,6 +51,7 @@ pub mod glob_no_match;
 pub mod gui_open_unbounded;
 pub mod heavy_build_unqueued;
 pub mod kubectl_gitops;
+pub mod land_detached;
 pub mod lint_suppression_added;
 pub mod no_verify;
 pub mod path_operand_missing;

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- The land guard reads `greengate land --detach` like a foreground land
+  (same flags, same review and preview checks), and a lone
+  `greengate land --wait <path>` as a wait that publishes nothing.
+- The `land-retry` check defers a `running` receipt of a detached land
+  instead of judging it half-way.
+- New rule `land-detached` (advise): a foreground `greengate land` or
+  `amont land` with a timeout of 540 s or more, on greengate 4.9.0 or later,
+  is advised to run with `--detach` and follow `greengate land --wait` under
+  Monitor.
+
 ## v6.0.0
 
 greenpiste is now greenbelay (ADR-0071): one name for the product, the

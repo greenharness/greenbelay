@@ -58,6 +58,7 @@ pub const RULES: &[Rule] = &[
     crate::rules::test_output_trimmed::RULE,
     crate::rules::workspace_root_write::RULE,
     crate::rules::heavy_build_unqueued::RULE,
+    crate::rules::land_detached::RULE,
     crate::rules::suppressions_override::RULE,
     crate::rules::plan_names_no_paths::RULE,
 ];
@@ -164,17 +165,17 @@ mod tests {
         }
     }
 
-    /// The table holds every rule, in its place: 54 rules, which are the 45
+    /// The table holds every rule, in its place: 55 rules, which are the 45
     /// left after the workspace split and the observe-rule retirements, plus
     /// `relais-run-forks`, `screenshot-in-main-session`, `work-overlap`, `ask-unopened-page`,
-    /// `suppressions-override`, `plan-names-no-paths`, `chain-with-and` and
-    /// `block-reinstate`, with `push-preview` between
+    /// `suppressions-override`, `plan-names-no-paths`, `chain-with-and`,
+    /// `block-reinstate` and `land-detached`, with `push-preview` between
     /// `push-preflight` and `plan-review-panel`, and `implementation-review` after
     /// `plan-phases-open`. A rule a crate stopped listing would vanish here.
     #[test]
     fn the_table_holds_every_rule_in_its_place() {
         let ids: Vec<&str> = RULES.iter().map(|r| r.id).collect();
-        assert_eq!(ids.len(), 54, "{ids:?}");
+        assert_eq!(ids.len(), 55, "{ids:?}");
         let at = |id: &str| {
             ids.iter()
                 .position(|x| *x == id)
