@@ -638,6 +638,11 @@ fn the_continue_asks_for_the_line_the_relay_reads() {
         .and_then(|rest| rest.strip_suffix(suffix))
         .unwrap_or_else(|| panic!("{asked:?} does not match /^{prefix}(.+){suffix}$/"));
     assert!(!prompt.is_empty(), "{asked:?}");
+    assert!(
+        reason.contains("worktree-task skill's Handoff section"),
+        "{reason}"
+    );
+    assert!(reason.contains("Without that skill"), "{reason}");
 }
 
 #[test]
@@ -648,9 +653,12 @@ fn the_rule_ships_at_advise() {
     let reply = world.stop("s1", &transcript, json!({}));
     assert!(reply.json().get("decision").is_none(), "{}", reply.stdout);
     assert!(
-        reply.note().is_some_and(
-            |note| note.contains("write the handoff") && note.contains("safe to /clear; next:")
-        ),
+        reply
+            .note()
+            .is_some_and(|note| note.contains("hand off now")
+                && note.contains("Handoff section")
+                && note.contains("Without that skill")
+                && note.contains("safe to /clear; next:")),
         "{}",
         reply.stdout
     );
@@ -665,7 +673,7 @@ fn a_plan_commit_with_a_non_ascii_path_is_advised_with_a_note() {
     let reply = world.stop("s1", &transcript, json!({}));
     assert!(reply.json().get("decision").is_none(), "{}", reply.stdout);
     let note = reply.note().expect("a systemMessage");
-    assert!(note.contains("write the handoff"), "{note}");
+    assert!(note.contains("hand off now"), "{note}");
     assert!(note.contains("plan commit"), "{note}");
     assert!(
         world.journal_has("advised", "plan commit"),
