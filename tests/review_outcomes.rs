@@ -883,3 +883,33 @@ fn a_held_ledger_lock_makes_the_hook_journal_one_skip_within_the_budget() {
     assert_eq!(w.record("").status.code(), Some(0));
     assert!(!stats(&w).contains("record-skipped"), "{}", stats(&w));
 }
+
+const PLAN_ID: &str = "p-01M7FVXGP6XFZ6EEK02527AQE2";
+
+fn ids_dir(w: &World) -> PathBuf {
+    w.root.join("claude/greenbelay/plan-review/ids")
+}
+
+#[test]
+fn plan_sha_block_maps_the_body_of_a_plan_with_a_live_id() {
+    let w = World::new("plan-sha-id");
+    let text = format!("---\nplan-id: {PLAN_ID}\n---\n{BODY}\n<!-- panel: repos=docs -->\n");
+    std::fs::write(&w.plan, &text).unwrap();
+    let plain = w.bin().arg("plan-sha").arg(&w.plan).output().unwrap();
+    assert!(plain.status.success());
+    let sha = String::from_utf8(plain.stdout).unwrap().trim().to_string();
+    let block = w.block();
+    assert!(block.contains(&sha), "{block}");
+    let record = std::fs::read_to_string(ids_dir(&w).join(format!("{sha}.json"))).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&record).unwrap();
+    assert_eq!(v["plan_id"], PLAN_ID);
+    assert_eq!(v["body_sha"], sha.as_str());
+}
+
+#[test]
+fn plan_sha_on_a_plan_without_an_id_writes_no_map_entry() {
+    let w = World::new("plan-sha-no-id");
+    let out = w.bin().arg("plan-sha").arg(&w.plan).output().unwrap();
+    assert!(out.status.success());
+    assert!(!ids_dir(&w).exists());
+}

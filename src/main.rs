@@ -1869,6 +1869,7 @@ fn run_plan_sha(args: &[OsString]) -> ExitCode {
             }
         }
     };
+    greenbelay_process::plan_id::remember_live(&text);
     if block {
         let path = plan_review::real(std::path::Path::new(&file));
         let cut = match slice.as_deref() {
