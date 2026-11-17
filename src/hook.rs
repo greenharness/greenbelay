@@ -383,11 +383,56 @@ fn on_session_start(session: &Session) -> Decision {
     if let Some(line) = crate::plans::notice(&session.cwd) {
         lines.push(line);
     }
+    if let Some(line) = inbox_notice(session) {
+        lines.push(line);
+    }
     if lines.is_empty() {
         Decision::Silent
     } else {
         Decision::Context(lines.join("\n\n"))
     }
+}
+
+/// The unfiled inbox lines, at a `startup` or `clear` only, governed by the
+/// `clear-at-boundary` stance: `observe` journals the counts and says nothing.
+fn inbox_notice(session: &Session) -> Option<String> {
+    if !matches!(session.source.as_str(), "startup" | "clear") {
+        return None;
+    }
+    let rule = &rules::clear_at_boundary::RULE;
+    let stance = crate::stance::resolve(rule);
+    let today = local_date()?;
+    let found = greenbelay_process::inbox::notice(&session.cwd, &session.source, stance, &today)?;
+    let outcome = match stance {
+        Stance::Observe => "watched",
+        Stance::Advise | Stance::Deny => "advised",
+    };
+    journal::record(&journal::Entry {
+        rule: rule.id,
+        stance: stance.as_str(),
+        outcome,
+        session: &session.session,
+        repo: &repo_name(&session.cwd),
+        mode: "-",
+        excerpt: &format!(
+            "session start {}: {} orphans, {} fresh",
+            session.source, found.orphans, found.fresh
+        ),
+    });
+    found.text
+}
+
+/// The local calendar day, `YYYY-MM-DD`, from `date +%F`.
+fn local_date() -> Option<String> {
+    let out = std::process::Command::new("date")
+        .arg("+%F")
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 /// The stale-checkout half of the session notice. `None` is silence —

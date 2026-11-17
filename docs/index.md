@@ -42,6 +42,20 @@ greenbelay doctor           # is it installed, runnable, and actually firing?
 greenbelay status           # every rule, its stance, and what it has seen
 ```
 
+## The inbox read contract
+
+At a session start with source `startup` or `clear`, greenbelay's session
+notice reads `<git-common-dir>/greenharness/inbox.md` and every
+`inbox.*.filing` file beside it (an abandoned take), and moves nothing.
+Documentation version token: `inbox-read/1` (lines carry no token).
+
+Each line is `<YYYY-MM-DD> <session8> [due=YYYY-MM-DD] <text>`. An orphan is a
+line dated two or more local calendar days before today, or any line of a take
+whose modification time is more than 24 hours old. A younger take is counted as
+lines being filed and not shown. Other lines, malformed ones included (session
+`?`), are fresh. The block follows the `clear-at-boundary` stance: `observe`
+journals the counts and prints nothing.
+
 ## Relationship to amont
 
 [amont](https://github.com/greenharness/greengate) is a git-hook manager by the

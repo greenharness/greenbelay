@@ -18,6 +18,10 @@ greenbelay 6.2.0 reads greensummit attestations (ADR-0073).
 
 greenbelay 6.1.0 reads greengate's detached land (greengate 4.9.0 or later).
 
+- The session notice at a `startup` or `clear` session start adds an inbox
+  block: orphan lines of `<git-common-dir>/greenharness/inbox.md` and of
+  abandoned `inbox.*.filing` takes are shown, fresh ones counted. It follows
+  the `clear-at-boundary` stance.
 - The land guard reads `greengate land --detach` like a foreground land
   (same flags, same review and preview checks), and a lone
   `greengate land --wait <path>` as a wait that publishes nothing.
