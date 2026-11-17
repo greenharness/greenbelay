@@ -41,7 +41,7 @@ pub const ASSERTION: Assertion = Assertion {
 
 fn examine(parsed: &Parsed) -> Option<Claim> {
     let cmd = parsed.judgeable().find(|c| crate::land::is_land(c))?;
-    if cmd.is_dry_run() {
+    if cmd.is_dry_run() || crate::land::is_wait_only(cmd) {
         return None;
     }
     Some(Claim {
@@ -68,6 +68,9 @@ fn judge(judged: &str, status: &str, pushed: &str) -> Verdict {
     let published = match status {
         "landed" => true,
         "unverified" | "not-observed" => false,
+        // A detached land's worker has not finished: its final receipt is
+        // judged when it lands, not on a guess.
+        "running" => return Verdict::Unknown("retry-check deferred: detached land still running"),
         // Nothing was published.
         "refused" | "unreachable" | "interrupted" => return Verdict::Held,
         // A status a newer amont added: not a pass on a guess.
@@ -111,6 +114,8 @@ mod tests {
         assert!(examine(&lex("cd x && amont land")).is_some());
         assert!(examine(&lex("amont land --dry-run --json")).is_none());
         assert!(examine(&lex("git push origin feat")).is_none());
+        assert!(examine(&lex("greengate land --wait /r/receipt.json")).is_none());
+        assert!(examine(&lex("greengate land --detach --json")).is_some());
     }
 
     #[test]
@@ -135,6 +140,20 @@ mod tests {
         assert!(matches!(
             judge("aaa", "landed-twice", "bbb"),
             Verdict::Unknown(_)
+        ));
+    }
+
+    #[test]
+    fn a_running_receipt_defers_and_a_landed_one_is_judged() {
+        match judge("aaa", "running", "bbb") {
+            Verdict::Unknown(why) => {
+                assert_eq!(why, "retry-check deferred: detached land still running")
+            }
+            _ => panic!("a running land is deferred"),
+        }
+        assert!(matches!(
+            judge("aaa", "landed", "bbb"),
+            Verdict::Broken { .. }
         ));
     }
 

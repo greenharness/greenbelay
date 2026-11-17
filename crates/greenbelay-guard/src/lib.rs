@@ -18,6 +18,7 @@ pub mod doctor;
 #[cfg(unix)]
 pub mod excerpt;
 pub mod gate;
+pub mod gate_version;
 pub mod git;
 pub mod gitconfig;
 pub mod graduate;

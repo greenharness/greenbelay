@@ -24,9 +24,6 @@
 //! A version that was read is remembered for the session; the probe has a
 //! short deadline. Amont's slot files are never read: `amont slots` is the query.
 
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
-
 use crate::rules::test_output_trimmed::{exempt_words, runner_words};
 use crate::rules::{Confirmed, Context, Evidence, Examine, Finding, Rule, Stance, Trend};
 use crate::shell::{Parsed, Simple, Word};
@@ -47,10 +44,7 @@ pub const RULE: Rule = Rule {
 };
 
 /// The first `amont` with `slot run`.
-const FIRST_VERSION_WITH_SLOTS: (u64, u64, u64) = (1, 62, 0);
-
-/// How long `amont --version` may take.
-const PROBE_DEADLINE: Duration = Duration::from_millis(1500);
+const FIRST_VERSION_WITH_SLOTS: crate::gate_version::Version = (1, 62, 0);
 
 /// Set by `amont slot run` in the environment of the command it launches.
 /// The variable a slot holder exports to what it runs (greengate 4.0 and
@@ -180,51 +174,12 @@ fn amont_has_slots(session: &str) -> bool {
     if crate::lsp::was_told(session, INCAPABLE) {
         return false;
     }
-    let Some(version) = probe_version() else {
+    let Some(version) = crate::gate_version::probe(crate::gate::gate_binary()) else {
         return false;
     };
-    let capable = version >= FIRST_VERSION_WITH_SLOTS;
+    let capable = crate::gate_version::at_least(Some(version), FIRST_VERSION_WITH_SLOTS);
     let _ = crate::lsp::told(session, if capable { CAPABLE } else { INCAPABLE }); // unrecorded: the next hook process asks again
     capable
-}
-
-/// `amont --version`, killed at [`PROBE_DEADLINE`]; `None` when amont is
-/// missing, fails, hangs or prints no version.
-fn probe_version() -> Option<(u64, u64, u64)> {
-    let mut child = Command::new(crate::gate::gate_binary())
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let deadline = Instant::now() + PROBE_DEADLINE;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) if status.success() => break,
-            Ok(Some(_)) | Err(_) => return None,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
-            Ok(None) => {
-                let _ = child.kill(); // past the deadline the answer is already unknown
-                let _ = child.wait(); // a reap that fails leaves nothing more to report
-                return None;
-            }
-        }
-    }
-    let mut text = String::new();
-    std::io::Read::read_to_string(&mut child.stdout.take()?, &mut text).ok()?;
-    parse_version(&text)
-}
-
-/// The first `major.minor.patch` in `--version` output such as `amont 1.62.0`.
-fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
-    text.split_whitespace().find_map(|token| {
-        let mut parts = token.trim_start_matches('v').split('.').map(|part| {
-            let digits: String = part.chars().take_while(char::is_ascii_digit).collect();
-            digits.parse::<u64>().ok()
-        });
-        Some((parts.next()??, parts.next()??, parts.next()??))
-    })
 }
 
 #[cfg(test)]
@@ -283,11 +238,12 @@ mod tests {
     }
 
     #[test]
-    fn a_version_is_read_from_the_output() {
-        assert_eq!(parse_version("amont 1.62.0\n"), Some((1, 62, 0)));
-        assert_eq!(parse_version("amont v1.61.1-rc1"), Some((1, 61, 1)));
-        assert!(parse_version("amont 2.0.0") >= Some(FIRST_VERSION_WITH_SLOTS));
-        assert_eq!(parse_version("no version here"), None);
+    fn the_first_slot_version_is_a_slot_version() {
+        let read = crate::gate_version::parse_version("amont 2.0.0");
+        assert!(crate::gate_version::at_least(
+            read,
+            FIRST_VERSION_WITH_SLOTS
+        ));
     }
 
     #[test]

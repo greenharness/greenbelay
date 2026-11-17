@@ -313,6 +313,10 @@ const EMBEDDED: &[(&str, &str)] = &[
         include_str!("../tests/corpus/heavy-build-unqueued.cases"),
     ),
     (
+        "land-detached",
+        include_str!("../tests/corpus/land-detached.cases"),
+    ),
+    (
         "suppressions-override",
         include_str!("../tests/corpus/suppressions-override.cases"),
     ),

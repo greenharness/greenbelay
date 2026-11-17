@@ -8,8 +8,8 @@
 //! amont answers the question itself: `amont land --dry-run --json` (1.54.0)
 //! says what a land would push, reading local git state only.
 //!
-//! Only one shape is read: `amont land [--json] [--force]`, or
-//! `amont land --tag <name> [--json]` (amont 2.0, one existing tag), optionally
+//! Only one shape is read: `amont land [--detach] [--json] [--force]`, or
+//! `amont land [--detach] --tag <name> [--json]` (amont 2.0, one existing tag), optionally
 //! after one `cd <literal path> &&`, alone in the command, in the foreground.
 //! Anything around it could change what the land does between this hook and
 //! the push (a `git commit` before it moves HEAD, `git fetch --set-upstream`
@@ -36,11 +36,28 @@ const BUDGET: Duration = Duration::from_secs(3);
 
 /// The one shape, named in every refusal.
 pub const SHAPE: &str =
-    "only `amont land [--json] [--force]` or `amont land --tag <name> [--json]`, alone in the command or after one `cd <dir> &&`, in the foreground, is read";
+    "only `greengate land [--json] [--force]` (or `amont land [--json] [--force]`), its detached form `greengate land --detach [--json] [--force]`, or `greengate land --tag <name> [--json]`, alone in the command or after one `cd <dir> &&`, in the foreground, is read";
 
 /// Is this clause an `amont land`?
 pub fn is_land(cmd: &Simple) -> bool {
     cmd.program().is_some_and(crate::gate::is_gate_program) && cmd.subcommand() == Some("land")
+}
+
+/// Is this clause exactly `greengate land --wait <one plain path>` (or the
+/// `amont` spelling)? It waits on a detached land's receipt and publishes
+/// nothing, so no guard keyed on a push has anything to hold. Any other flag
+/// beside `--wait` makes it an ordinary land, which [`shape`] reads.
+pub fn is_wait_only(cmd: &Simple) -> bool {
+    if !is_land(cmd) {
+        return false;
+    }
+    let words = &cmd.words;
+    words.len() == 4
+        && words.iter().all(|w| !w.quoted && !w.expanded)
+        && words[2].text == "--wait"
+        && plain_name(&words[3].text)
+        && cmd.redirects.is_empty()
+        && !cmd.heredoc
 }
 
 /// The tag an `amont land --tag <name>` (or `--tag=<name>`) pushes, if it
@@ -101,7 +118,7 @@ pub fn shape(parsed: &Parsed, cmd: &Simple, background: bool) -> Result<(), &'st
     if !head || !cmd.redirects.is_empty() || cmd.heredoc {
         return Err(SHAPE);
     }
-    // Flags: `--json`, `--force`, and one `--tag <name>` / `--tag=<name>`
+    // Flags: `--json`, `--detach`, `--force`, and one `--tag <name>` / `--tag=<name>`
     // whose name is a plain word. A tag is never forced: amont refuses it.
     let rest = &words[2..];
     let mut tags = 0;
@@ -109,7 +126,7 @@ pub fn shape(parsed: &Parsed, cmd: &Simple, background: bool) -> Result<(), &'st
     let mut i = 0;
     while i < rest.len() {
         match rest[i].text.as_str() {
-            "--json" => {}
+            "--json" | "--detach" => {}
             "--force" => forced = true,
             "--tag" => {
                 let Some(name) = rest.get(i + 1) else {
@@ -300,6 +317,11 @@ pub struct Receipt {
     pub branch: String,
     pub pushed: String,
     pub status: String,
+    /// Written by a detached land (greengate 4.9.0); absent on older receipts.
+    pub remote_after: Option<String>,
+    pub exit: Option<i64>,
+    pub judged: Option<String>,
+    pub worker_pid: Option<u32>,
 }
 
 /// The receipts in `dir` for `branch` that started at or after `since`
@@ -336,6 +358,13 @@ pub fn read_receipt(text: &str) -> Option<Receipt> {
         branch: s("branch")?,
         pushed: s("pushed")?,
         status: s("status")?,
+        remote_after: s("remote_after"),
+        exit: v.get("exit").and_then(|x| x.as_i64()),
+        judged: s("judged"),
+        worker_pid: v
+            .get("worker_pid")
+            .and_then(|x| x.as_u64())
+            .and_then(|pid| u32::try_from(pid).ok()),
     })
 }
 
@@ -439,6 +468,60 @@ mod tests {
     #[test]
     fn a_land_in_the_background_is_not_read() {
         assert!(read("amont land", true).is_err());
+        assert!(read("greengate land --detach --json", true).is_err());
+    }
+
+    #[test]
+    fn a_detached_land_is_read_like_a_foreground_one() {
+        for cmd in [
+            "greengate land --detach",
+            "greengate land --detach --json",
+            "greengate land --json --detach --force",
+            "greengate land --detach --tag v1.2.3 --json",
+            "cd /x/wt && greengate land --detach --json",
+        ] {
+            assert_eq!(read(cmd, false), Ok(()), "{cmd}");
+        }
+        assert!(read("greengate land --detach --tag v1 --force", false).is_err());
+        assert!(read("greengate land --detach; true", false).is_err());
+    }
+
+    #[test]
+    fn a_lone_wait_publishes_nothing_and_a_mixed_one_is_refused() {
+        let lone = |cmd: &str| {
+            let parsed = lex(cmd);
+            let land = parsed.judgeable().find(|c| is_land(c)).unwrap();
+            is_wait_only(land)
+        };
+        assert!(lone("greengate land --wait /r/.git/greengate/land/1.json"));
+        assert!(lone("amont land --wait /r/receipt.json"));
+        for cmd in [
+            "greengate land --wait /r/x --force",
+            "greengate land --wait /r/x --json",
+            "greengate land --detach --wait /r/x",
+            "greengate land --wait",
+            "greengate land --wait --json",
+            "greengate land --wait $RECEIPT",
+            "greengate land --wait /a /b",
+        ] {
+            assert!(!lone(cmd), "{cmd}");
+            assert!(read(cmd, false).is_err(), "{cmd} must be refused by shape");
+        }
+    }
+
+    #[test]
+    fn a_detached_receipt_keeps_its_extra_fields_and_tolerates_unknown_ones() {
+        let text = r#"{"started":5,"branch":"feat","pushed":"abc","status":"running","remote_after":"def","exit":0,"judged":"abc","worker_pid":4242,"future":[1]}"#;
+        let r = read_receipt(text).unwrap();
+        assert_eq!(r.status, "running");
+        assert_eq!(r.remote_after.as_deref(), Some("def"));
+        assert_eq!(r.exit, Some(0));
+        assert_eq!(r.judged.as_deref(), Some("abc"));
+        assert_eq!(r.worker_pid, Some(4242));
+        let old =
+            read_receipt(r#"{"started":5,"branch":"b","pushed":"p","status":"landed"}"#).unwrap();
+        assert_eq!(old.worker_pid, None);
+        assert!(read_receipt(r#"{"started":5,"branch":"b","status":"landed"}"#).is_none());
     }
 
     #[test]

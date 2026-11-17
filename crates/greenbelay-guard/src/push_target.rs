@@ -506,6 +506,10 @@ fn publishes(c: &Simple) -> bool {
 /// than one push or land is unresolvable (only the first would be judged),
 /// and an `amont land` is resolved by asking amont what it would push.
 pub fn resolve_for(context: &crate::rules::Context, cmd: &Simple) -> Push {
+    // `greengate land --wait <path>` only waits on a detached land.
+    if crate::land::is_wait_only(cmd) {
+        return Push::DryRun;
+    }
     let cwd = match context.cwd_walk(cmd.at) {
         crate::rules::Walk::Walked(dir) => dir,
         crate::rules::Walk::VariableCd { session_cwd } => {

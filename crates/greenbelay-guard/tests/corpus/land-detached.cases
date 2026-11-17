@@ -1,0 +1,16 @@
+# amont-agent-cases-v1
+# Reviewed judgements for this rule; see heavy-build-unqueued.cases.
+#
+# match   the rule SHOULD fire here
+# nomatch the rule must stay silent here
+
+# --- the rule should fire ---
+match	greengate land --json
+match	amont land --json
+match	cd /x/wt && greengate land --json --force
+
+# --- the rule must stay silent ---
+nomatch	greengate land --detach --json
+nomatch	greengate land --wait /r/.git/greengate/land/1.json
+nomatch	greengate land --dry-run --json
+nomatch	git push origin feat
