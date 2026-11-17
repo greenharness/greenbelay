@@ -1,12 +1,16 @@
 # Changelog
 
-## Unreleased
+## v6.1.0
+
+greenbelay 6.1.0 reads greengate's detached land (greengate 4.9.0 or later).
 
 - The land guard reads `greengate land --detach` like a foreground land
   (same flags, same review and preview checks), and a lone
   `greengate land --wait <path>` as a wait that publishes nothing.
 - The `land-retry` check defers a `running` receipt of a detached land
-  instead of judging it half-way.
+  instead of judging it half-way, judges a waited receipt on its own
+  `judged` and `pushed`, and says when a detached land was launched on a
+  commit the guards did not judge.
 - New rule `land-detached` (advise): a foreground `greengate land` or
   `amont land` with a timeout of 540 s or more, on greengate 4.9.0 or later,
   is advised to run with `--detach` and follow `greengate land --wait` under
