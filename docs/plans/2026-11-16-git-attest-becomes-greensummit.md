@@ -25,15 +25,18 @@ homelab, in one step.
 
 ## Verification (observed before the push)
 
-- Suite: `cargo test --workspace --locked --no-fail-fast` green (724 s);
-  `cargo clippy --workspace --all-targets --locked -- -D warnings` clean.
+- Suite: `cargo test --workspace --locked --no-fail-fast` green (724 s),
+  and again after the rebase onto 6df15652 and the review fixes (457 s);
+  `cargo clippy --workspace --all-targets --locked -- -D warnings` clean on
+  both trees.
   `shipped::tests::gates_are_read_only_under_greensummit` holds: notes under
   `amont-attest` and `greengate-attest` read as absent, the greensummit ref
   with an old header reads as absent, `greensummit-v2` is read.
 - Pilot (the published greensummit 2.0.0 x86_64-apple-darwin asset, sha256
   `9f8f0b95…eb4e24` = its SHA256SUMS line, and the worktree's
   `target/debug/greenbelay`; scratch HOME/XDG/global git config; script in
-  `~/.claude/greenbelay/attestations/gs-readers/pilot.sh`, three runs):
+  `~/.claude/greenbelay/attestations/gs-readers/pilot.sh`, three runs, and
+  a fourth on the binary rebuilt after the rebase, same results):
   - **Writer and reader agree.** Input: `greensummit sign --gates "cargo-test
     clippy"` on a squash merge carrying a signed provenance record.
     Expected: `shipped` shows the gates. Actual: origin holds
@@ -52,3 +55,12 @@ homelab, in one step.
 - 2026-11-17 — Kept old names only where they prove they are ignored (the
   `shipped` unit test, docs and CHANGELOG saying so) and in
   `tests/fixtures/block/amont-440.diff`, a recorded diff.
+
+## Implementation review
+
+- implementation-review (opus): approve → approve. Canonical Phase 3 tick
+  waits for the other repos' slices. 57k+33k tokens, 25+21 s.
+- backend (opus): approve-with-changes → approve. Fixed: the `fetch_notes`
+  doc comment. 53k+35k tokens, 44+19 s.
+- lang:rust (opus): approve-with-changes → approve. Fixed: `gates_of` names
+  `GREEN`, the `Block` doc comment. 53k+24k tokens, 39+19 s.
