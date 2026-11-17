@@ -109,13 +109,33 @@ fn decide(run: Run, timeout_ms: u64, probe: impl FnOnce() -> Option<Version>) ->
     }
 }
 
+/// `program` as `PATH` resolves it, canonical, with its modification time in
+/// seconds: `None` when it is not found.
+fn binary_identity(program: &str) -> Option<String> {
+    let path = std::env::var_os("PATH")?;
+    let found = std::env::split_paths(&path)
+        .map(|dir| dir.join(program))
+        .find(|candidate| candidate.is_file())?;
+    let canonical = std::fs::canonicalize(&found).ok()?;
+    let modified = std::fs::metadata(&canonical)
+        .and_then(|m| m.modified())
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some(format!("{}@{modified}", canonical.display()))
+}
+
 /// The version of `program` on `PATH` when it has `land --detach`, remembered
 /// on the session's record per program so the next hook process does not ask.
 /// Only a version that was read is remembered: a missing or slow gate is
 /// asked again.
 fn gate_has_detach(session: &str, program: &str) -> Option<Version> {
-    let capable = format!("land-detached {program}-has-detach");
-    let incapable = format!("land-detached {program}-lacks-detach");
+    // Keyed on the binary PATH resolves and its modification time, so a PATH
+    // change or an upgrade within the session asks again.
+    let identity = binary_identity(program).unwrap_or_else(|| program.to_string());
+    let capable = format!("land-detached {identity}-has-detach");
+    let incapable = format!("land-detached {identity}-lacks-detach");
     if crate::lsp::was_told(session, &capable) {
         return Some(FIRST_VERSION_WITH_DETACH);
     }
@@ -228,7 +248,7 @@ mod tests {
         let command = "greengate land --json";
         let parsed = lex(command);
         let finding = examine(&parsed).unwrap();
-        let ctx = Context {
+        let context = Context {
             platform: None,
             cwd: std::path::Path::new("/"),
             parsed: &parsed,
@@ -242,7 +262,7 @@ mod tests {
             session: "",
             failed: false,
         };
-        confirm_with(&ctx, &finding, probe)
+        confirm_with(&context, &finding, probe)
     }
 
     #[test]

@@ -40,7 +40,18 @@ pub const ASSERTION: Assertion = Assertion {
 };
 
 fn examine(parsed: &Parsed) -> Option<Claim> {
-    let cmd = parsed.judgeable().find(|c| crate::land::is_land(c))?;
+    // The land that publishes is the one to judge: a lone `--wait` beside it
+    // (`… --wait r && amont land`) must not take its place. A command whose
+    // only land is a wait claims the wait.
+    let lands: Vec<_> = parsed
+        .judgeable()
+        .filter(|c| crate::land::is_land(c))
+        .collect();
+    let cmd = lands
+        .iter()
+        .find(|c| !crate::land::is_wait_only(c))
+        .or(lands.first())
+        .copied()?;
     if cmd.is_dry_run() {
         return None;
     }
@@ -50,16 +61,16 @@ fn examine(parsed: &Parsed) -> Option<Claim> {
     })
 }
 
-fn verify(ctx: &Context, claim: &Claim) -> Verdict {
-    let waited = ctx
+fn verify(context: &Context, claim: &Claim) -> Verdict {
+    let waited = context
         .parsed
         .judgeable()
         .find(|c| c.at == claim.span.start)
         .filter(|c| crate::land::is_wait_only(c));
     if let Some(cmd) = waited {
-        return verify_wait(ctx, cmd);
+        return verify_wait(context, cmd);
     }
-    let Some(rec) = crate::push_record::land_judged(ctx.tool_use_id) else {
+    let Some(rec) = crate::push_record::land_judged(context.tool_use_id) else {
         return Verdict::Unknown("retry-check skipped: no judgement was recorded before the land");
     };
     let found = crate::land::receipts_since(&rec.receipt_dir, &rec.branch, rec.since);
@@ -68,16 +79,21 @@ fn verify(ctx: &Context, claim: &Claim) -> Verdict {
         [] => return Verdict::Unknown("retry-check skipped: the land left no receipt"),
         _ => return Verdict::Unknown("retry-check skipped: more than one receipt for this land"),
     };
+    if let Some(broken) =
+        launched_on_another(&rec.judged, &receipt.status, receipt.judged.as_deref())
+    {
+        return broken;
+    }
     judge(&rec.judged, &receipt.status, &receipt.pushed)
 }
 
 /// A lone `land --wait <receipt>` ends a detached land: the receipt it names
 /// says what was pushed and what the land's own worker judged.
-fn verify_wait(ctx: &Context, cmd: &crate::shell::Simple) -> Verdict {
+fn verify_wait(context: &Context, cmd: &crate::shell::Simple) -> Verdict {
     let Some(path) = crate::land::wait_path(cmd) else {
         return Verdict::Unknown("retry-check skipped: the receipt path could not be read");
     };
-    let dir = match ctx.cwd_walk(cmd.at) {
+    let dir = match context.cwd_walk(cmd.at) {
         crate::rules::Walk::Walked(dir) => dir,
         crate::rules::Walk::VariableCd { .. } => {
             return Verdict::Unknown("retry-check skipped: the directory is a shell variable")
@@ -93,6 +109,25 @@ fn verify_wait(ctx: &Context, cmd: &crate::shell::Simple) -> Verdict {
         return Verdict::Unknown("retry-check skipped: the receipt records no judged commit");
     };
     judge(judged, &receipt.status, &receipt.pushed)
+}
+
+/// Pure: a detached land's worker pushes only the sha its launcher recorded,
+/// so a running receipt whose recorded sha is not the judged one will push a
+/// commit the review never saw. `None` when there is nothing to object to.
+fn launched_on_another(judged: &str, status: &str, launched: Option<&str>) -> Option<Verdict> {
+    let launched = launched.filter(|l| status == "running" && *l != judged)?;
+    let short = |s: &str| s.chars().take(7).collect::<String>();
+    Some(Verdict::Broken {
+        reason: format!(
+            "This detached land will push {}, but the guards judged {}: its worker pushes \
+             only the commit it was launched on, which no review or preview has seen.",
+            short(launched),
+            short(judged)
+        ),
+        remedy: "Stop the worker before it pushes (kill the pid in its receipt), then land the \
+                 judged commit, or review the launched one."
+            .to_string(),
+    })
 }
 
 /// Pure: the judged sha against what the receipt says was pushed.
@@ -198,18 +233,18 @@ mod tests {
     }
 
     fn waited_verdict(receipt_json: &str) -> Verdict {
-        let dir = std::env::temp_dir().join(format!(
-            "greenbelay-land-retry-{}-{}",
-            std::process::id(),
-            receipt_json.len()
-        ));
+        // One directory per call: tests run in parallel threads of one process.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("greenbelay-land-retry-{}-{n}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("1.json");
         std::fs::write(&path, receipt_json).unwrap();
         let command = format!("greengate land --wait {}", path.display());
         let parsed = lex(&command);
         let claim = examine(&parsed).expect("a lone wait is claimed");
-        let ctx = Context {
+        let context = Context {
             platform: None,
             cwd: std::path::Path::new("/"),
             parsed: &parsed,
@@ -223,9 +258,36 @@ mod tests {
             session: "",
             failed: false,
         };
-        let verdict = verify(&ctx, &claim);
+        let verdict = verify(&context, &claim);
         let _ = std::fs::remove_dir_all(&dir); // cleanup of a scratch dir: the verdict is already taken
         verdict
+    }
+
+    #[test]
+    fn a_detached_land_launched_on_an_unjudged_commit_is_broken() {
+        assert!(matches!(
+            launched_on_another("aaa", "running", Some("bbb")),
+            Some(Verdict::Broken { .. })
+        ));
+        assert!(launched_on_another("aaa", "running", Some("aaa")).is_none());
+        assert!(launched_on_another("aaa", "running", None).is_none());
+        // Only a running receipt is judged here; a final one goes to judge.
+        assert!(launched_on_another("aaa", "landed", Some("bbb")).is_none());
+    }
+
+    #[test]
+    fn a_wait_beside_a_land_does_not_take_its_place() {
+        let parsed = lex("greengate land --wait /r/x.json && amont land --json");
+        let claim = examine(&parsed).expect("the land is claimed");
+        let claimed = parsed
+            .judgeable()
+            .find(|c| c.at == claim.span.start)
+            .expect("a clause");
+        assert!(!crate::land::is_wait_only(claimed));
+        let lone = lex("greengate land --wait /r/x.json");
+        let claim = examine(&lone).expect("a lone wait is claimed");
+        let claimed = lone.judgeable().find(|c| c.at == claim.span.start).unwrap();
+        assert!(crate::land::is_wait_only(claimed));
     }
 
     #[test]
