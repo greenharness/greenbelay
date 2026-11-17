@@ -1,0 +1,18 @@
+greengate-provenance-v1
+commit 6d7c3edee58792ca5979f7b04756d993c09a80f5
+tree 33c6e72159f792506d85ef7e57ce2d172c805885
+canon fb82b849ef49d6e7597595509ede1c1d7fe958e7
+patch 68003a3ab4044cc77bc3ed92346279122b9e24d9
+plan docs/plans/2026-11-16-detached-land.md 79073a4e87ee115cec569ae3079ee1d8240ca62787e0a08c6d4632396a8d6993
+review reviewed 29cff1a38edac89e3801c9698340b3bbbb2324ca9d67b15e10e5d13d6b8dea97
+code-review backend reviewed 29cff1a38edac89e3801c9698340b3bbbb2324ca9d67b15e10e5d13d6b8dea97
+code-review lang:rust reviewed 29cff1a38edac89e3801c9698340b3bbbb2324ca9d67b15e10e5d13d6b8dea97
+preview not-required
+producer greenbelay 6.0.0
+
+-----BEGIN SSH SIGNATURE-----
+U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg7UOvJ8myo4dhW907VFty7T/bUV
+RFQerK+MWJ4bjChwcAAAAUZ3JlZW5nYXRlLXByb3ZlbmFuY2UAAAAAAAAABnNoYTUxMgAA
+AFMAAAALc3NoLWVkMjU1MTkAAABAQ9J2efNKqOv0G/f68op8H+IlV4SksDa0CzZGMcE4IB
++Yh6UU8bVHE5Zj7QIjX1XGq7V1sepmxghySOCg2ySPDw==
+-----END SSH SIGNATURE-----
