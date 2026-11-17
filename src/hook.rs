@@ -399,10 +399,28 @@ fn inbox_notice(session: &Session) -> Option<String> {
     if !matches!(session.source.as_str(), "startup" | "clear") {
         return None;
     }
+    if !session.cwd.is_dir() {
+        return None;
+    }
+    let common = greenbelay_guard::git::stdout_in(
+        &session.cwd,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )
+    .filter(|dir| !dir.is_empty())?;
+    let inbox_dir = std::path::PathBuf::from(common).join("greenharness");
+    // No inbox directory: nothing was ever appended, so no clock is read.
+    if !inbox_dir.is_dir() {
+        return None;
+    }
     let rule = &rules::clear_at_boundary::RULE;
     let stance = crate::stance::resolve(rule);
-    let today = local_date()?;
-    let found = greenbelay_process::inbox::notice(&session.cwd, &session.source, stance, &today)?;
+    let today = greenbelay_guard::civil::day_of(&local_date(&session.cwd)?)?;
+    let found = greenbelay_process::inbox::notice(
+        &inbox_dir.join("inbox.md"),
+        stance,
+        today,
+        std::time::SystemTime::now(),
+    )?;
     let outcome = match stance {
         Stance::Observe => "watched",
         Stance::Advise | Stance::Deny => "advised",
@@ -415,24 +433,32 @@ fn inbox_notice(session: &Session) -> Option<String> {
         repo: &repo_name(&session.cwd),
         mode: "-",
         excerpt: &format!(
-            "session start {}: {} orphans, {} fresh",
-            session.source, found.orphans, found.fresh
+            "session start {}: orphans {}, fresh {}, being filed {}",
+            session.source, found.orphans, found.fresh, found.being_filed
         ),
     });
     found.text
 }
 
-/// The local calendar day, `YYYY-MM-DD`, from `date +%F`.
-fn local_date() -> Option<String> {
-    let out = std::process::Command::new("date")
-        .arg("+%F")
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
+/// How long `date +%F` may take before the inbox block is given up.
+const LOCAL_DATE_DEADLINE: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// The local calendar day, `YYYY-MM-DD`, from `date +%F`: the clock the inbox
+/// writers date their lines by. A `date` that fails or hangs past
+/// [`LOCAL_DATE_DEADLINE`] is `None`, and the block is left out.
+fn local_date(dir: &std::path::Path) -> Option<String> {
+    match run_with_deadline(
+        std::ffi::OsStr::new("date"),
+        &["+%F"],
+        dir,
+        LOCAL_DATE_DEADLINE,
+    ) {
+        Ran::Exited {
+            code: Some(0),
+            stdout,
+        } => Some(stdout.trim().to_string()),
+        Ran::Exited { .. } | Ran::TimedOut | Ran::Failed(_) => None,
     }
-    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 /// The stale-checkout half of the session notice. `None` is silence —
