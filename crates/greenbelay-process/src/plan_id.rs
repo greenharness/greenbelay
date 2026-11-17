@@ -391,7 +391,7 @@ fn remember(store: &Path, body_sha: &str, id: &PlanId) {
     let dir = store.join("ids");
     if crate::plan_review::private_dir(&dir).is_none() {
         eprintln!(
-            "{bin}: plan-panel: cannot create {}; rows of this plan may record no plan_id until it is writable",
+            "{bin}: cannot create {}; rows of this plan may record no plan_id until it is writable",
             dir.display()
         );
         return;
@@ -402,10 +402,32 @@ fn remember(store: &Path, body_sha: &str, id: &PlanId) {
     let file = dir.join(format!("{body_sha}.json"));
     if let Err(e) = greenbelay_guard::atomic::write_atomic(&file, &record) {
         eprintln!(
-            "{bin}: plan-panel: cannot record the plan-id of body {}: {}: {e}",
+            "{bin}: cannot record the plan-id of body {}: {}: {e}",
             &body_sha[..12.min(body_sha.len())],
             file.display()
         );
+    }
+}
+
+/// Maps the body of `text` to its live `plan-id:`, as [`ensure`] does, for a
+/// caller that only reads the plan (`plan-sha`). Nothing is written when the
+/// text has no live id; a missing store warns on stderr and is not fatal.
+pub fn remember_live(text: &str) {
+    let Some(store) = store() else {
+        if read(text).is_some() {
+            eprintln!(
+                "{}: no home directory, so the plan-id of this body is not recorded",
+                greenbelay_guard::names::BIN
+            );
+        }
+        return;
+    };
+    remember_live_in(&store, text);
+}
+
+fn remember_live_in(store: &Path, text: &str) {
+    if let Some(id) = live_in(store, text) {
+        remember(store, &crate::plan_text::body_sha(text), &id);
     }
 }
 
@@ -518,6 +540,25 @@ mod tests {
         );
         assert!(said.contains("then run: greenbelay plan-panel "), "{said}");
         assert_eq!(std::fs::read_to_string(&plan).unwrap(), edited);
+    }
+
+    #[test]
+    fn remember_live_maps_the_body_only_when_the_id_is_live() {
+        let dir = scratch("remember-live");
+        let store = dir.join("plan-review");
+        let id = generate("r");
+        let with = with_id("# A\n\n## Goal\nA.\n", &id);
+        let without = "# B\n\n## Goal\nB.\n";
+        remember_live_in(&store, without);
+        assert!(!store.join("ids").exists(), "no plan-id, no entry");
+        remember_live_in(&store, &with);
+        let file = store
+            .join("ids")
+            .join(format!("{}.json", crate::plan_text::body_sha(&with)));
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+        assert_eq!(v["plan_id"], id.as_str());
+        assert_eq!(v["schema"], ID_SCHEMA);
     }
 
     #[test]
