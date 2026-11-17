@@ -312,6 +312,13 @@ Observed before the push (2026-11-16):
   - `claude plugin list` shows `clear-relay@greenbelay` only;
   - `/usr/local/bin/greenpiste` is a regular-file copy of 6.0.0;
   - the outcomes file holds `amont-agent-review-*` and `greenbelay-review-*` rows, which relais reads, and 0 rows named greenpiste.
+  - the journal gained 4 rows, all written by hooks during the switch, and lost none;
+  - `greenbelay install` without `--write` reports "already current — nothing written";
+  - `greenbelay status` reads the 30-day counts, which include rows from before the switch;
+  - in this repo, with no `amont-agent` on PATH, `relais doctor` reports "✓ greenbelay required — greenbelay 6.0.0";
+  - grh `make pins-check` exits 0;
+  - this session's hooks refuse with `greenbelay/pipe-to-tail` and `greenbelay/implementation-review`, through the local copy;
+  - not yet seen: a refusal in a session started after the switch.
 - Dotfiles: dotfiles#66 merged. The templates follow the live files, and `CLAUDE.md` plus `retro-weekly.sh` were fixed: the switch broke them, since they called `amont-agent` and read `~/.claude/greenpiste`.
 - Found after the switch: three repos (this one, decisions and grh) vendored the `fredericrous/amont-agent` greengate pack, which runs `amont-agent suppressions`, so their commit check could not run. They now vendor `greenharness/greenbelay` at v6.0.0.
 - Phase 5: Step 3c is recorded in the decisions gate-guardrails map.
