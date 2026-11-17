@@ -110,8 +110,9 @@ fn decide(run: Run, timeout_ms: u64, probe: impl FnOnce() -> Option<Version>) ->
 }
 
 /// `program` as `PATH` resolves it, canonical, with its modification time in
-/// seconds: `None` when it is not found. Like the shell, it skips empty or
-/// relative entries and files without an execute bit.
+/// seconds: `None` when it is not found. It skips files without an execute
+/// bit, as the shell does, and, unlike the shell, empty or relative entries:
+/// a cache key must not depend on the hook's working directory.
 fn binary_identity(program: &str) -> Option<String> {
     let path = std::env::var_os("PATH")?;
     let found = std::env::split_paths(&path)
