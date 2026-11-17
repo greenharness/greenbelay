@@ -1,5 +1,15 @@
 # Changelog
 
+## v6.3.1
+
+greenbelay 6.3.1 records a plan id for every reviewed body.
+
+- `plan-sha` (every mode, `--block` included) maps the body it reads to the
+  file's live `plan-id:`, as `plan-panel` does. A delta round whose reviewer
+  blocks were built with `plan-sha` alone, then recorded after the next edit,
+  no longer writes `plan_id: null` onto the plan path's old round chain
+  (#286). No live id, no entry; stdout and exit codes are unchanged.
+
 ## v6.3.0
 
 greenbelay 6.3.0 tells a new session about inbox lines nobody filed.

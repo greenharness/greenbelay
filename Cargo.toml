@@ -73,7 +73,7 @@ exclude = ["tools/shell-oracle"]
 # libraries by version, so a release where they differ is one nobody can
 # install.
 [workspace.package]
-version = "6.3.0"
+version = "6.3.1"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/greenharness/greenbelay"
@@ -83,8 +83,8 @@ rust-version = "1.85.0"
 # The one place the inter-crate version is written: `path` for a checkout,
 # `version` for crates.io, exact because they are released together.
 [workspace.dependencies]
-greenbelay-guard = { path = "crates/greenbelay-guard", version = "=6.3.0" }
-greenbelay-process = { path = "crates/greenbelay-process", version = "=6.3.0" }
+greenbelay-guard = { path = "crates/greenbelay-guard", version = "=6.3.1" }
+greenbelay-process = { path = "crates/greenbelay-process", version = "=6.3.1" }
 
 [workspace.lints.clippy]
 # adr-lint sync: general.linters-police-suppressions
