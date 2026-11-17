@@ -79,12 +79,17 @@ fn verify(context: &Context, claim: &Claim) -> Verdict {
         [] => return Verdict::Unknown("retry-check skipped: the land left no receipt"),
         _ => return Verdict::Unknown("retry-check skipped: more than one receipt for this land"),
     };
-    if let Some(broken) =
-        launched_on_another(&rec.judged, &receipt.status, receipt.judged.as_deref())
-    {
+    judge_receipt(&rec.judged, receipt)
+}
+
+/// Pure: the receipt this call's land left, against the sha the guards
+/// judged before it ran. A detached land still running is judged on the sha
+/// it was launched on; any other receipt on what it pushed.
+fn judge_receipt(judged: &str, receipt: &crate::land::Receipt) -> Verdict {
+    if let Some(broken) = launched_on_another(judged, &receipt.status, receipt.judged.as_deref()) {
         return broken;
     }
-    judge(&rec.judged, &receipt.status, &receipt.pushed)
+    judge(judged, &receipt.status, &receipt.pushed)
 }
 
 /// A lone `land --wait <receipt>` ends a detached land: the receipt it names
@@ -275,6 +280,24 @@ mod tests {
         assert!(launched_on_another("aaa", "running", None).is_none());
         // Only a running receipt is judged here; a final one goes to judge.
         assert!(launched_on_another("aaa", "landed", Some("bbb")).is_none());
+    }
+
+    #[test]
+    fn a_running_receipt_is_judged_on_the_sha_it_was_launched_on() {
+        let running = |launched: &str| {
+            crate::land::read_receipt(&format!(
+                r#"{{"started":5,"branch":"feat","pushed":"","status":"running","judged":"{launched}"}}"#
+            ))
+            .expect("a running receipt reads")
+        };
+        assert!(matches!(
+            judge_receipt("aaa", &running("bbb")),
+            Verdict::Broken { .. }
+        ));
+        assert!(matches!(
+            judge_receipt("aaa", &running("aaa")),
+            Verdict::Unknown("retry-check deferred: detached land still running")
+        ));
     }
 
     #[test]

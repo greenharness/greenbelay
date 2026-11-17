@@ -110,12 +110,14 @@ fn decide(run: Run, timeout_ms: u64, probe: impl FnOnce() -> Option<Version>) ->
 }
 
 /// `program` as `PATH` resolves it, canonical, with its modification time in
-/// seconds: `None` when it is not found.
+/// seconds: `None` when it is not found. Like the shell, it skips empty or
+/// relative entries and files without an execute bit.
 fn binary_identity(program: &str) -> Option<String> {
     let path = std::env::var_os("PATH")?;
     let found = std::env::split_paths(&path)
+        .filter(|dir| dir.is_absolute())
         .map(|dir| dir.join(program))
-        .find(|candidate| candidate.is_file())?;
+        .find(|candidate| is_executable(candidate))?;
     let canonical = std::fs::canonicalize(&found).ok()?;
     let modified = std::fs::metadata(&canonical)
         .and_then(|m| m.modified())
@@ -124,6 +126,17 @@ fn binary_identity(program: &str) -> Option<String> {
         .ok()?
         .as_secs();
     Some(format!("{}@{modified}", canonical.display()))
+}
+
+#[cfg(unix)]
+fn is_executable(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn is_executable(path: &std::path::Path) -> bool {
+    path.is_file()
 }
 
 /// The version of `program` on `PATH` when it has `land --detach`, remembered
@@ -281,6 +294,23 @@ mod tests {
             confirmed_through_context(Run::Foreground, Some(120_000), &never),
             Confirmed::No(_)
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_an_executable_file_is_a_gate() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir =
+            std::env::temp_dir().join(format!("greenbelay-land-detached-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let gate = dir.join("greengate");
+        std::fs::write(&gate, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&gate, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(!is_executable(&gate));
+        std::fs::set_permissions(&gate, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(is_executable(&gate));
+        assert!(!is_executable(&dir));
+        let _ = std::fs::remove_dir_all(&dir); // cleanup of a scratch dir: the asserts are taken
     }
 
     #[test]
