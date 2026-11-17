@@ -125,7 +125,7 @@ commit before it exists, by the same author. Neither needs the other at run
 time; the one shared code is the quiet-run entry, linked from amont's
 published `amont-quiet` crate.
 
-[attest](https://github.com/fredericrous/attest) — the CI end of the same
+[greensummit](https://github.com/greenharness/greensummit) — the CI end of the same
 story: CI skips the gates a signed pre-push note says really ran. All three
 share one conviction: trust what was verified, never what was reported.
 

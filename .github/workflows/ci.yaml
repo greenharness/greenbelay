@@ -201,7 +201,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: attest
-        uses: fredericrous/attest@v1
+        uses: greenharness/greensummit@9a54c1db68fc641e123f91fbb98a715bba5474ab # v2.0.0
       - uses: actions/cache@v4
         with:
           path: |

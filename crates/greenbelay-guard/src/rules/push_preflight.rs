@@ -30,7 +30,7 @@
 //! guards (an amont shim in `hooks/pre-push`), amont would actually run a
 //! test gate on this push (`amont list --json --stage pre-push`), and `HEAD`'s
 //! tree carries no push stamp yet. A `--dry-run` sends nothing. A push that
-//! only carries a notes ref is amont's own attestation push. A push that
+//! only carries a notes ref is greengate's own notes push. A push that
 //! already skips its hooks is `no-verify`'s business, not this rule's. And a
 //! push of `main` or `master`, or of tags, is not judged: amont's
 //! branch-protect refuses the former before any gate runs, and a tag carries
@@ -96,9 +96,9 @@ pub(crate) fn pushes_only_bare_tags(cmd: &Simple) -> bool {
     refspecs.peek().is_some() && refspecs.all(|w| is_bare_tag_name(&w.text))
 }
 
-/// A refspec this rule leaves alone: a notes push (amont's own, under either
-/// the `amont-*` or the `greengate-*` names), a tag, the default branch, or a
-/// deletion.
+/// A refspec this rule leaves alone: a notes push (greengate's own, of any
+/// `refs/notes/` ref: greensummit attestations, provenance, stamps), a tag,
+/// the default branch, or a deletion.
 fn not_a_branch_push(refspec: &str) -> bool {
     let dst = refspec.rsplit(':').next().unwrap_or(refspec);
     refspec.starts_with("refs/notes/")
@@ -260,20 +260,14 @@ mod tests {
     }
 
     #[test]
-    fn amonts_own_notes_push_is_not_judged() {
-        assert!(!fires(
-            "git push origin refs/notes/amont-attest:refs/notes/amont-attest"
-        ));
-    }
-
-    #[test]
     fn greengates_own_notes_push_is_not_judged() {
         assert!(!fires(
-            "git push origin refs/notes/greengate-attest:refs/notes/greengate-attest"
+            "git push origin refs/notes/greensummit:refs/notes/greensummit"
         ));
+        assert!(!fires("git push origin refs/notes/greensummit-inputs"));
         assert!(!fires("git push origin refs/notes/greengate-provenance"));
-        // Any notes refspec in the push leaves it alone, as for amont's.
-        assert!(!fires("git push origin feat/x refs/notes/greengate-attest"));
+        // Any notes refspec in the push leaves it alone.
+        assert!(!fires("git push origin feat/x refs/notes/greensummit"));
     }
 
     fn repo_with_stamps(stamps: &[(&str, &str)]) -> std::path::PathBuf {

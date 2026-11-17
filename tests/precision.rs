@@ -321,7 +321,7 @@ fn the_smaller_rules_catch_their_own_shapes() {
     for negative in [
         "git push --dry-run origin main",
         "git push --no-verify origin feat/y",
-        "git push origin refs/notes/amont-attest:refs/notes/amont-attest",
+        "git push origin refs/notes/greensummit:refs/notes/greensummit",
     ] {
         assert!(
             !matches_shape(negative, "push-preflight"),

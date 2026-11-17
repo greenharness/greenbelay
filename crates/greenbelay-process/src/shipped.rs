@@ -11,7 +11,7 @@ use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
 use greenbelay_guard::git;
-use greenbelay_guard::notes_names::{NoteNames, NAMES};
+use greenbelay_guard::notes_names::{NoteNames, ATTEST_HEADER, ATTEST_REF, NAMES};
 
 const SIG_END: &str = "-----END SSH SIGNATURE-----";
 const FETCH_BUDGET: Duration = Duration::from_secs(60);
@@ -73,7 +73,7 @@ impl Block {
         self.payload.lines().next() == Some(self.names.provenance_header)
     }
     fn is_attest(&self) -> bool {
-        self.payload.lines().next() == Some(self.names.attest_header)
+        self.payload.lines().next() == Some(ATTEST_HEADER)
     }
 }
 
@@ -185,13 +185,14 @@ fn gh_head(slug: &str, pr: u64) -> Option<String> {
     v.get("headRefOid")?.as_str().map(str::to_string)
 }
 
-/// The notes refs `shipped` reads, under either name set: provenance and
-/// attest only. A gate stamp is never fetched, so origin cannot overwrite a
-/// local stamp the push preflight reads.
+/// The notes refs `shipped` reads: provenance under either name set, and
+/// greensummit's one attestation ref. A gate stamp is never fetched, so
+/// origin cannot overwrite a local stamp the push preflight reads.
 fn read_refs() -> Vec<&'static str> {
     NAMES
         .iter()
-        .flat_map(|names| [names.provenance_ref, names.attest_ref])
+        .map(|names| names.provenance_ref)
+        .chain([ATTEST_REF])
         .collect()
 }
 
@@ -530,15 +531,19 @@ fn describe(dir: &Path, found: &Found, plan_file: &str) -> Prov {
     }
 }
 
+/// The gates of the first block in greensummit's attestation ref; a note
+/// under an old name, or with an old header, is not read (ADR-0073).
 fn gates_of(dir: &Path, object: &str) -> Vec<String> {
-    NAMES
-        .into_iter()
-        .find_map(|names| {
-            let text = notes_show(dir, names.attest_ref, object)?;
-            let blocks = blocks(&text, names);
-            let gates = blocks.first().filter(|b| b.is_attest())?.field("gates")?;
-            Some(gates.split_whitespace().map(str::to_string).collect())
-        })
+    let Some(text) = notes_show(dir, ATTEST_REF, object) else {
+        return Vec::new();
+    };
+    // A block's name set only matters for provenance; any set will do here.
+    let blocks = blocks(&text, NAMES[0]);
+    blocks
+        .first()
+        .filter(|b| b.is_attest())
+        .and_then(|b| b.field("gates"))
+        .map(|gates| gates.split_whitespace().map(str::to_string).collect())
         .unwrap_or_default()
 }
 
@@ -931,39 +936,38 @@ mod tests {
     }
 
     #[test]
-    fn gates_are_read_under_either_name_green_first() {
+    fn gates_are_read_only_under_greensummit() {
         let (dir, sha) = repo("gates");
         assert!(gates_of(&dir, &sha).is_empty());
+        // Notes under the pre-greensummit names are not read (ADR-0073).
         note(
             &dir,
             "amont-attest",
             &sha,
             "amont-attest-v2\ngates test lint\n",
         );
-        assert_eq!(gates_of(&dir, &sha), ["test", "lint"]);
         note(
             &dir,
             "greengate-attest",
             &sha,
             "greengate-attest-v2\ngates test\n",
         );
-        assert_eq!(gates_of(&dir, &sha), ["test"]);
-        // A green ref carrying the old header reads as absent: legacy answers.
+        assert!(gates_of(&dir, &sha).is_empty());
+        // The greensummit ref carrying an old header reads as absent.
         note(
             &dir,
-            "greengate-attest",
-            &sha,
-            "amont-attest-v2\ngates other\n",
-        );
-        assert_eq!(gates_of(&dir, &sha), ["test", "lint"]);
-        // Mismatched under legacy too: nothing.
-        note(
-            &dir,
-            "amont-attest",
+            "greensummit",
             &sha,
             "greengate-attest-v2\ngates other\n",
         );
         assert!(gates_of(&dir, &sha).is_empty());
+        note(
+            &dir,
+            "greensummit",
+            &sha,
+            "greensummit-v2\ngates test lint\n",
+        );
+        assert_eq!(gates_of(&dir, &sha), ["test", "lint"]);
     }
 
     #[test]
