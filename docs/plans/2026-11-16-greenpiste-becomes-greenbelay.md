@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 branch: feat/greenpiste-becomes-greenbelay
 repos: [amont-agent, relais, amont, grh, greenharness-skills, decisions, dotfiles]
 adrs: [ADR-0064, ADR-0068]
@@ -208,7 +208,7 @@ plans, ADR records, programme maps).
   this machine keeps a local binary copy for a day), the person's choice of
   2026-11-16. ADR-0068's old-signed-notes sunset stays bound to its key, and
   the census of 2026-12-13 for `names::old` stays.
-- [ ] Phase 1 — greenbelay 6.0.0: first rename the GitHub repo
+- [x] Phase 1 — greenbelay 6.0.0: first rename the GitHub repo
   `greenharness/greenpiste` → `greenharness/greenbelay` (`gh api -X PATCH`,
   before any reader's CI fetches the new path), then the sed and the hand
   edits in
@@ -219,7 +219,7 @@ plans, ADR records, programme maps).
   `amont-agent/Makefile`, `amont-agent/install/install.sh`,
   `amont-agent/Cargo.toml`, `amont-agent/CHANGELOG.md`; `brew pin greenpiste`
   before the release; PR, release, crates and tap published.
-- [ ] Phase 2 — readers: `relais/crates/relais/src/review_outcome.rs`,
+- [x] Phase 2 — readers: `relais/crates/relais/src/review_outcome.rs`,
   `relais/crates/relais/src/doctor/mod.rs`, `relais/crates/relais/src/cli/mod.rs`,
   `relais/crates/relais/src/tooling.rs`, `relais/crates/relais/src/verify/mod.rs`,
   `relais/README.md`, `relais/CHANGELOG.md`;
@@ -227,20 +227,20 @@ plans, ADR records, programme maps).
   `amont/crates/greenharness-quiet/src/lib.rs`,
   `amont/.github/workflows/ci.yaml`, `amont/.github/workflows/release.yaml`,
   `amont/CHANGELOG.md`; both released.
-- [ ] Phase 3 — grh and skills: `grh/catalog.toml`,
+- [x] Phase 3 — grh and skills: `grh/catalog.toml`,
   `grh/manifests/greenpiste.toml`, `grh/src/catalog.rs`, `grh/tests/cli.rs`,
   `grh/tests/no_part_names.rs`, `grh/tests/fixtures/audit/expected-new.json`,
   `grh/scripts/e2e.sh`, `grh/CHANGELOG.md`;
   `greenharness-skills/parts/workflow/skills/plan-review/SKILL.md` and the
   other `parts/` files the sed reaches; skills released, grh pins it and
   greenbelay 6.0.0, released.
-- [ ] Phase 4 — switch this machine: rehearse, then run the switch script (it
+- [x] Phase 4 — switch this machine: rehearse, then run the switch script (it
   installs greenbelay itself); then upgrade relais, greengate and grh and
   `grh install workflow`;
   `dotfiles/dot_claude/settings.json.tmpl`,
   `dotfiles/dot_claude/tools/retro-weekly/executable_retro-weekly.sh`,
   `dotfiles/private_dot_config/Brewfile` follow the live files (PR).
-- [ ] Phase 5 — record it: `decisions/docs/programmes/gate-guardrails/map.md`.
+- [x] Phase 5 — record it: `decisions/docs/programmes/gate-guardrails/map.md`.
 
 ## Verification
 
@@ -299,6 +299,25 @@ Observed before the push (2026-11-16):
 
 - Phase 0: ADR-0071 merged (decisions#213, 419c7418); `aval resolve harness.bundle-names` and `harness.renames` return ADR-0071, no contradiction.
 - Phase 1: GitHub repo renamed `greenharness/greenpiste` → `greenharness/greenbelay` (old name resolves); `git grep -i greenpiste` outside history shows only the allowlist (release.yaml's tap rename and upgrade test, the formula's caveat and history line, test fixtures); `cargo test --workspace --features test-hooks --no-fail-fast` 45 targets ok; `scripts/leak-hunt.sh` 43 ok; `python3 -m unittest discover -s scripts` 22 ok.
+
+- Phase 1: greenbelay 6.0.0 released (#276, tag v6.0.0 = 747fd78; release run success; crates greenbelay, -guard, -process 6.0.0; the tap has `Formula/greenbelay.rb` and `formula_renames.json` maps greenpiste).
+- Phase 2: relais 0.67.0 (#484/#485) and greengate 4.10.0 released, each release run success.
+- Phase 3: skills 0.12.0 and grh 0.8.0 released; `grh status` lists greenbelay ✓.
+- Phase 4 (2026-11-17): the switch script was rehearsed on a copy, with a forced stop and a resume, and every check passed. It then ran here, steps 0–7 ok, rc=0. Checks after the switch:
+  - `~/.claude/greenpiste`, `~/.local/state/greenpiste` and `~/.claude/greenbelay/greenpiste` are absent;
+  - settings.json names no greenpiste, and all 17 hooks run `/usr/local/bin/greenbelay`;
+  - no `greenpiste.*` git key is left, and there are 25 `greenbelay` sections;
+  - the journal went from 1426 to 1430 rows, and the last row from before the switch is present;
+  - doctor is green (migration: nothing left);
+  - `claude plugin list` shows `clear-relay@greenbelay` only;
+  - `/usr/local/bin/greenpiste` is a regular-file copy of 6.0.0;
+  - the outcomes file holds `amont-agent-review-*` and `greenbelay-review-*` rows, which relais reads, and 0 rows named greenpiste.
+- Dotfiles: dotfiles#66 merged. The templates follow the live files, and `CLAUDE.md` plus `retro-weekly.sh` were fixed: the switch broke them, since they called `amont-agent` and read `~/.claude/greenpiste`.
+- Found after the switch: three repos (this one, decisions and grh) vendored the `fredericrous/amont-agent` greengate pack, which runs `amont-agent suppressions`, so their commit check could not run. They now vendor `greenharness/greenbelay` at v6.0.0.
+- Phase 5: Step 3c is recorded in the decisions gate-guardrails map.
+- Open, dated in the person's notes:
+  - remove the `/usr/local/bin/greenpiste` copy once no `claude` process older than the switch remains, then check that `~/.local/state/greenpiste` stays absent;
+  - the 7-day measure of judged Bash calls per day against greenpiste's 7-day median, due 2026-11-24.
 
 ## Decision log
 
