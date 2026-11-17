@@ -642,6 +642,7 @@ fn the_continue_asks_for_the_line_the_relay_reads() {
         reason.contains("worktree-task skill's Handoff section"),
         "{reason}"
     );
+    assert!(reason.contains("Without that skill"), "{reason}");
 }
 
 #[test]
@@ -656,6 +657,7 @@ fn the_rule_ships_at_advise() {
             .note()
             .is_some_and(|note| note.contains("hand off now")
                 && note.contains("Handoff section")
+                && note.contains("Without that skill")
                 && note.contains("safe to /clear; next:")),
         "{}",
         reply.stdout

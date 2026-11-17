@@ -1209,7 +1209,7 @@ fn judge_boundary(
             // the note names that step; the line it quotes still works with
             // no handoff skill installed.
             let remedy = format!(
-                "The agent hands off by itself at a boundary (the worktree-task skill's Handoff section) and ends with the line \"{MARKER}; next: `<the exact first prompt>`\"; this turn did not. To clear and carry on, reply: hand off now. The clear-relay plugin then clears and submits that prompt. Or /clear yourself."
+                "The agent hands off by itself at a boundary, as the worktree-task skill's Handoff section says. Without that skill, the handoff is complete when the plan or ticket states the next action. Either way, the turn ends with the line \"{MARKER}; next: `<the exact first prompt>`\". This turn ended without that line. To clear and carry on, reply: hand off now. The clear-relay plugin then clears and submits that prompt. Or /clear yourself."
             );
             Some(Decision::UserNote(decision::phrase(
                 RULE.id, &fact, &remedy,
