@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 const BIN: &str = env!("CARGO_BIN_EXE_greenbelay");
 const PROV: &str = "refs/notes/amont-provenance";
-const ATTEST: &str = "refs/notes/amont-attest";
+const ATTEST: &str = "refs/notes/greensummit";
 
 fn run(dir: &Path, prog: &str, args: &[&str]) -> String {
     let mut command = if prog == BIN {
@@ -229,7 +229,7 @@ fn squash_with_pr_number_and_tag_is_verified_by_tree() {
     let sha = w.body_sha(2);
     let signed = w.sign(&w.record(&head, &sha, None), "key");
     w.note(PROV, &tree, &signed);
-    w.note(ATTEST, &tree, "amont-attest-v2\ngates cargo-test clippy\n");
+    w.note(ATTEST, &tree, "greensummit-v2\ngates cargo-test clippy\n");
     let (out, err, code) = w.shipped(&[]);
     let out = out.lines().next().unwrap_or("").to_string();
     assert_eq!(code, 0, "{err}");
@@ -262,11 +262,7 @@ fn a_squash_with_only_green_notes_is_verified_under_the_green_namespace() {
     );
     let signed = world.sign_in(&record, "key", "greengate-provenance");
     world.note("refs/notes/greengate-provenance", &tree, &signed);
-    world.note(
-        "refs/notes/greengate-attest",
-        &tree,
-        "greengate-attest-v2\ngates cargo-test\n",
-    );
+    world.note(ATTEST, &tree, "greensummit-v2\ngates cargo-test\n");
     let (out, err, code) = world.shipped(&[]);
     let out = out.lines().next().unwrap_or("").to_string();
     assert_eq!(code, 0, "{err}");

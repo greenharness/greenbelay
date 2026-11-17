@@ -15,6 +15,13 @@ greenbelay 6.1.0 reads greengate's detached land (greengate 4.9.0 or later).
   `amont land` with a timeout of 540 s or more, on greengate 4.9.0 or later,
   is advised to run with `--detach` and follow `greengate land --wait` under
   Monitor.
+- **Attestations are read under greensummit's names only** (ADR-0073):
+  `shipped` reads the `gates` line from `refs/notes/greensummit`, header
+  `greensummit-v2`, and no longer from `refs/notes/greengate-attest` or
+  `refs/notes/amont-attest`. Provenance records and gate stamps keep their
+  names. Install with greengate 4.11.0 or later, which writes them.
+- CI verifies with the greensummit Action (`greenharness/greensummit`
+  v2.0.0), and `.github/allowed_signers` names the `greensummit` namespace.
 
 ## v6.0.0
 

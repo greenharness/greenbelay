@@ -78,8 +78,10 @@ Flags on a record: `plan line does not match tree` (its `plan` body sha
 differs from the plan's body sha in the record's `tree`) and `reviewed an
 earlier body` (it differs from the body sha on `origin/main`).
 
-The `gates` line of the first block in `refs/notes/greengate-attest`, else
-`refs/notes/amont-attest`, on the same object is shown as context, unverified.
+The `gates` line of the first block in `refs/notes/greensummit`, when its
+header is `greensummit-v2`, on the same object is shown as context,
+unverified. A note under `refs/notes/greengate-attest` or
+`refs/notes/amont-attest` is not read (ADR-0073).
 
 ## Output
 
