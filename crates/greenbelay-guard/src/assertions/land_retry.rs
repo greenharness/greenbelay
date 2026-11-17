@@ -238,6 +238,10 @@ mod tests {
     }
 
     fn waited_verdict(receipt_json: &str) -> Verdict {
+        waited_verdict_as(receipt_json, "greengate land --wait 1.json")
+    }
+
+    fn waited_verdict_as(receipt_json: &str, command: &str) -> Verdict {
         // One directory per call: tests run in parallel threads of one process.
         static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let serial = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -250,7 +254,7 @@ mod tests {
         std::fs::write(&path, receipt_json).unwrap();
         // A relative path read from the call's directory: a Windows path's
         // backslashes are shell escapes, and the join is what verify_wait does.
-        let command = "greengate land --wait 1.json".to_string();
+        let command = command.to_string();
         let parsed = lex(&command);
         let claim = examine(&parsed).expect("a lone wait is claimed");
         let context = Context {
@@ -331,6 +335,11 @@ mod tests {
         assert!(matches!(
             waited_verdict(&receipt("landed", "aaa")),
             Verdict::Held
+        ));
+        // The form greengate prints, path quoted, reads the same receipt.
+        assert!(matches!(
+            waited_verdict_as(&receipt("landed", "bbb"), "greengate land --wait '1.json'"),
+            Verdict::Broken { .. }
         ));
         assert!(matches!(
             waited_verdict(&receipt("running", "aaa")),
