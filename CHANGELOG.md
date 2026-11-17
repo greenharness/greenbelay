@@ -1,5 +1,18 @@
 # Changelog
 
+## v6.3.2
+
+greenbelay 6.3.2 points the `clear-at-boundary` texts at the agent's Handoff
+step (session-boundaries t11).
+
+- At `advise`, the note says the agent hands off by itself at a boundary, as
+  the worktree-task skill's Handoff section says. Without that skill, the
+  plan or ticket states the next action. Either way the turn ends with
+  `safe to /clear; next: …`. The note then asks the person to reply "hand off
+  now", where it used to say "write the handoff" (#289).
+- At `deny`, the continuation points to that Handoff section and keeps the
+  same definition for sessions without the skill.
+
 ## v6.3.1
 
 greenbelay 6.3.1 records a plan id for every reviewed body.
