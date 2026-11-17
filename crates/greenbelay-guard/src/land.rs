@@ -43,21 +43,30 @@ pub fn is_land(cmd: &Simple) -> bool {
     cmd.program().is_some_and(crate::gate::is_gate_program) && cmd.subcommand() == Some("land")
 }
 
-/// Is this clause exactly `greengate land --wait <one plain path>` (or the
-/// `amont` spelling)? It waits on a detached land's receipt and publishes
-/// nothing, so no guard keyed on a push has anything to hold. Any other flag
-/// beside `--wait` makes it an ordinary land, which [`shape`] reads.
+/// Is this clause exactly `greengate land --wait <one plain path>` (or
+/// `--wait=<path>`, or the `amont` spelling)? It waits on a detached land's
+/// receipt and publishes nothing, so no guard keyed on a push has anything to
+/// hold. Any other flag beside `--wait` makes it an ordinary land, which
+/// [`shape`] reads.
 pub fn is_wait_only(cmd: &Simple) -> bool {
+    wait_path(cmd).is_some()
+}
+
+/// The receipt path a lone `land --wait` follows.
+pub fn wait_path(cmd: &Simple) -> Option<&str> {
     if !is_land(cmd) {
-        return false;
+        return None;
     }
     let words = &cmd.words;
-    words.len() == 4
-        && words.iter().all(|w| !w.quoted && !w.expanded)
-        && words[2].text == "--wait"
-        && plain_name(&words[3].text)
-        && cmd.redirects.is_empty()
-        && !cmd.heredoc
+    if !words.iter().all(|w| !w.quoted && !w.expanded) || !cmd.redirects.is_empty() || cmd.heredoc {
+        return None;
+    }
+    let path = match words.as_slice() {
+        [_, _, flag, path] if flag.text == "--wait" => path.text.as_str(),
+        [_, _, joined] => joined.text.strip_prefix("--wait=")?,
+        _ => return None,
+    };
+    plain_name(path).then_some(path)
 }
 
 /// The tag an `amont land --tag <name>` (or `--tag=<name>`) pushes, if it
@@ -318,10 +327,7 @@ pub struct Receipt {
     pub pushed: String,
     pub status: String,
     /// Written by a detached land (greengate 4.9.0); absent on older receipts.
-    pub remote_after: Option<String>,
-    pub exit: Option<i64>,
     pub judged: Option<String>,
-    pub worker_pid: Option<u32>,
 }
 
 /// The receipts in `dir` for `branch` that started at or after `since`
@@ -358,13 +364,7 @@ pub fn read_receipt(text: &str) -> Option<Receipt> {
         branch: s("branch")?,
         pushed: s("pushed")?,
         status: s("status")?,
-        remote_after: s("remote_after"),
-        exit: v.get("exit").and_then(|x| x.as_i64()),
         judged: s("judged"),
-        worker_pid: v
-            .get("worker_pid")
-            .and_then(|x| x.as_u64())
-            .and_then(|pid| u32::try_from(pid).ok()),
     })
 }
 
@@ -495,6 +495,7 @@ mod tests {
         };
         assert!(lone("greengate land --wait /r/.git/greengate/land/1.json"));
         assert!(lone("amont land --wait /r/receipt.json"));
+        assert!(lone("greengate land --wait=/r/receipt.json"));
         for cmd in [
             "greengate land --wait /r/x --force",
             "greengate land --wait /r/x --json",
@@ -503,6 +504,8 @@ mod tests {
             "greengate land --wait --json",
             "greengate land --wait $RECEIPT",
             "greengate land --wait /a /b",
+            "greengate land --wait= --json",
+            "greengate land --wait=$RECEIPT",
         ] {
             assert!(!lone(cmd), "{cmd}");
             assert!(read(cmd, false).is_err(), "{cmd} must be refused by shape");
@@ -510,17 +513,14 @@ mod tests {
     }
 
     #[test]
-    fn a_detached_receipt_keeps_its_extra_fields_and_tolerates_unknown_ones() {
+    fn a_detached_receipt_keeps_its_judged_sha_and_tolerates_unknown_fields() {
         let text = r#"{"started":5,"branch":"feat","pushed":"abc","status":"running","remote_after":"def","exit":0,"judged":"abc","worker_pid":4242,"future":[1]}"#;
-        let r = read_receipt(text).unwrap();
-        assert_eq!(r.status, "running");
-        assert_eq!(r.remote_after.as_deref(), Some("def"));
-        assert_eq!(r.exit, Some(0));
-        assert_eq!(r.judged.as_deref(), Some("abc"));
-        assert_eq!(r.worker_pid, Some(4242));
+        let receipt = read_receipt(text).unwrap();
+        assert_eq!(receipt.status, "running");
+        assert_eq!(receipt.judged.as_deref(), Some("abc"));
         let old =
             read_receipt(r#"{"started":5,"branch":"b","pushed":"p","status":"landed"}"#).unwrap();
-        assert_eq!(old.worker_pid, None);
+        assert_eq!(old.judged, None);
         assert!(read_receipt(r#"{"started":5,"branch":"b","status":"landed"}"#).is_none());
     }
 

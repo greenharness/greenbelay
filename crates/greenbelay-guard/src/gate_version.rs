@@ -53,10 +53,10 @@ pub fn parse_version(text: &str) -> Option<Version> {
     })
 }
 
-/// Pure: a version that was read, and is at least `minimum`. An unread
-/// version is never at least anything.
-pub fn at_least(found: Option<Version>, minimum: Version) -> bool {
-    found.is_some_and(|version| version >= minimum)
+/// Pure: whether `found` is at least `minimum`. A caller whose version could
+/// not be read decides what that means before it asks.
+pub fn at_least(found: Version, minimum: Version) -> bool {
+    found >= minimum
 }
 
 #[cfg(test)]
@@ -73,12 +73,11 @@ mod tests {
 
     #[test]
     fn at_least_compares_numerically_not_textually() {
-        assert!(at_least(Some((4, 9, 0)), (4, 9, 0)));
-        assert!(at_least(Some((4, 10, 0)), (4, 9, 0)));
-        assert!(at_least(Some((5, 0, 0)), (4, 9, 3)));
-        assert!(!at_least(Some((4, 8, 9)), (4, 9, 0)));
-        assert!(!at_least(Some((3, 99, 99)), (4, 0, 0)));
-        assert!(!at_least(None, (0, 0, 0)));
+        assert!(at_least((4, 9, 0), (4, 9, 0)));
+        assert!(at_least((4, 10, 0), (4, 9, 0)));
+        assert!(at_least((5, 0, 0), (4, 9, 3)));
+        assert!(!at_least((4, 8, 9), (4, 9, 0)));
+        assert!(!at_least((3, 99, 99), (4, 0, 0)));
     }
 
     #[test]

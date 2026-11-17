@@ -12,7 +12,7 @@
 
 use crate::gate_version::{self, Version};
 use crate::rules::{Confirmed, Context, Evidence, Examine, Finding, Rule, Stance, Trend};
-use crate::shell::{Parsed, Simple};
+use crate::shell::{Connector, Parsed, Simple};
 
 pub const RULE: Rule = Rule {
     id: "land-detached",
@@ -57,7 +57,19 @@ fn examine(parsed: &Parsed) -> Option<Finding> {
         .position(|w| !w.quoted && w.text == "land")?;
     let mut detached = vec![program, "land", "--detach"];
     detached.extend(cmd.words[land_at + 1..].iter().map(|w| w.raw.as_str()));
-    let detached = detached.join(" ");
+    let mut detached = detached.join(" ");
+    // The land's own `cd <dir> &&` stays in front: the worker must run in the
+    // same directory.
+    let clauses = parsed.clauses();
+    if let Some(cd) = clauses
+        .iter()
+        .zip(clauses.iter().skip(1))
+        .find_map(|(before, after)| (after.at == cmd.at).then_some(before))
+        .filter(|before| before.next == Some(Connector::AndAnd) && before.program() == Some("cd"))
+    {
+        let words: Vec<&str> = cd.words.iter().map(|w| w.raw.as_str()).collect();
+        detached = format!("{} && {detached}", words.join(" "));
+    }
     Some(Finding {
         reason: "a land runs the pre-push gate inside its push, and the Bash tool kills a \
                  foreground call at its timeout and reports only the kill: a land cut off \
@@ -79,37 +91,67 @@ enum Run {
     Background,
 }
 
-/// Pure: speaks only for a foreground call near the cap, on a gate that has
-/// `--detach`.
-fn decide(run: Run, timeout_ms: u64, gate: Option<Version>) -> Confirmed {
+/// Speaks only for a foreground call near the cap, on a gate that has
+/// `--detach`. `probe` reads the gate's version and is called only once the
+/// background and timeout checks pass.
+fn decide(run: Run, timeout_ms: u64, probe: impl FnOnce() -> Option<Version>) -> Confirmed {
     if let Run::Background = run {
         return Confirmed::No("the call already runs in the background");
     }
     if timeout_ms < NEAR_THE_CAP_MS {
         return Confirmed::No("the call's timeout is far from the tool's cap");
     }
-    if !gate_version::at_least(gate, FIRST_VERSION_WITH_DETACH) {
-        return Confirmed::No("the gate on PATH is missing, unanswering or older than 4.9.0");
+    match probe() {
+        Some(version) if gate_version::at_least(version, FIRST_VERSION_WITH_DETACH) => {
+            Confirmed::Yes
+        }
+        _ => Confirmed::No("the gate on PATH is missing, unanswering or older than 4.9.0"),
     }
-    Confirmed::Yes
 }
 
-fn confirm(context: &Context, _finding: &Finding) -> Confirmed {
+/// The version of `program` on `PATH` when it has `land --detach`, remembered
+/// on the session's record per program so the next hook process does not ask.
+/// Only a version that was read is remembered: a missing or slow gate is
+/// asked again.
+fn gate_has_detach(session: &str, program: &str) -> Option<Version> {
+    let capable = format!("land-detached {program}-has-detach");
+    let incapable = format!("land-detached {program}-lacks-detach");
+    if crate::lsp::was_told(session, &capable) {
+        return Some(FIRST_VERSION_WITH_DETACH);
+    }
+    if crate::lsp::was_told(session, &incapable) {
+        return None;
+    }
+    let version = gate_version::probe(program)?;
+    let key = if gate_version::at_least(version, FIRST_VERSION_WITH_DETACH) {
+        &capable
+    } else {
+        &incapable
+    };
+    let _ = crate::lsp::told(session, key); // unrecorded: the next hook process asks again
+    Some(version)
+}
+
+fn confirm(context: &Context, finding: &Finding) -> Confirmed {
+    confirm_with(context, finding, &|program| {
+        gate_has_detach(context.session, program)
+    })
+}
+
+fn confirm_with(
+    context: &Context,
+    _finding: &Finding,
+    probe: &dyn Fn(&str) -> Option<Version>,
+) -> Confirmed {
     let Some(program) = foreground_land(context.parsed).and_then(Simple::program) else {
         return Confirmed::No("the command no longer matches");
-    };
-    // The probe is the costly step: ask it only when the rest holds.
-    let probed = if context.background || context.timeout_ms() < NEAR_THE_CAP_MS {
-        None
-    } else {
-        gate_version::probe(program)
     };
     let run = if context.background {
         Run::Background
     } else {
         Run::Foreground
     };
-    decide(run, context.timeout_ms(), probed)
+    decide(run, context.timeout_ms(), || probe(program))
 }
 
 #[cfg(test)]
@@ -141,7 +183,7 @@ mod tests {
         let finding = examine(&lex("cd x && greengate land --json --force")).unwrap();
         assert!(finding
             .remedy
-            .contains("`greengate land --detach --json --force`"));
+            .contains("`cd x && greengate land --detach --json --force`"));
         assert!(finding.remedy.contains("greengate land --wait"));
         assert!(finding.remedy.contains("Monitor"));
     }
@@ -149,11 +191,11 @@ mod tests {
     #[test]
     fn it_confirms_near_the_cap_on_a_gate_with_detach() {
         assert!(matches!(
-            decide(Run::Foreground, 600_000, Some((4, 9, 0))),
+            decide(Run::Foreground, 600_000, || Some((4, 9, 0))),
             Confirmed::Yes
         ));
         assert!(matches!(
-            decide(Run::Foreground, 600_000, Some((5, 0, 0))),
+            decide(Run::Foreground, 600_000, || Some((5, 0, 0))),
             Confirmed::Yes
         ));
     }
@@ -161,20 +203,72 @@ mod tests {
     #[test]
     fn it_stays_silent_on_a_short_timeout_an_old_gate_or_a_background_call() {
         assert!(matches!(
-            decide(Run::Foreground, 120_000, Some((4, 9, 0))),
+            decide(Run::Foreground, 120_000, || Some((4, 9, 0))),
             Confirmed::No(_)
         ));
         assert!(matches!(
-            decide(Run::Foreground, 600_000, Some((4, 8, 0))),
+            decide(Run::Foreground, 600_000, || Some((4, 8, 0))),
             Confirmed::No(_)
         ));
         assert!(matches!(
-            decide(Run::Foreground, 600_000, None),
+            decide(Run::Foreground, 600_000, || None),
             Confirmed::No(_)
         ));
         assert!(matches!(
-            decide(Run::Background, 600_000, Some((4, 9, 0))),
+            decide(Run::Background, 600_000, || Some((4, 9, 0))),
             Confirmed::No(_)
+        ));
+    }
+
+    fn confirmed_through_context(
+        background: bool,
+        timeout_ms: Option<u64>,
+        probe: &dyn Fn(&str) -> Option<Version>,
+    ) -> Confirmed {
+        let command = "greengate land --json";
+        let parsed = lex(command);
+        let finding = examine(&parsed).unwrap();
+        let ctx = Context {
+            platform: None,
+            cwd: std::path::Path::new("/"),
+            parsed: &parsed,
+            background,
+            timeout_ms,
+            tool_use_id: "",
+            transcript: None,
+            agent_transcript: None,
+            command,
+            output: None,
+            session: "",
+            failed: false,
+        };
+        confirm_with(&ctx, &finding, probe)
+    }
+
+    #[test]
+    fn a_background_call_never_reaches_the_probe() {
+        let never = |_: &str| -> Option<Version> { panic!("the probe must not run") };
+        assert!(matches!(
+            confirmed_through_context(true, Some(600_000), &never),
+            Confirmed::No(_)
+        ));
+    }
+
+    #[test]
+    fn a_short_timeout_never_reaches_the_probe() {
+        let never = |_: &str| -> Option<Version> { panic!("the probe must not run") };
+        assert!(matches!(
+            confirmed_through_context(false, Some(120_000), &never),
+            Confirmed::No(_)
+        ));
+    }
+
+    #[test]
+    fn a_foreground_call_near_the_cap_probes_the_clauses_program() {
+        let probe = |program: &str| (program == "greengate").then_some((4, 9, 0));
+        assert!(matches!(
+            confirmed_through_context(false, Some(600_000), &probe),
+            Confirmed::Yes
         ));
     }
 }

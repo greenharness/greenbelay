@@ -177,7 +177,7 @@ fn amont_has_slots(session: &str) -> bool {
     let Some(version) = crate::gate_version::probe(crate::gate::gate_binary()) else {
         return false;
     };
-    let capable = crate::gate_version::at_least(Some(version), FIRST_VERSION_WITH_SLOTS);
+    let capable = crate::gate_version::at_least(version, FIRST_VERSION_WITH_SLOTS);
     let _ = crate::lsp::told(session, if capable { CAPABLE } else { INCAPABLE }); // unrecorded: the next hook process asks again
     capable
 }
@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn the_first_slot_version_is_a_slot_version() {
-        let read = crate::gate_version::parse_version("amont 2.0.0");
+        let read = crate::gate_version::parse_version("amont 2.0.0").unwrap();
         assert!(crate::gate_version::at_least(
             read,
             FIRST_VERSION_WITH_SLOTS

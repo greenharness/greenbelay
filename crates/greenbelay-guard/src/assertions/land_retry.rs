@@ -41,7 +41,7 @@ pub const ASSERTION: Assertion = Assertion {
 
 fn examine(parsed: &Parsed) -> Option<Claim> {
     let cmd = parsed.judgeable().find(|c| crate::land::is_land(c))?;
-    if cmd.is_dry_run() || crate::land::is_wait_only(cmd) {
+    if cmd.is_dry_run() {
         return None;
     }
     Some(Claim {
@@ -50,7 +50,15 @@ fn examine(parsed: &Parsed) -> Option<Claim> {
     })
 }
 
-fn verify(ctx: &Context, _claim: &Claim) -> Verdict {
+fn verify(ctx: &Context, claim: &Claim) -> Verdict {
+    let waited = ctx
+        .parsed
+        .judgeable()
+        .find(|c| c.at == claim.span.start)
+        .filter(|c| crate::land::is_wait_only(c));
+    if let Some(cmd) = waited {
+        return verify_wait(ctx, cmd);
+    }
     let Some(rec) = crate::push_record::land_judged(ctx.tool_use_id) else {
         return Verdict::Unknown("retry-check skipped: no judgement was recorded before the land");
     };
@@ -61,6 +69,30 @@ fn verify(ctx: &Context, _claim: &Claim) -> Verdict {
         _ => return Verdict::Unknown("retry-check skipped: more than one receipt for this land"),
     };
     judge(&rec.judged, &receipt.status, &receipt.pushed)
+}
+
+/// A lone `land --wait <receipt>` ends a detached land: the receipt it names
+/// says what was pushed and what the land's own worker judged.
+fn verify_wait(ctx: &Context, cmd: &crate::shell::Simple) -> Verdict {
+    let Some(path) = crate::land::wait_path(cmd) else {
+        return Verdict::Unknown("retry-check skipped: the receipt path could not be read");
+    };
+    let dir = match ctx.cwd_walk(cmd.at) {
+        crate::rules::Walk::Walked(dir) => dir,
+        crate::rules::Walk::VariableCd { .. } => {
+            return Verdict::Unknown("retry-check skipped: the directory is a shell variable")
+        }
+    };
+    let Ok(text) = std::fs::read_to_string(dir.join(path)) else {
+        return Verdict::Unknown("retry-check skipped: the receipt could not be read");
+    };
+    let Some(receipt) = crate::land::read_receipt(&text) else {
+        return Verdict::Unknown("retry-check skipped: the receipt is not one this version reads");
+    };
+    let Some(judged) = receipt.judged.as_deref() else {
+        return Verdict::Unknown("retry-check skipped: the receipt records no judged commit");
+    };
+    judge(judged, &receipt.status, &receipt.pushed)
 }
 
 /// Pure: the judged sha against what the receipt says was pushed.
@@ -114,7 +146,7 @@ mod tests {
         assert!(examine(&lex("cd x && amont land")).is_some());
         assert!(examine(&lex("amont land --dry-run --json")).is_none());
         assert!(examine(&lex("git push origin feat")).is_none());
-        assert!(examine(&lex("greengate land --wait /r/receipt.json")).is_none());
+        assert!(examine(&lex("greengate land --wait /r/receipt.json")).is_some());
         assert!(examine(&lex("greengate land --detach --json")).is_some());
     }
 
@@ -145,12 +177,10 @@ mod tests {
 
     #[test]
     fn a_running_receipt_defers_and_a_landed_one_is_judged() {
-        match judge("aaa", "running", "bbb") {
-            Verdict::Unknown(why) => {
-                assert_eq!(why, "retry-check deferred: detached land still running")
-            }
-            _ => panic!("a running land is deferred"),
-        }
+        assert!(matches!(
+            judge("aaa", "running", "bbb"),
+            Verdict::Unknown("retry-check deferred: detached land still running")
+        ));
         assert!(matches!(
             judge("aaa", "landed", "bbb"),
             Verdict::Broken { .. }
@@ -165,5 +195,57 @@ mod tests {
                 "{status}"
             );
         }
+    }
+
+    fn waited_verdict(receipt_json: &str) -> Verdict {
+        let dir = std::env::temp_dir().join(format!(
+            "greenbelay-land-retry-{}-{}",
+            std::process::id(),
+            receipt_json.len()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("1.json");
+        std::fs::write(&path, receipt_json).unwrap();
+        let command = format!("greengate land --wait {}", path.display());
+        let parsed = lex(&command);
+        let claim = examine(&parsed).expect("a lone wait is claimed");
+        let ctx = Context {
+            platform: None,
+            cwd: std::path::Path::new("/"),
+            parsed: &parsed,
+            background: false,
+            timeout_ms: None,
+            tool_use_id: "",
+            transcript: None,
+            agent_transcript: None,
+            command: &command,
+            output: None,
+            session: "",
+            failed: false,
+        };
+        let verdict = verify(&ctx, &claim);
+        let _ = std::fs::remove_dir_all(&dir);
+        verdict
+    }
+
+    #[test]
+    fn a_waited_receipt_is_judged_by_its_own_judged_and_pushed() {
+        let receipt = |status: &str, pushed: &str| {
+            format!(
+                r#"{{"started":5,"branch":"feat","pushed":"{pushed}","status":"{status}","judged":"aaa"}}"#
+            )
+        };
+        assert!(matches!(
+            waited_verdict(&receipt("landed", "bbb")),
+            Verdict::Broken { .. }
+        ));
+        assert!(matches!(
+            waited_verdict(&receipt("landed", "aaa")),
+            Verdict::Held
+        ));
+        assert!(matches!(
+            waited_verdict(&receipt("running", "aaa")),
+            Verdict::Unknown("retry-check deferred: detached land still running")
+        ));
     }
 }
