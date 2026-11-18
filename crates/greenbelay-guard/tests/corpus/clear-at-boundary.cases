@@ -18,3 +18,49 @@ nomatch	git worktree remove ../feat-x
 nomatch	python3 ~/bin/sweep.py --prune --apply
 nomatch	git commit -m 'docs(plan): add the plan'
 nomatch	echo safe to /clear
+
+# Stop cases (t20, 2026-11-18). Each line names a fixture under
+# stop/clear-at-boundary/, exported by `explain clear-at-boundary --format
+# cases` and replayed through clear_boundary::decide at deny. The git facts
+# (repositories clean, plan phase) are frozen from the journal outcome, so
+# these cases measure the transcript and payload half of the judgement.
+# Labels judge what was visible at that Stop, not later turns (the person,
+# 2026-11-18), read against the original transcript; `early` in a fixture
+# marks an advice followed by an editing turn and is never read by the judge.
+
+# why: 180063a6@stop: greengate 4.11.0 released, worktree removed, PR merged; nothing running (early)
+match	Stop 180063a6-1794893825
+# why: 32290a5c@stop: relais 0.64.0 shipped and installed, both worktrees removed, PR merged (early)
+match	Stop 32290a5c-1794774945
+# why: 52e82064@stop: greensummit v2.0.0 released, release worktree removed, plan PR merged
+match	Stop 52e82064-1794880526
+# why: 72e46887@stop: PR merged with CI done, worktree removed; nothing else pending
+match	Stop 72e46887-1794943716
+# why: 7458c00c@stop: ticket PR merged, worktree removed, next prompt handed over
+match	Stop 7458c00c-1794961613
+# why: 960ad27d@stop: programme finished and merged, worktrees removed; nothing running (early)
+match	Stop 960ad27d-1794783012
+# why: a3171864@stop: phase PRs and plan record merged, handoff written; no task running
+match	Stop a3171864-1794929214
+# why: c2449a0f@stop: relais v0.66.1 released, jobs green, worktrees removed (early)
+match	Stop c2449a0f-1794836880
+# why: e2fb2812@stop: greengate 4.6.0 released and installed, release worktree gone
+match	Stop e2fb2812-1794806880
+# why: 32290a5c@stop: PR open, CI polled in the background, release waiting on another tag
+nomatch	Stop 32290a5c-1794907585
+# why: 72e46887@stop: a relais run for the setup fix had just started and was running
+nomatch	Stop 72e46887-1794922694
+# why: 8a2ca22e@stop: plan committed, two relais code-phase runs still running
+nomatch	Stop 8a2ca22e-1794903106
+# why: c2449a0f@stop: Phase 3 relais run in progress, agent waiting on its outcome
+nomatch	Stop c2449a0f-1794742061
+# why: e2fb2812@stop: Phase 1a routed through relais and still running
+nomatch	Stop e2fb2812-1794745202
+# why: 1dbedd97@stop: no teardown this turn; fix deployed but untested, follow-up open
+nomatch	Stop 1dbedd97-1794869349
+# reviewed nomatch (the person, 2026-11-18): dotfiles PR merged and worktree removed,
+# but the turn's last message flagged an uncommitted edit in the chezmoi source, a
+# checkout outside the repositories the rule checks. The rule advised, so a `nomatch`
+# here disagrees; it stays `?` until the dirty-tree check is widened (follow-up of
+# decisions session-boundaries t20), and clear-at-boundary stays at advise.
+?	Stop 8145b6c0-1794667260

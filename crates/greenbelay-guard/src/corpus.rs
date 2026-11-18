@@ -531,7 +531,88 @@ pub const MAX_STOP_FIXTURE_BYTES: usize = 64 * 1024;
 /// per file at `tests/corpus/stop/<rule>/<name>.json`, kept by hand like
 /// [`EMBEDDED`]. `every_stop_fixture_on_disk_has_an_entry` refuses a file
 /// without an entry or an entry without a file.
-const EMBEDDED_STOP: &[(&str, &str, &str)] = &[];
+const EMBEDDED_STOP: &[(&str, &str, &str)] = &[
+    (
+        "clear-at-boundary",
+        "180063a6-1794893825",
+        include_str!("../tests/corpus/stop/clear-at-boundary/180063a6-1794893825.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "1dbedd97-1794869349",
+        include_str!("../tests/corpus/stop/clear-at-boundary/1dbedd97-1794869349.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "32290a5c-1794774945",
+        include_str!("../tests/corpus/stop/clear-at-boundary/32290a5c-1794774945.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "32290a5c-1794907585",
+        include_str!("../tests/corpus/stop/clear-at-boundary/32290a5c-1794907585.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "52e82064-1794880526",
+        include_str!("../tests/corpus/stop/clear-at-boundary/52e82064-1794880526.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "72e46887-1794922694",
+        include_str!("../tests/corpus/stop/clear-at-boundary/72e46887-1794922694.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "72e46887-1794943716",
+        include_str!("../tests/corpus/stop/clear-at-boundary/72e46887-1794943716.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "7458c00c-1794961613",
+        include_str!("../tests/corpus/stop/clear-at-boundary/7458c00c-1794961613.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "8145b6c0-1794667260",
+        include_str!("../tests/corpus/stop/clear-at-boundary/8145b6c0-1794667260.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "8a2ca22e-1794903106",
+        include_str!("../tests/corpus/stop/clear-at-boundary/8a2ca22e-1794903106.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "960ad27d-1794783012",
+        include_str!("../tests/corpus/stop/clear-at-boundary/960ad27d-1794783012.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "a3171864-1794929214",
+        include_str!("../tests/corpus/stop/clear-at-boundary/a3171864-1794929214.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "c2449a0f-1794742061",
+        include_str!("../tests/corpus/stop/clear-at-boundary/c2449a0f-1794742061.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "c2449a0f-1794836880",
+        include_str!("../tests/corpus/stop/clear-at-boundary/c2449a0f-1794836880.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "e2fb2812-1794745202",
+        include_str!("../tests/corpus/stop/clear-at-boundary/e2fb2812-1794745202.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "e2fb2812-1794806880",
+        include_str!("../tests/corpus/stop/clear-at-boundary/e2fb2812-1794806880.json"),
+    ),
+];
 
 fn embedded_stop(rule: &str, name: &str) -> Option<&'static str> {
     EMBEDDED_STOP

@@ -280,7 +280,7 @@ in t20's Resolution.
   labelling move into
   `crates/greenbelay-guard/tests/corpus/stop/clear-at-boundary/` and the
   `EMBEDDED_STOP` table, with the total size stated in the PR.
-- [ ] Phase 4: labelling (by the agent, per the person's label rule) in
+- [x] Phase 4: labelling (by the agent, per the person's label rule) in
   `crates/greenbelay-guard/tests/corpus/clear-at-boundary.cases`, with
   `corpus check` green. Then greenbelay's release with the tag-release
   skill (`CHANGELOG.md`), brew upgrade, and `greenbelay graduate
@@ -302,8 +302,51 @@ in t20's Resolution.
   stops and the disagreement goes to the person, with options (narrow the
   rule in a new plan, relabel, or stay at `advise`). `--force` is never
   used.
+- 2026-11-18: one labelled advice disagreed (8145b6c0). The hook advised
+  after a dotfiles PR merged and its worktree was removed. The turn's last
+  message flagged an uncommitted `dot_zshrc` edit in the chezmoi source, a
+  checkout outside the repositories the rule checks. The person chose:
+  label it `nomatch` and keep `clear-at-boundary` at `advise`. They chose
+  this over labelling it `match` as out of scope, and over graduating on
+  the rest. The corpus test requires every label to agree, so the case is
+  committed as `?` under a comment that holds its reviewed label. It
+  becomes `nomatch` when the follow-up widens the dirty-tree check.
+  `graduate` is not run on the live machine.
+- 2026-11-18: Phases 2 and 3 were salvaged from relais runs that ran out
+  of their wall-clock budget. Each verification took about 17 minutes.
+  Phase 2's candidate was cut off mid-suite with everything green. Phase
+  3's candidate failed on one clippy `type_complexity` error, fixed with a
+  `PlacedKey` alias. Both were committed through the full gate.
+- 2026-11-18: the carried review findings were folded into the Phase 3
+  contract:
+  - exit 0 on a re-run;
+  - `countable: false` fixtures, printed as `# excluded:`;
+  - the stderr summary before the case lines;
+  - `read_tail_until_at`;
+  - a replay at `deny` compared with `advised`/`denied`.
+- 2026-11-18: 161 of the 435 exported fixtures are over 64 KiB, so only
+  fixtures at or under the cap were candidates for labelling. Two picked
+  cases had no Stop uuid (3571e691, 88dca900). They stay in the scratch
+  export, unlabelled, because their Stop cannot be located for sure.
 
 ## Verification
+
+Results (2026-11-18, worktree `feat/stop-cases`):
+
+| Check | Expected | Actual |
+|---|---|---|
+| `cargo test --workspace` and the unchanged `tests/clear_at_boundary.rs` | pass | pass at each phase commit; the gate passed 28 checks at b0c15375, e1397cd4 and 5481be6d |
+| uuid survives `redact_and_trim`; failing `persist`; `read_tail_until_at` | unit tests pass | pass (Phase 1 criteria, relais receipt) |
+| export over the journal (release build, `--out ~/.local/state/t20-stop-export`) | fixtures per outcome; 0 replay differs for `advised` | 435 written: advised 27, pending-work 217 (20 excluded: no earlier hold), pending background 173, pending relais 11, pending not-clean 7; 3 skipped (no transcript). 5 replay differs, 1 of them `advised` (ba1516c6-1794887837), listed in t20 |
+| export run twice | nothing rewritten, exit 0 | `wrote 0 … 435 already exported`, exit 0 |
+| a wrong label | `corpus check` names line, fixture, why | 8145b6c0 as `nomatch`: `…cases:66 expected nomatch — Stop 8145b6c0-1794667260 (stop/clear-at-boundary/8145b6c0-1794667260.json): rule fired at deny`, precision 90% |
+| committed corpus | agrees | 19 reviewed (10 negative), 1 unreviewed, precision 100%; `tests/corpus_stop.rs` passes |
+| installed-like `graduate`, scratch `HOME`/`GIT_CONFIG_GLOBAL`/`XDG_CONFIG_HOME` | counts embedded Stop cases; live config unchanged | `19 reviewed cases`, all ✓; the scratch `.gitconfig` took `deny`, and the live `greenbelay.*` config hash is unchanged |
+| redaction | no `/Users/`, no prose | `grep` finds none in the 16 committed fixtures; only placeholder content (`<text>`, `<task-notification>`) remains; 324 KB in all |
+| early-fire share | recorded | 13 of 27 exported advices (48%); 4 of the 9 labelled `match` |
+| live graduation | `deny` | not run: the person kept `advise` (Decision log) |
+
+Planned checks:
 
 - `cargo test --workspace` passes, and `cargo test --test
   clear_at_boundary` passes with no edits to its assertions (Phase 1
@@ -340,7 +383,13 @@ in t20's Resolution.
 
 ## Outcome
 
-- Within 7 days of the graduation, journal lines show `clear-at-boundary
+- 2026-11-18: the case form, the exporter and 16 reviewed Stop cases ship
+  in greenbelay's next release. `clear-at-boundary` stays at `advise` (the
+  person). Next: the follow-up widens the dirty-tree check to the
+  checkouts a turn touched; then 8145b6c0 is labelled `nomatch`, and the
+  graduation is asked again. The release is cut after the merge with the
+  tag-release skill.
+- (When graduated) Within 7 days of the graduation, journal lines show `clear-at-boundary
   deny denied`, and t12's handoff count (due 2026-11-24) includes the
   denied boundaries. Rollback: `greenbelay demote clear-at-boundary` if
   denied boundaries are followed by editing above the measured early-fire
