@@ -18,3 +18,17 @@ greenbelay's release.
 ## Code review
 
 - amont-agent: backend, lang:rust, unix, tui, architect
+
+## Verification
+
+- Built-binary probe at `/Users/fredericrous/Developer/Perso` (SessionStart `clear`) → expected: an amont notice under `in amont: cd …` → actual: `in amont: cd '/Users/fredericrous/Developer/Perso/amont'` + its 1-line notice, 1.06 s wall.
+- `cargo test --workspace` + clippy at each commit's gate → passed (28 checks). The integration tests cover two child inboxes, a `.git` in a parent dir (no scan), a newline name (skipped), the overflow, and a filing-only child.
+
+## Implementation review
+
+- implementation-review: approve-with-changes → approve on the Delta. Fixed: control-char names skipped, scan only when no ancestor `.git`. Pack refresh is its own commit. 62k+36k, 63+104 s.
+- backend: approve-with-changes on both rounds. Fixed: ancestor check, pure `outside_notice` with a 7-child test, singular. Deliberate: a `date` call before the child check (children exist at the root). 67k+31k.
+- lang:rust: approve-with-changes on both rounds. Fixed: `cfg(unix)` gates, `has_unfiled`, one stance/day. Deliberate: tuple → struct and the redundant text guard, left for a tidy. 56k+30k.
+- unix, tui, architect: unix and tui approve-with-changes on both rounds; architect a-w-c → approve. Deliberate: a non-UTF-8 cwd, an 80-column overflow, a silent skip of unprintable names (documented), migrate_plugin's quoter left. 54k+31k, 51k+31k, 56k+31k.
+
+Phase 2's code is done; next: greenbelay's release after the merge.
