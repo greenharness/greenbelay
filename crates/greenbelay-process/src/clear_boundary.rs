@@ -82,8 +82,22 @@ pub fn read_tail_until(
     cap: u64,
     enough: impl Fn(&[Value]) -> bool,
 ) -> std::io::Result<Tail> {
+    let size = std::fs::metadata(path)?.len();
+    read_tail_until_at(path, size, first_chunk, cap, enough)
+}
+
+/// [`read_tail_until`] over the file as it stood at byte offset `end`: the
+/// bytes after `end` are never read, so a replay sees the window a Stop
+/// saw. An `end` past the file's size is the size.
+pub fn read_tail_until_at(
+    path: &Path,
+    end: u64,
+    first_chunk: u64,
+    cap: u64,
+    enough: impl Fn(&[Value]) -> bool,
+) -> std::io::Result<Tail> {
     let mut file = std::fs::File::open(path)?;
-    let size = file.metadata()?.len();
+    let size = end.min(file.metadata()?.len());
     let mut chunk = first_chunk.clamp(1, cap.max(1));
     loop {
         let start = size.saturating_sub(chunk);
@@ -783,8 +797,8 @@ pub struct Pending {
 }
 
 /// What a session's state file holds.
-#[derive(Debug, Default, PartialEq, Eq)]
-struct State {
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct State {
     /// The opening prompt's uuid of the turn advised in, empty when the rule
     /// only observed.
     turn: String,
@@ -935,17 +949,44 @@ fn has_waiting_line(message: &str) -> bool {
         .any(|line| line.trim().starts_with("WAITING:"))
 }
 
+/// What a Stop's payload shows, as far as the judgement reads it.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct StopView {
+    pub cwd: Option<PathBuf>,
+    pub permission_mode: Option<String>,
+    pub background_busy: bool,
+    pub stop_hook_active: bool,
+    pub ends_with_question: bool,
+    pub waiting_line: bool,
+    pub marker: bool,
+}
+
+impl StopView {
+    fn of(stop: &Stop) -> Self {
+        let message = stop.last_message.as_deref();
+        Self {
+            cwd: stop.cwd.clone(),
+            permission_mode: stop.permission_mode.clone(),
+            background_busy: stop.background_busy,
+            stop_hook_active: stop.stop_hook_active,
+            ends_with_question: message.is_some_and(|text| text.trim_end().ends_with('?')),
+            waiting_line: message.is_some_and(has_waiting_line),
+            marker: message.is_some_and(|text| text.contains(MARKER)),
+        }
+    }
+
+    fn says_silence(&self) -> bool {
+        self.stop_hook_active
+            || self.permission_mode.as_deref() == Some("plan")
+            || self.ends_with_question
+            || self.waiting_line
+            || self.marker
+    }
+}
+
 /// Silence without a journal line: what the payload alone shows.
 fn payload_says_silence(stop: &Stop) -> bool {
-    if stop.stop_hook_active
-        || stop.permission_mode.as_deref() == Some("plan")
-        || !greenbelay_guard::session_state::usable_id(&stop.session)
-    {
-        return true;
-    }
-    stop.last_message.as_deref().is_some_and(|message| {
-        message.trim_end().ends_with('?') || has_waiting_line(message) || message.contains(MARKER)
-    })
+    !greenbelay_guard::session_state::usable_id(&stop.session) || StopView::of(stop).says_silence()
 }
 
 /// What the Stop shows about a boundary past [`SIZE`] tokens. `fact` gives
@@ -967,9 +1008,8 @@ pub fn on_stop(
     let Some(transcript) = stop.transcript.as_deref() else {
         return Decision::Silent;
     };
-    let pending_uuid = read_state(&stop.session)
-        .and_then(|state| state.pending)
-        .map(|pending| pending.uuid);
+    let prior = read_state(&stop.session).unwrap_or_default();
+    let pending_uuid = prior.pending.as_ref().map(|pending| pending.uuid.clone());
     let Ok(tail) = read_tail_until(transcript, TAIL_FIRST_CHUNK, TAIL_CAP, |entries| {
         context_size(entries).is_some()
             && turn_window(entries).is_some()
@@ -979,14 +1019,7 @@ pub fn on_stop(
     }) else {
         return Decision::Silent;
     };
-    let Some(size) = context_size(&tail.entries).filter(|size| *size >= SIZE) else {
-        return Decision::Silent;
-    };
-    let fact = fact();
-    if fact == PhaseFact::Working {
-        return Decision::Silent;
-    }
-    judge_boundary(stop, &tail, size, fact, deadline, stance()).unwrap_or(Decision::Silent)
+    judge_boundary(stop, &tail, prior, fact, deadline, stance)
 }
 
 /// The boundary a Stop judges: one this turn reached, or one kept pending
@@ -1043,54 +1076,166 @@ fn adds_worktree(words: &[String]) -> bool {
     })
 }
 
-/// `None` is silence, journalled or not as each check decides.
+/// The journal's excerpt limit; `journal::redact_and_trim` cuts past it.
+const EXCERPT_LIMIT: usize = 200;
+
+/// The journal excerpt of a record: `what`, then ` tail-capped` when the tail
+/// hit its cap, then ` uuid=<id>` of the tail's last entry. `what` is cut to
+/// leave room for the suffix, so `redact_and_trim` never drops the uuid.
+fn excerpt(what: &str, capped: bool, last_uuid: Option<&str>) -> String {
+    let suffix = format!(
+        "{}{}",
+        if capped { " tail-capped" } else { "" },
+        last_uuid.map_or_else(String::new, |uuid| format!(" uuid={uuid}"))
+    );
+    let room = EXCERPT_LIMIT.saturating_sub(suffix.chars().count());
+    let what: String = what.chars().take(room).collect();
+    format!("{what}{suffix}")
+}
+
+/// What [`decide`] settled: the answer and the journal records, in order, as `(outcome, what)`.
+pub(crate) struct Verdict {
+    pub decision: Decision,
+    pub records: Vec<(String, String)>,
+    /// The stance the judgement ran at, `None` when it ended before asking.
+    pub stance: Option<Stance>,
+}
+
+/// The I/O around [`decide`]: reads the state and the live git facts, writes
+/// the state file, journals the records.
 fn judge_boundary(
     stop: &Stop,
     tail: &Tail,
-    size: u64,
-    fact: PhaseFact,
+    prior: State,
+    fact: impl FnOnce() -> PhaseFact,
     deadline: Instant,
-    stance: Stance,
-) -> Option<Decision> {
-    let cwd = stop.cwd.as_deref();
-    let repo = cwd.and_then(Path::file_name).map_or_else(
-        || "-".to_string(),
-        |name| name.to_string_lossy().into_owned(),
+    stance: impl FnOnce() -> Stance,
+) -> Decision {
+    let view = StopView::of(stop);
+    let verdict = decide(
+        &view,
+        &tail.entries,
+        prior,
+        fact,
+        stance,
+        |dirs| check_repositories(view.cwd.as_deref(), dirs, deadline),
+        |state| write_state(&stop.session, state).is_ok(),
     );
-    let mode = stop.permission_mode.as_deref().unwrap_or("-");
-    let capped = if tail.capped { " tail-capped" } else { "" };
-    let record = |outcome: &str, what: &str| {
-        journal::record(&journal::Entry {
-            rule: RULE.id,
-            stance: stance.as_str(),
-            outcome,
-            session: &stop.session,
-            repo: &repo,
-            mode,
-            excerpt: &format!("{what}{capped}"),
-        });
-    };
-    let watched = |what: &str| {
-        record("watched", what);
+    if let Some(stance) = verdict.stance {
+        let repo = view.cwd.as_deref().and_then(Path::file_name).map_or_else(
+            || "-".to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        let mode = view.permission_mode.as_deref().unwrap_or("-");
+        let last_uuid = tail.entries.last().and_then(|entry| entry["uuid"].as_str());
+        for (outcome, what) in &verdict.records {
+            journal::record(&journal::Entry {
+                rule: RULE.id,
+                stance: stance.as_str(),
+                outcome,
+                session: &stop.session,
+                repo: &repo,
+                mode,
+                excerpt: &excerpt(what, tail.capped, last_uuid),
+            });
+        }
+    }
+    verdict.decision
+}
+
+/// The records and the state write of one judgement.
+struct Ledger<P: FnMut(&State) -> bool> {
+    records: Vec<(String, String)>,
+    persist: P,
+}
+
+impl<P: FnMut(&State) -> bool> Ledger<P> {
+    fn record(&mut self, outcome: &str, what: &str) {
+        self.records.push((outcome.to_string(), what.to_string()));
+    }
+
+    fn watched(&mut self, what: &str) -> Option<Decision> {
+        self.record("watched", what);
         None
-    };
-    // A state file that cannot be written loses the boundary key and the
-    // count: say so, and stay silent rather than advise without them.
-    let persist = |state: &State| -> bool {
-        let written = write_state(&stop.session, state).is_ok();
+    }
+
+    /// A state file that cannot be written loses the boundary key and the
+    /// count: say so, and let the caller stay silent rather than advise
+    /// without them.
+    fn save(&mut self, state: &State) -> bool {
+        let written = (self.persist)(state);
         if !written {
-            record("watched", "state-unwritable");
+            self.record("watched", "state-unwritable");
         }
         written
-    };
-
-    if fact == PhaseFact::TimedOut {
-        return watched("timeout");
     }
-    let Some(window) = turn_window(&tail.entries) else {
-        return watched("turn-too-long");
+}
+
+/// The judgement, free of I/O. `fact` gives the plan's state and is called
+/// only once the context is past [`SIZE`]; `repos` checks the repositories a
+/// boundary touched; `persist` writes the state and says whether it held.
+/// Every failure is silence.
+pub(crate) fn decide(
+    view: &StopView,
+    entries: &[Value],
+    prior: State,
+    fact: impl FnOnce() -> PhaseFact,
+    stance: impl FnOnce() -> Stance,
+    repos: impl FnOnce(&[PathBuf]) -> Repositories,
+    persist: impl FnMut(&State) -> bool,
+) -> Verdict {
+    let silent = Verdict {
+        decision: Decision::Silent,
+        records: Vec::new(),
+        stance: None,
     };
-    let mut state = read_state(&stop.session).unwrap_or_default();
+    if view.says_silence() {
+        return silent;
+    }
+    let Some(size) = context_size(entries).filter(|size| *size >= SIZE) else {
+        return silent;
+    };
+    let fact = fact();
+    if fact == PhaseFact::Working {
+        return silent;
+    }
+    let stance = stance();
+    let mut ledger = Ledger {
+        records: Vec::new(),
+        persist,
+    };
+    let decision = judge(
+        view,
+        entries,
+        prior,
+        (fact, stance, size),
+        repos,
+        &mut ledger,
+    );
+    Verdict {
+        decision: decision.unwrap_or(Decision::Silent),
+        records: ledger.records,
+        stance: Some(stance),
+    }
+}
+
+/// `None` is silence, journalled or not as each check decides.
+fn judge<P: FnMut(&State) -> bool>(
+    view: &StopView,
+    entries: &[Value],
+    prior: State,
+    (fact, stance, size): (PhaseFact, Stance, u64),
+    repos: impl FnOnce(&[PathBuf]) -> Repositories,
+    ledger: &mut Ledger<P>,
+) -> Option<Decision> {
+    let cwd = view.cwd.as_deref();
+    let mut state = prior;
+    if fact == PhaseFact::TimedOut {
+        return ledger.watched("timeout");
+    }
+    let Some(window) = turn_window(entries) else {
+        return ledger.watched("turn-too-long");
+    };
     let found = boundaries(&window, cwd.unwrap_or(Path::new("")));
     let own = found.last().filter(|boundary| {
         state
@@ -1113,62 +1258,65 @@ fn judge_boundary(
                 dirs,
             })
         }
-        (None, None) => return watched("no boundary"),
+        (None, None) => return ledger.watched("no boundary"),
         (None, Some(pending)) => {
-            let Some(at) = position_of(&tail.entries, &pending.uuid) else {
+            let Some(at) = position_of(entries, &pending.uuid) else {
                 state.pending = None;
-                persist(&state);
-                return watched("pending-lost");
+                ledger.save(&state);
+                return ledger.watched("pending-lost");
             };
-            let after = &tail.entries[at + 1..];
+            let after = &entries[at + 1..];
             if after.iter().any(is_person_prompt) {
                 state.pending = None;
-                persist(&state);
-                return watched("no boundary");
+                ledger.save(&state);
+                return ledger.watched("no boundary");
             }
             if work_in(after) {
-                return watched("pending-work");
+                return ledger.watched("pending-work");
             }
             Candidate::Resumed(pending)
         }
     };
-    let hold = |state: &mut State, reason: &str| -> Option<Decision> {
+    let hold = |ledger: &mut Ledger<P>, state: &mut State, reason: &str| -> Option<Decision> {
         if let Candidate::Own(boundary) = &candidate {
             state.pending = Some(boundary.clone());
-            if !persist(state) {
+            if !ledger.save(state) {
                 return None;
             }
         }
-        record("watched", &format!("pending {reason}"));
-        None
+        ledger.watched(&format!("pending {reason}"))
     };
-    if stop.background_busy {
-        return hold(&mut state, "background");
+    if view.background_busy {
+        return hold(ledger, &mut state, "background");
     }
-    let flight = relais_flight(&tail.entries);
+    let flight = relais_flight(entries);
     if let Some((id, relais_state)) = flight.waiting.first() {
-        return hold(&mut state, &format!("relais {id} {relais_state}"));
+        return hold(ledger, &mut state, &format!("relais {id} {relais_state}"));
     }
     if flight.pending > 0 {
-        return hold(&mut state, &format!("relais pending {}", flight.pending));
+        return hold(
+            ledger,
+            &mut state,
+            &format!("relais pending {}", flight.pending),
+        );
     }
     let boundary = candidate.boundary();
-    let heads = match check_repositories(cwd, &boundary.dirs, deadline) {
+    let heads = match repos(&boundary.dirs) {
         Repositories::Clean { heads } => heads,
-        Repositories::NotClean { reason, .. } => return hold(&mut state, &reason),
-        Repositories::TimedOut => return watched("timeout"),
+        Repositories::NotClean { reason, .. } => return hold(ledger, &mut state, &reason),
+        Repositories::TimedOut => return ledger.watched("timeout"),
     };
     let key = boundary_key(&boundary.command, &heads);
     let advices = state.advices;
     if state.key == key {
         if state.pending.is_some() {
             state.pending = None;
-            persist(&state);
+            ledger.save(&state);
         }
         return None;
     }
     if advices >= MAX_ADVICES_PER_SESSION {
-        return watched("cap");
+        return ledger.watched("cap");
     }
     // At `advise` a note cannot carry the plan on, and a lone plan commit's
     // next step is the plan's: `plan-phases-open` speaks instead.
@@ -1186,11 +1334,11 @@ fn judge_boundary(
         advices: advices + u32::from(counted),
         pending: None,
     };
-    if !persist(&state) {
+    if !ledger.save(&state) {
         return None;
     }
     if carried_by_plan {
-        return watched(&format!(
+        return ledger.watched(&format!(
             "{} (advise, plan-phases-open carries the plan)",
             boundary.what
         ));
@@ -1202,9 +1350,9 @@ fn judge_boundary(
         SIZE / 1000
     );
     match stance {
-        Stance::Observe => watched(&format!("{} (observe)", boundary.what)),
+        Stance::Observe => ledger.watched(&format!("{} (observe)", boundary.what)),
         Stance::Advise => {
-            record("advised", &boundary.what);
+            ledger.record("advised", &boundary.what);
             // The agent hands off unasked (worktree-task `## Handoff`), so
             // the note names that step; the line it quotes still works with
             // no handoff skill installed.
@@ -1216,7 +1364,7 @@ fn judge_boundary(
             )))
         }
         Stance::Deny => {
-            record("denied", &boundary.what);
+            ledger.record("denied", &boundary.what);
             let remedy = format!(
                 "Hand off now, as the worktree-task skill's Handoff section says. Without that skill, the handoff is complete when the plan or ticket states the next action and the turn ends with one line: \"{MARKER}; next: `<the exact first prompt>`\"."
             );
@@ -1225,6 +1373,90 @@ fn judge_boundary(
             )))
         }
     }
+}
+
+/// A fixture's JSON member, or the error naming it.
+fn member<'a>(fixture: &'a Value, path: &str) -> Result<&'a Value, String> {
+    fixture
+        .pointer(path)
+        .ok_or_else(|| format!("fixture has no {path}"))
+}
+
+fn flag(fixture: &Value, path: &str) -> Result<bool, String> {
+    member(fixture, path)?
+        .as_bool()
+        .ok_or_else(|| format!("fixture {path} is not a boolean"))
+}
+
+/// Replay a fixture (the plan's case form) through [`decide`] at `deny`, with
+/// the facts it froze and a state write that holds. `Ok(true)` when the
+/// decision is a Continue; a malformed fixture is an `Err`.
+pub fn judge_case(fixture_json: &str) -> Result<bool, String> {
+    let fixture: Value = serde_json::from_str(fixture_json)
+        .map_err(|error| format!("fixture is not JSON: {error}"))?;
+    let text = |path: &str| member(&fixture, path).map(|value| value.as_str().map(str::to_string));
+    let view = StopView {
+        cwd: text("/payload/cwd")?.map(PathBuf::from),
+        permission_mode: text("/payload/permission_mode")?,
+        background_busy: flag(&fixture, "/payload/background_busy")?,
+        stop_hook_active: flag(&fixture, "/payload/stop_hook_active")?,
+        ends_with_question: flag(&fixture, "/payload/ends_with_question")?,
+        waiting_line: flag(&fixture, "/payload/waiting_line")?,
+        marker: flag(&fixture, "/payload/marker")?,
+    };
+    let state_json = member(&fixture, "/state")?;
+    let prior = State {
+        turn: state_json["turn"].as_str().unwrap_or("").to_string(),
+        key: state_json["key"]
+            .as_str()
+            .ok_or("fixture /state/key is not a string")?
+            .to_string(),
+        advices: state_json["advices"]
+            .as_u64()
+            .and_then(|count| u32::try_from(count).ok())
+            .ok_or("fixture /state/advices is not a count")?,
+        pending: match &state_json["pending"] {
+            Value::Null => None,
+            pending => Some(parse_pending(pending).ok_or("fixture /state/pending is malformed")?),
+        },
+    };
+    let phase = match member(&fixture, "/facts/phase")?.as_str() {
+        Some("none") => PhaseFact::NoOpenPhase,
+        Some("plan_only") => PhaseFact::PlanOnly,
+        Some("working") => PhaseFact::Working,
+        Some("timed_out") => PhaseFact::TimedOut,
+        _ => return Err("fixture /facts/phase is not a known phase".to_string()),
+    };
+    let repositories = match member(&fixture, "/facts/repositories")? {
+        Value::String(word) if word == "clean" => Repositories::Clean { heads: Vec::new() },
+        Value::String(word) if word == "timed_out" => Repositories::TimedOut,
+        other => match other["not_clean"].as_str() {
+            Some(reason) => Repositories::NotClean {
+                directory: PathBuf::new(),
+                reason: reason.to_string(),
+            },
+            None => return Err("fixture /facts/repositories is not a known state".to_string()),
+        },
+    };
+    let entries = member(&fixture, "/entries")?
+        .as_array()
+        .ok_or("fixture /entries is not a list")?;
+    let verdict = decide(
+        &view,
+        entries,
+        prior,
+        || phase,
+        || Stance::Deny,
+        |_| repositories,
+        |_| true,
+    );
+    Ok(matches!(verdict.decision, Decision::Continue(_)))
+}
+
+/// The replay of a Stop case for `rule_id`; `None` for a rule this module
+/// does not judge.
+pub fn stop_judge(rule_id: &str, fixture: &str) -> Option<Result<bool, String>> {
+    (rule_id == RULE.id).then(|| judge_case(fixture))
 }
 
 #[cfg(test)]
@@ -1711,5 +1943,153 @@ mod tests {
             }),
         };
         assert_eq!(parse_state(&render_state(&state)), Some(state));
+    }
+
+    fn with_uuid(mut entry: Value, uuid: &str) -> Value {
+        entry["uuid"] = json!(uuid);
+        entry
+    }
+
+    /// A turn that reached a `worktree remove` boundary at 250k tokens.
+    fn boundary_entries() -> Vec<Value> {
+        vec![
+            prompt("p1"),
+            with_uuid(
+                assistant(
+                    Some((250_000, 0, 0)),
+                    false,
+                    json!([{"type": "tool_use", "id": "b1", "name": "Bash",
+                            "input": {"command": "git worktree remove /tmp/wt"}}]),
+                ),
+                "boundary-entry",
+            ),
+        ]
+    }
+
+    fn fixture(entries: &[Value]) -> Value {
+        json!({
+            "payload": {"cwd": "/work", "permission_mode": "bypassPermissions",
+                        "background_busy": false, "stop_hook_active": false,
+                        "ends_with_question": false, "waiting_line": false,
+                        "marker": false},
+            "state": {"key": "", "advices": 0, "pending": null},
+            "facts": {"phase": "none", "repositories": "clean"},
+            "entries": entries,
+        })
+    }
+
+    fn replay(fixture: &Value) -> Result<bool, String> {
+        judge_case(&fixture.to_string())
+    }
+
+    #[test]
+    fn a_fixture_with_a_boundary_and_nothing_in_flight_fires() {
+        assert_eq!(replay(&fixture(&boundary_entries())), Ok(true));
+        assert_eq!(
+            stop_judge(
+                "clear-at-boundary",
+                &fixture(&boundary_entries()).to_string()
+            ),
+            Some(Ok(true))
+        );
+        assert_eq!(stop_judge("other-rule", "{}"), None);
+    }
+
+    #[test]
+    fn a_fixture_with_a_frozen_pending_boundary_and_work_after_it_is_silent() {
+        let mut entries = boundary_entries();
+        entries.push(with_uuid(tool_use("w1", "Edit"), "work-entry"));
+        let mut case = fixture(&entries);
+        case["state"]["pending"] = json!({
+            "uuid": "boundary-entry", "command": "git worktree remove /tmp/wt",
+            "what": "worktree remove", "dirs": []
+        });
+        assert_eq!(replay(&case), Ok(false));
+    }
+
+    #[test]
+    fn a_fixture_with_a_relais_run_in_flight_is_silent() {
+        let mut entries = boundary_entries();
+        entries.push(tool_use("r1", "mcp__relais__run"));
+        entries.push(tool_result("r1", "Started relais run run-1"));
+        assert_eq!(replay(&fixture(&entries)), Ok(false));
+    }
+
+    #[test]
+    fn a_fixture_with_background_work_is_silent() {
+        let mut case = fixture(&boundary_entries());
+        case["payload"]["background_busy"] = json!(true);
+        assert_eq!(replay(&case), Ok(false));
+    }
+
+    #[test]
+    fn a_malformed_fixture_is_an_error() {
+        assert!(judge_case("not json").is_err());
+        assert!(judge_case("{}").is_err());
+        let mut case = fixture(&boundary_entries());
+        case["facts"]["phase"] = json!("sideways");
+        assert!(replay(&case).is_err());
+    }
+
+    #[test]
+    fn an_unwritable_state_is_recorded_first_and_advises_nothing() {
+        let entries = boundary_entries();
+        let case = fixture(&entries);
+        let view = StopView {
+            cwd: Some(PathBuf::from("/work")),
+            ..StopView::default()
+        };
+        let verdict = super::decide(
+            &view,
+            &entries,
+            State::default(),
+            || PhaseFact::NoOpenPhase,
+            || Stance::Deny,
+            |_| Repositories::Clean { heads: Vec::new() },
+            |_| false,
+        );
+        assert!(matches!(verdict.decision, Decision::Silent));
+        assert_eq!(
+            verdict.records.first(),
+            Some(&("watched".to_string(), "state-unwritable".to_string()))
+        );
+        assert_eq!(verdict.records.len(), 1);
+        assert_eq!(
+            replay(&case),
+            Ok(true),
+            "the same input fires when the write holds"
+        );
+    }
+
+    #[test]
+    fn the_uuid_suffix_survives_the_journal_trim() {
+        let what = "x".repeat(400);
+        let line = excerpt(&what, true, Some("0123-uuid"));
+        let trimmed = journal::redact_and_trim(&line);
+        assert!(
+            trimmed.ends_with(" tail-capped uuid=0123-uuid"),
+            "got {trimmed}"
+        );
+        assert_eq!(excerpt("short", false, None), "short");
+    }
+
+    #[test]
+    fn a_tail_read_up_to_an_offset_stops_there() {
+        let directory = scratch("at");
+        let path = directory.join("t.jsonl");
+        let entries = vec![prompt("one"), prompt("two"), prompt("three")];
+        write_lines(&path, &entries);
+        let first_two: u64 = entries[..2]
+            .iter()
+            .map(|e| format!("{e}\n").len() as u64)
+            .sum();
+        let tail = read_tail_until_at(&path, first_two, 64, 1 << 20, |_| false).expect("read");
+        let uuids: Vec<_> = tail
+            .entries
+            .iter()
+            .filter_map(|e| e["uuid"].as_str())
+            .collect();
+        assert_eq!(uuids, ["one", "two"]);
+        std::fs::remove_dir_all(&directory).expect("clean up");
     }
 }

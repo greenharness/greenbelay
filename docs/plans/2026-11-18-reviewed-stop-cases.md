@@ -262,7 +262,7 @@ in t20's Resolution.
 
 ## Phases
 
-- [ ] Phase 1: `decide` core, the wrappers, the journal `uuid=`, and
+- [x] Phase 1: `decide` core, the wrappers, the journal `uuid=`, and
   `judge_case`, in `crates/greenbelay-process/src/clear_boundary.rs`. The
   Stop suite `tests/clear_at_boundary.rs` passes unchanged. New unit tests
   replay hand-built fixtures for an advice, a `pending-work`, a `pending
