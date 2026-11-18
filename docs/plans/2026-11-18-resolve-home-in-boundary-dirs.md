@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 branch: fix/clear-boundary-home-dirs
 repos: [amont-agent, decisions]
 adrs: [ADR-0062]
@@ -197,7 +197,29 @@ Fixture scan (16 Stop cases) of boundary `-C` words:
 
 ## Verification record
 
-Phases 1 and 2 done (d0eaba67, 196b51ef); Phase 3 is next: release 6.4.1, the installed-binary probe, graduate, then the decisions PR.
+Phases 1 and 2 done (#293); Phase 3 done (#294, decisions t21 closure).
+
+Phase 3 results:
+
+- **Release.** greenbelay 6.4.1 was released (#294, tag `v6.4.1`).
+  - Workflow conclusion: `success`.
+  - Six binaries published, plus crates.io and the Homebrew tap.
+  - `brew upgrade` installed 6.4.1 here.
+- **The installed-binary probe**, in a scratch HOME at `deny`, with a
+  repository that has an upstream:
+  - modified file → silent; the journal reads `pending uncommitted
+    changes`;
+  - file restored → `{"decision":"block",…}`, a deny Continue.
+- **`greenbelay graduate clear-at-boundary --to deny`**, run bare and
+  without `--force` on 6.4.1, exited 0:
+  - `20 reviewed cases (need 12)`;
+  - `11 of them are expected-negatives (need 4)`;
+  - `the rule agrees with every judgement`;
+  - `clear-at-boundary is now deny`.
+
+  The live stance is `deny`.
+- **The 7-day count of `~` holds** is the decisions ticket
+  session-boundaries t22 (due 2026-11-25).
 
 - The branch binary in a scratch HOME at `deny` (the installed-binary
   run follows the release). The boundary is
