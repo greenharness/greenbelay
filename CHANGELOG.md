@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- A `startup` or `clear` session start outside any git repository now tells
+  the unfiled inbox lines of the checkouts directly under its directory: up to
+  three notices in name order, each after `in <name>: cd <path>`, and a line
+  counting the rest. Inside a repository nothing changes.
+
 ## v6.4.1
 
 greenbelay 6.4.1 fixes how `clear-at-boundary` resolves a boundary's

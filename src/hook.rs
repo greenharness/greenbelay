@@ -395,6 +395,8 @@ fn on_session_start(session: &Session) -> Decision {
 
 /// The unfiled inbox lines, at a `startup` or `clear` only, governed by the
 /// `clear-at-boundary` stance: `observe` journals the counts and says nothing.
+/// Outside a repository the checkouts directly under the cwd are scanned
+/// instead ([`outside_repository_notice`]).
 fn inbox_notice(session: &Session) -> Option<String> {
     if !matches!(session.source.as_str(), "startup" | "clear") {
         return None;
@@ -402,11 +404,15 @@ fn inbox_notice(session: &Session) -> Option<String> {
     if !session.cwd.is_dir() {
         return None;
     }
-    let common = greenbelay_guard::git::stdout_in(
+    let Some(common) = greenbelay_guard::git::stdout_in(
         &session.cwd,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )
-    .filter(|dir| !dir.is_empty())?;
+    ) else {
+        return outside_repository_notice(session);
+    };
+    if common.is_empty() {
+        return None;
+    }
     let inbox_dir = std::path::PathBuf::from(common).join("greenharness");
     // No inbox directory: nothing was ever appended, so no clock is read.
     if !inbox_dir.is_dir() {
@@ -415,6 +421,18 @@ fn inbox_notice(session: &Session) -> Option<String> {
     let rule = &rules::clear_at_boundary::RULE;
     let stance = crate::stance::resolve(rule);
     let today = greenbelay_guard::civil::day_of(&local_date(&session.cwd)?)?;
+    inbox_notice_of(session, &inbox_dir, &repo_name(&session.cwd), stance, today)?.text
+}
+
+/// Scan one inbox directory, journal the match under `repo`, and return it.
+fn inbox_notice_of(
+    session: &Session,
+    inbox_dir: &std::path::Path,
+    repo: &str,
+    stance: Stance,
+    today: greenbelay_guard::civil::Day,
+) -> Option<greenbelay_process::inbox::Notice> {
+    let rule = &rules::clear_at_boundary::RULE;
     let found = greenbelay_process::inbox::notice(
         &inbox_dir.join("inbox.md"),
         stance,
@@ -430,14 +448,136 @@ fn inbox_notice(session: &Session) -> Option<String> {
         stance: stance.as_str(),
         outcome,
         session: &session.session,
-        repo: &repo_name(&session.cwd),
+        repo,
         mode: "-",
         excerpt: &format!(
             "session start {}: orphans {}, fresh {}, being filed {}",
             session.source, found.orphans, found.fresh, found.being_filed
         ),
     });
-    found.text
+    Some(found)
+}
+
+/// Notices shown at most, from the checkouts under a directory that is not
+/// itself a repository.
+const MAX_CHILD_NOTICES: usize = 3;
+
+/// The checkouts directly under `root` that hold an inbox directory: a child
+/// whose `.git` is a real directory (a symlinked child and a linked
+/// worktree's `.git` file are skipped) containing `greenharness/`, by name.
+fn child_checkouts(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut children: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let own = std::fs::symlink_metadata(&path).ok()?;
+            let git = std::fs::symlink_metadata(path.join(".git")).ok()?;
+            (own.is_dir() && git.is_dir() && path.join(".git").join("greenharness").is_dir())
+                .then_some(path)
+        })
+        .collect();
+    children.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+    children
+}
+
+/// The session start outside any repository: the notices of the child
+/// checkouts with unfiled lines, in name order, each under an
+/// `in <name>: cd <path>` line, then one line counting the rest.
+fn outside_repository_notice(session: &Session) -> Option<String> {
+    let children = child_checkouts(&session.cwd);
+    if children.is_empty() {
+        return None;
+    }
+    let rule = &rules::clear_at_boundary::RULE;
+    let stance = crate::stance::resolve(rule);
+    let today = greenbelay_guard::civil::day_of(&local_date(&session.cwd)?)?;
+    let mut shown: Vec<String> = Vec::new();
+    let mut unshown: Vec<String> = Vec::new();
+    for child in &children {
+        let name = child
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let Some(found) = inbox_notice_of(
+            session,
+            &child.join(".git").join("greenharness"),
+            &name,
+            stance,
+            today,
+        ) else {
+            continue;
+        };
+        let Some(text) = found.text.filter(|_| found.orphans + found.fresh > 0) else {
+            continue;
+        };
+        if shown.len() < MAX_CHILD_NOTICES {
+            shown.push(format!(
+                "in {}: cd {}\n{text}",
+                printable(&name),
+                shell_quoted(child)
+            ));
+        } else {
+            unshown.push(printable(&name));
+        }
+    }
+    if shown.is_empty() {
+        return None;
+    }
+    if !unshown.is_empty() {
+        let mut names: Vec<&str> = unshown
+            .iter()
+            .take(MAX_CHILD_NOTICES)
+            .map(String::as_str)
+            .collect();
+        if unshown.len() > MAX_CHILD_NOTICES {
+            names.push("…");
+        }
+        shown.push(format!(
+            concat!(
+                greenbelay_guard::bin!(),
+                "/inbox: {} more repositories hold unfiled lines: {}"
+            ),
+            unshown.len(),
+            names.join(", ")
+        ));
+    }
+    Some(shown.join("\n"))
+}
+
+/// A name with every control character replaced, so it stays on one line.
+fn printable(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_control() { '?' } else { c })
+        .collect()
+}
+
+/// A path as one shell word: single-quoted, or ANSI-C quoted when it holds a
+/// control character, so the printed line stays one line and still works.
+fn shell_quoted(path: &std::path::Path) -> String {
+    let text = path.to_string_lossy();
+    if text.chars().any(char::is_control) {
+        let mut out = String::from("$'");
+        for c in text.chars() {
+            match c {
+                '\'' => out.push_str("\\'"),
+                '\\' => out.push_str("\\\\"),
+                c if c.is_control() => {
+                    let mut buf = [0u8; 4];
+                    for byte in c.encode_utf8(&mut buf).bytes() {
+                        out.push_str(&format!("\\x{byte:02x}"));
+                    }
+                }
+                c => out.push(c),
+            }
+        }
+        out.push('\'');
+        out
+    } else {
+        format!("'{}'", text.replace('\'', "'\\''"))
+    }
 }
 
 /// How long `date +%F` may take before the inbox block is given up.
@@ -3093,5 +3233,50 @@ mod write_tests {
     fn text_from_another_event_is_kept_as_advice() {
         let (kind, t) = text(combine([Decision::Context("one".into())]));
         assert_eq!((kind, t.as_str()), ("advise", "one"));
+    }
+}
+
+#[cfg(test)]
+mod child_checkout_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("gb-child-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root); // a leftover dir from an earlier run
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn only_real_checkouts_with_an_inbox_directory_are_listed_by_name() {
+        let root = scratch("list");
+        for name in ["zeta", "alpha"] {
+            std::fs::create_dir_all(root.join(name).join(".git").join("greenharness")).unwrap();
+        }
+        // A checkout that never had an inbox.
+        std::fs::create_dir_all(root.join("bare").join(".git")).unwrap();
+        // A linked worktree: its `.git` is a file.
+        std::fs::create_dir_all(root.join("linked")).unwrap();
+        std::fs::write(root.join("linked").join(".git"), "gitdir: elsewhere\n").unwrap();
+        // A symlinked child, whose target is a real checkout.
+        let target = root.join("target");
+        std::fs::create_dir_all(target.join(".git").join("greenharness")).unwrap();
+        std::os::unix::fs::symlink(&target, root.join("aaa-link")).unwrap();
+        let names: Vec<String> = child_checkouts(&root)
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["alpha", "target", "zeta"]);
+        let _ = std::fs::remove_dir_all(&root); // temp-dir cleanup only costs disk
+    }
+
+    #[test]
+    fn a_control_character_never_reaches_a_printed_name_or_path() {
+        assert_eq!(printable("a\nb"), "a?b");
+        assert_eq!(
+            shell_quoted(std::path::Path::new("/a b/it's")),
+            "'/a b/it'\\''s'"
+        );
+        assert_eq!(shell_quoted(std::path::Path::new("/a\nb")), "$'/a\\x0ab'");
     }
 }
