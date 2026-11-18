@@ -402,6 +402,7 @@ Planned checks:
 - backend: approve-with-changes, then approve-with-changes (re-run appended excluded comments, fixed), then approve. Deliberate: a sweep that stops on a NotFound race only leaves a note. 74k+114k+121k tokens.
 - lang:rust: approve-with-changes, then approve-with-changes, then approve-with-changes. Typed fixture, reasons and errors were fixed. Deliberate: string journal outcomes, the `countable`/`excluded` pair kept for readers, and the NotFound race. 99k+139k+146k tokens.
 - unix: approve-with-changes twice, then approve. Exit codes, `--cases`, temp suffix and age, unused flags and `--sample 0` were fixed. 60k+99k+103k tokens.
+- CI `tests (windows-latest)` failed on 4 export tests: mixed path separators, and a no-HOME test that Windows cannot reach. Fixed test-only (e61ca3ad). implementation-review and lang:rust approved tree 80ea7e7f (122k and 149k tokens).
 - tui: approve-with-changes twice, then approve. Messages and help were fixed. Deliberate: the 200-column disagreement line, which the plan pins. 58k+97k+104k tokens.
 
 <!-- panel: repos=amont-agent,decisions adds= reviewers=backend,lang:rust,tui,unix,codex body-sha=f5e6add40667 -->
