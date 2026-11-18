@@ -197,7 +197,7 @@ Fixture scan (16 Stop cases) of boundary `-C` words:
 
 ## Verification record
 
-Phases 1 and 2 done on d0eaba67; Phase 3 is next.
+Phases 1 and 2 done (d0eaba67, 196b51ef); Phase 3 is next: release 6.4.1, the installed-binary probe, graduate, then the decisions PR.
 
 - The branch binary in a scratch HOME at `deny` (the installed-binary
   run follows the release). The boundary is
@@ -250,5 +250,21 @@ Phases 1 and 2 done on d0eaba67; Phase 3 is next.
     `adds_worktree` keeps a text-only path;
   - `StopView::of` reads `$HOME` as the plan says, since it is the
     hook's input adapter.
+
+## Implementation review
+
+- **implementation-review: approve** (delta).
+  - Fixed: the `value` rename (it was blocking), the shared home filter, the `StopView::of` test, and the note on the probe's restore.
+  - Round 1: 68k tokens, 46 s. Delta: 29k tokens, 17 s.
+- **backend: approve-with-changes.**
+  - Fixed: facts are typed and checked at load.
+  - deliberate: the wiring test compares against `home_from`; the live probe proved the `$HOME` read.
+  - Round 1: 69k tokens, 36 s. Delta: 31k tokens, 25 s.
+- **lang:rust: approve-with-changes.**
+  - Fixed: `DirectoryFact`, `home_from` shared, `Word: Default`, the cwd clone.
+  - deliberate: the text clone in `classify`, `$HOME` read in `StopView::of`, the reason consts (follow-up).
+  - Round 1: 62k tokens, 33 s. Delta: 34k tokens, 24 s.
+- **unix: approve**, no findings. 58k tokens, 32 s.
+- **Follow-up in the inbox:** name `check_one`'s reasons as consts shared with `NOT_CLEAN_REASONS`, and give the wiring test an oracle of its own.
 
 <!-- panel: repos=amont-agent,decisions reviewers=backend,lang:rust,tui,unix,codex body-sha=4b84852b29c0 -->
