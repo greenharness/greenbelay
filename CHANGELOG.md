@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v6.5.0
+
+greenbelay 6.5.0 shows the inbox outside a repository (session-boundaries
+t19, #296).
+
 - A `startup` or `clear` session start outside any git repository now tells
   the unfiled inbox lines of the checkouts directly under its directory: up to
   three notices in name order, each after `in <name>: cd <path>`, and a line
