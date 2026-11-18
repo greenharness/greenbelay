@@ -1638,14 +1638,16 @@ pub(crate) enum DirectoryFact {
 
 impl DirectoryFact {
     /// A `per_directory` member: its key must be a path the rule can resolve
-    /// to (absolute, or rooted at the symbolic home), and its value `clean`,
+    /// to (rooted, or under the symbolic home), and its value `clean`,
     /// `timed_out` or a reason the live check gives.
     fn parse(directory: String, fact: String) -> Result<(PathBuf, Self), FixtureError> {
         let path = PathBuf::from(&directory);
-        let rooted = path.is_absolute() || path.starts_with(SYMBOLIC_HOME);
+        // `has_root`, not `is_absolute`: a scrubbed fixture path such as
+        // `/work` has no drive, so Windows never calls it absolute.
+        let rooted = path.has_root() || path.starts_with(SYMBOLIC_HOME);
         if !rooted {
             return Err(FixtureError::WrongType(format!(
-                "per_directory key {directory:?} is neither absolute nor under {SYMBOLIC_HOME}"
+                "per_directory key {directory:?} is neither rooted nor under {SYMBOLIC_HOME}"
             )));
         }
         let fact = match fact.as_str() {
@@ -2625,7 +2627,8 @@ mod tests {
         assert_eq!(home_from(None), None);
         assert_eq!(home_from(Some("".into())), None);
         assert_eq!(home_from(Some("relative/home".into())), None);
-        assert_eq!(home_from(Some("/h".into())), Some(PathBuf::from("/h")));
+        let absolute = std::env::temp_dir();
+        assert_eq!(home_from(Some(absolute.clone().into())), Some(absolute));
     }
 
     #[test]
@@ -2698,7 +2701,7 @@ mod tests {
     fn a_per_directory_fact_is_checked_as_it_loads() {
         let mut case = fixture(&home_boundary_entries());
         for (map, wrong) in [
-            (json!({"repo": "dirty"}), "neither absolute nor under ~"),
+            (json!({"repo": "dirty"}), "neither rooted nor under ~"),
             (json!({"~/repo": ""}), "is not clean, timed_out"),
             (json!({"~/repo": "clena"}), "is not clean, timed_out"),
         ] {
