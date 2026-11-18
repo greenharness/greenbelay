@@ -12,6 +12,7 @@
 //! what the transcript's own relais tool results already showed, through
 //! the phrases in [`relais_messages`].
 
+use std::collections::BTreeMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
@@ -47,6 +48,11 @@ pub const SIZE: u64 = 200_000;
 /// most 54 in one; a cap of 3 leaves 174 advices and
 /// keeps 30 of 31 compacted sessions advised before their first compaction.
 pub const MAX_ADVICES_PER_SESSION: u32 = 3;
+
+/// Home as fixtures write it: the exporter scrubs `$HOME` to `~`, and a
+/// replay resolves a boundary's `~` against this literal, so a fixture's
+/// per-directory keys read as the scrubbed paths.
+pub(crate) const SYMBOLIC_HOME: &str = "~";
 
 /// The first chunk of a transcript tail.
 pub const TAIL_FIRST_CHUNK: u64 = 64 * 1024;
@@ -275,8 +281,9 @@ pub struct Boundary {
     pub dirs: Vec<PathBuf>,
 }
 
-/// The boundary commands among the Bash tool calls of the window.
-pub fn boundaries(window: &TurnWindow<'_>, cwd: &Path) -> Vec<Boundary> {
+/// The boundary commands among the Bash tool calls of the window. `home`
+/// resolves a `-C` directory written from `~` or `$HOME`.
+pub fn boundaries(window: &TurnWindow<'_>, cwd: &Path, home: Option<&Path>) -> Vec<Boundary> {
     let mut found = Vec::new();
     for entry in window
         .entries
@@ -291,8 +298,8 @@ pub fn boundaries(window: &TurnWindow<'_>, cwd: &Path) -> Vec<Boundary> {
             let Some(command) = block.pointer("/input/command").and_then(Value::as_str) else {
                 continue;
             };
-            for segment in segments(command) {
-                if let Some((what, dirs)) = classify(&segment, cwd) {
+            for segment in shell_words(command) {
+                if let Some((what, dirs)) = classify(&segment, cwd, home) {
                     found.push(Boundary {
                         what: what.to_string(),
                         uuid: entry["uuid"].as_str().unwrap_or("").to_string(),
@@ -306,12 +313,54 @@ pub fn boundaries(window: &TurnWindow<'_>, cwd: &Path) -> Vec<Boundary> {
     found
 }
 
+/// How one character of a shell word was written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Quoting {
+    Bare,
+    Single,
+    Double,
+    /// After a backslash, outside quotes or inside double quotes.
+    Escaped,
+}
+
+/// A shell word with its quotes removed, and how each of its characters
+/// was written: a `~` or `$HOME` expands only when written bare (or, for
+/// `$HOME`, inside double quotes), which the text alone no longer shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Word {
+    text: String,
+    /// One per `char` of `text`.
+    quoting: Vec<Quoting>,
+}
+
+impl Word {
+    fn new() -> Self {
+        Self {
+            text: String::new(),
+            quoting: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, c: char, quoting: Quoting) {
+        self.text.push(c);
+        self.quoting.push(quoting);
+    }
+}
+
 /// Split a shell command into simple commands of words, honouring quotes:
 /// `;`, `&`, `|` and newlines end a command.
 fn segments(command: &str) -> Vec<Vec<String>> {
-    let mut all: Vec<Vec<String>> = Vec::new();
-    let mut words: Vec<String> = Vec::new();
-    let mut word = String::new();
+    shell_words(command)
+        .into_iter()
+        .map(|words| words.into_iter().map(|word| word.text).collect())
+        .collect()
+}
+
+/// [`segments`], each word keeping how its characters were quoted.
+fn shell_words(command: &str) -> Vec<Vec<Word>> {
+    let mut all: Vec<Vec<Word>> = Vec::new();
+    let mut words: Vec<Word> = Vec::new();
+    let mut word = Word::new();
     let mut in_word = false;
     let mut chars = command.chars();
     while let Some(c) = chars.next() {
@@ -322,7 +371,7 @@ fn segments(command: &str) -> Vec<Vec<String>> {
                     if inner == '\'' {
                         break;
                     }
-                    word.push(inner);
+                    word.push(inner, Quoting::Single);
                 }
             }
             '"' => {
@@ -330,18 +379,24 @@ fn segments(command: &str) -> Vec<Vec<String>> {
                 while let Some(inner) = chars.next() {
                     match inner {
                         '"' => break,
-                        '\\' => word.extend(chars.next()),
-                        other => word.push(other),
+                        '\\' => {
+                            if let Some(next) = chars.next() {
+                                word.push(next, Quoting::Escaped);
+                            }
+                        }
+                        other => word.push(other, Quoting::Double),
                     }
                 }
             }
             '\\' => {
                 in_word = true;
-                word.extend(chars.next());
+                if let Some(next) = chars.next() {
+                    word.push(next, Quoting::Escaped);
+                }
             }
             ';' | '&' | '|' | '\n' => {
                 if in_word {
-                    words.push(std::mem::take(&mut word));
+                    words.push(std::mem::replace(&mut word, Word::new()));
                     in_word = false;
                 }
                 if !words.is_empty() {
@@ -350,13 +405,13 @@ fn segments(command: &str) -> Vec<Vec<String>> {
             }
             c if c.is_whitespace() => {
                 if in_word {
-                    words.push(std::mem::take(&mut word));
+                    words.push(std::mem::replace(&mut word, Word::new()));
                     in_word = false;
                 }
             }
             other => {
                 in_word = true;
-                word.push(other);
+                word.push(other, Quoting::Bare);
             }
         }
     }
@@ -369,14 +424,53 @@ fn segments(command: &str) -> Vec<Vec<String>> {
     all
 }
 
+/// What follows a leading home reference the shell expands: `~`, `$HOME` or
+/// `${HOME}`, then the end of the word or a `/`. The `~` must be bare (POSIX
+/// XCU 2.6.1: an unquoted tilde-prefix, ended by an unquoted `/`); the
+/// parameter must be bare or inside double quotes, every character of it in
+/// the same quoting (2.2.2: single quotes and a backslash keep `$` literal,
+/// and `$HO"ME"` is the parameter `HO`). `~user`, `~+`, `~-` and `$HOMEX`
+/// are not home; `${HOME}x` is a sibling of home (`/hx`), kept as written
+/// like any word this does not resolve. `None` when the word does not start
+/// with home.
+fn home_suffix(word: &Word) -> Option<&str> {
+    let quoting = |at: usize| word.quoting.get(at).copied();
+    let length = if word.text.starts_with('~') {
+        (quoting(0) == Some(Quoting::Bare)).then_some(1)?
+    } else {
+        let parameter = ["${HOME}", "$HOME"]
+            .into_iter()
+            .find(|parameter| word.text.starts_with(parameter))?;
+        let first = quoting(0)?;
+        let same = (0..parameter.len()).all(|at| quoting(at) == Some(first));
+        (same && matches!(first, Quoting::Bare | Quoting::Double)).then_some(parameter.len())?
+    };
+    // The prefix is ASCII, so its char count is its byte length.
+    let rest = &word.text[length..];
+    match rest.chars().next() {
+        None => Some(rest),
+        Some('/') if !word.text.starts_with('~') || quoting(length) == Some(Quoting::Bare) => {
+            Some(rest)
+        }
+        Some(_) => None,
+    }
+}
+
+/// The home directory a live hook resolves `~` against: `$HOME` when it is
+/// an absolute path. Unset, empty or relative, there is none, and a `~` word
+/// keeps today's handling.
+fn home_from(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    value.map(PathBuf::from).filter(|home| home.is_absolute())
+}
+
 fn base_name(word: &str) -> &str {
     word.rsplit('/').next().unwrap_or(word)
 }
 
-/// A `git` call: its global `-C` directories as written, its subcommand and
-/// the words after it.
+/// A `git` call: the positions of its global `-C` directories among the
+/// words, its subcommand and the words after it.
 struct GitCall<'a> {
-    directories: Vec<&'a str>,
+    directories: Vec<usize>,
     subcommand: &'a str,
     rest: &'a [String],
 }
@@ -393,7 +487,8 @@ fn git_call(words: &[String]) -> Option<GitCall<'_>> {
     while let Some(word) = words.get(at) {
         match word.as_str() {
             "-C" => {
-                directories.push(words.get(at + 1)?.as_str());
+                words.get(at + 1)?;
+                directories.push(at + 1);
                 at += 2;
             }
             "-c" | "--git-dir" | "--work-tree" | "--namespace" => at += 2,
@@ -412,7 +507,14 @@ fn git_call(words: &[String]) -> Option<GitCall<'_>> {
 
 /// `base` joined with `directory`, `.` and `..` folded away lexically.
 fn resolve(base: &Path, directory: &str) -> PathBuf {
-    let joined = base.join(directory);
+    fold(&base.join(directory))
+}
+
+/// `.` and `..` folded away lexically. Above a relative root (the replay's
+/// symbolic home `~`), a `..` pops the root itself and leaves an empty
+/// path, which the check skips; live, home is absolute and `..` climbs to
+/// its parent. Both count as clean unless that parent is a work tree.
+fn fold(joined: &Path) -> PathBuf {
     let mut resolved = PathBuf::new();
     for component in joined.components() {
         match component {
@@ -427,33 +529,43 @@ fn resolve(base: &Path, directory: &str) -> PathBuf {
 }
 
 /// Several `-C` flags chain as git does: each relative one against the last.
-fn chain(cwd: &Path, directories: &[&str]) -> Vec<PathBuf> {
+/// A word that starts with home (see [`home_suffix`]) is absolute once the
+/// shell expands it, so it replaces the chain built so far; with no `home`,
+/// it is joined as written (the behaviour before home was read).
+fn chain(cwd: &Path, home: Option<&Path>, directories: &[&Word]) -> Vec<PathBuf> {
     if directories.is_empty() {
         return Vec::new();
     }
-    vec![directories
-        .iter()
-        .fold(cwd.to_path_buf(), |base, directory| {
-            resolve(&base, directory)
-        })]
+    vec![directories.iter().fold(cwd.to_path_buf(), |base, word| {
+        match home.zip(home_suffix(word)) {
+            Some((home, suffix)) => fold(&home.join(suffix.trim_start_matches('/'))),
+            None => resolve(&base, &word.text),
+        }
+    })]
 }
 
-fn classify(words: &[String], cwd: &Path) -> Option<(&'static str, Vec<PathBuf>)> {
-    if words.iter().any(|word| base_name(word) == "sweep.py")
-        && words.iter().any(|word| word == "--apply")
+fn classify(
+    words: &[Word],
+    cwd: &Path,
+    home: Option<&Path>,
+) -> Option<(&'static str, Vec<PathBuf>)> {
+    let texts: Vec<String> = words.iter().map(|word| word.text.clone()).collect();
+    if texts.iter().any(|word| base_name(word) == "sweep.py")
+        && texts.iter().any(|word| word == "--apply")
     {
         return Some(("sweep.py --apply", Vec::new()));
     }
-    let call = git_call(words)?;
+    let call = git_call(&texts)?;
+    let directories: Vec<&Word> = call.directories.iter().map(|&at| &words[at]).collect();
     match call.subcommand {
         "worktree" => {
             let verb = call.rest.iter().find(|word| !word.starts_with('-'))?;
-            (verb == "remove").then(|| ("worktree remove", chain(cwd, &call.directories)))
+            (verb == "remove").then(|| ("worktree remove", chain(cwd, home, &directories)))
         }
         "commit" => {
             let subject = commit_subject(call.rest)?;
             (subject.starts_with("docs(plan): ") && !is_closing_plan_commit(&subject))
-                .then(|| ("plan commit", chain(cwd, &call.directories)))
+                .then(|| ("plan commit", chain(cwd, home, &directories)))
         }
         _ => None,
     }
@@ -967,6 +1079,9 @@ fn has_waiting_line(message: &str) -> bool {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct StopView {
     pub cwd: Option<PathBuf>,
+    /// What a boundary's `~` or `$HOME` resolves against: `$HOME` live, the
+    /// symbolic `~` in a replay (fixtures write home as `~`).
+    pub home: Option<PathBuf>,
     pub permission_mode: Option<String>,
     pub background_busy: bool,
     pub stop_hook_active: bool,
@@ -980,6 +1095,7 @@ impl StopView {
         let message = stop.last_message.as_deref();
         Self {
             cwd: stop.cwd.clone(),
+            home: home_from(std::env::var_os("HOME")),
             permission_mode: stop.permission_mode.clone(),
             background_busy: stop.background_busy,
             stop_hook_active: stop.stop_hook_active,
@@ -1243,7 +1359,7 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
         let Some(window) = turn_window(entries) else {
             return self.watched("turn-too-long");
         };
-        let found = boundaries(&window, cwd.unwrap_or(Path::new("")));
+        let found = boundaries(&window, cwd.unwrap_or(Path::new("")), view.home.as_deref());
         let own = found.last().filter(|boundary| {
             state
                 .pending
@@ -1486,6 +1602,47 @@ enum RepositoriesFixture {
     Clean,
     TimedOut,
     NotClean(String),
+    /// The fact per directory, keyed by the directory the rule resolves in
+    /// replay (home as `~`), not by its git toplevel. A value is `clean`,
+    /// `timed_out` or a not-clean reason; a directory the map does not name
+    /// is clean.
+    PerDirectory(BTreeMap<String, String>),
+}
+
+/// The git facts a fixture froze.
+#[derive(Debug, Clone)]
+pub(crate) enum FrozenRepositories {
+    /// One answer whatever the directories.
+    All(Repositories),
+    PerDirectory(BTreeMap<PathBuf, String>),
+}
+
+impl FrozenRepositories {
+    /// The answer for `cwd` and `directories`, walked in the order
+    /// [`check_repositories`] walks them: the first not-clean or timed-out
+    /// directory decides.
+    pub(crate) fn answer(&self, cwd: Option<&Path>, directories: &[PathBuf]) -> Repositories {
+        let map = match self {
+            Self::All(repositories) => return repositories.clone(),
+            Self::PerDirectory(map) => map,
+        };
+        for directory in cwd
+            .into_iter()
+            .chain(directories.iter().map(PathBuf::as_path))
+        {
+            match map.get(directory).map(String::as_str) {
+                None | Some("clean") => {}
+                Some("timed_out") => return Repositories::TimedOut,
+                Some(reason) => {
+                    return Repositories::NotClean {
+                        directory: directory.to_path_buf(),
+                        reason: reason.to_string(),
+                    }
+                }
+            }
+        }
+        Repositories::Clean { heads: Vec::new() }
+    }
 }
 
 /// What a countable fixture replays with.
@@ -1494,7 +1651,7 @@ struct StopInputs {
     entries: Vec<Value>,
     prior: State,
     phase: PhaseFact,
-    repositories: Repositories,
+    repositories: FrozenRepositories,
 }
 
 impl TryFrom<StopFixture> for StopInputs {
@@ -1511,6 +1668,7 @@ impl TryFrom<StopFixture> for StopInputs {
         let payload = fixture.payload;
         let view = StopView {
             cwd: payload.cwd.map(PathBuf::from),
+            home: Some(PathBuf::from(SYMBOLIC_HOME)),
             permission_mode: payload.permission_mode,
             background_busy: payload.background_busy,
             stop_hook_active: payload.stop_hook_active,
@@ -1536,12 +1694,21 @@ impl TryFrom<StopFixture> for StopInputs {
             PhaseFixture::TimedOut => PhaseFact::TimedOut,
         };
         let repositories = match fixture.facts.repositories {
-            RepositoriesFixture::Clean => Repositories::Clean { heads: Vec::new() },
-            RepositoriesFixture::TimedOut => Repositories::TimedOut,
-            RepositoriesFixture::NotClean(reason) => Repositories::NotClean {
-                directory: PathBuf::new(),
-                reason,
-            },
+            RepositoriesFixture::Clean => {
+                FrozenRepositories::All(Repositories::Clean { heads: Vec::new() })
+            }
+            RepositoriesFixture::TimedOut => FrozenRepositories::All(Repositories::TimedOut),
+            RepositoriesFixture::NotClean(reason) => {
+                FrozenRepositories::All(Repositories::NotClean {
+                    directory: PathBuf::new(),
+                    reason,
+                })
+            }
+            RepositoriesFixture::PerDirectory(map) => FrozenRepositories::PerDirectory(
+                map.into_iter()
+                    .map(|(directory, fact)| (PathBuf::from(directory), fact))
+                    .collect(),
+            ),
         };
         Ok(StopInputs {
             view,
@@ -1579,12 +1746,13 @@ pub fn judge_case(fixture_json: &str) -> Result<bool, FixtureError> {
     let fixture: StopFixture =
         serde_json::from_str(fixture_json).map_err(|error| fixture_error(&error))?;
     let inputs = StopInputs::try_from(fixture)?;
+    let cwd = inputs.view.cwd.clone();
     Ok(replay_at_deny(
         &inputs.view,
         &inputs.entries,
         inputs.prior,
         inputs.phase,
-        inputs.repositories,
+        |dirs| inputs.repositories.answer(cwd.as_deref(), dirs),
     )
     .fired)
 }
@@ -1604,7 +1772,7 @@ pub(crate) fn replay_at_deny(
     entries: &[Value],
     prior: State,
     phase: PhaseFact,
-    repositories: Repositories,
+    repositories: impl FnOnce(&[PathBuf]) -> Repositories,
 ) -> Replay {
     let mut saved = None;
     let verdict = decide(
@@ -1613,7 +1781,7 @@ pub(crate) fn replay_at_deny(
         prior,
         || phase,
         || Stance::Deny,
-        |_| repositories,
+        repositories,
         |state| {
             saved = Some(state.clone());
             true
@@ -1759,7 +1927,17 @@ mod tests {
             entries.push(bash(&format!("b{at}"), command));
         }
         let window = turn_window(&entries).expect("a window");
-        boundaries(&window, Path::new("/work"))
+        boundaries(&window, Path::new("/work"), None)
+    }
+
+    /// The `-C` directories of each boundary in `command`, with `cwd` and `home`.
+    fn dirs_with_home(command: &str, cwd: &str, home: Option<&str>) -> Vec<PathBuf> {
+        let entries = vec![prompt("p1"), bash("b0", command)];
+        let window = turn_window(&entries).expect("a window");
+        boundaries(&window, Path::new(cwd), home.map(Path::new))
+            .into_iter()
+            .flat_map(|boundary| boundary.dirs)
+            .collect()
     }
 
     fn write_lines(path: &Path, entries: &[Value]) {
@@ -2284,5 +2462,224 @@ mod tests {
             .collect();
         assert_eq!(uuids, ["one", "two"]);
         std::fs::remove_dir_all(&directory).expect("clean up");
+    }
+
+    /// The one directory of the boundary `git -C <word> worktree remove x`.
+    fn one_dir(word: &str, cwd: &str, home: Option<&str>) -> PathBuf {
+        let dirs = dirs_with_home(&format!("git -C {word} worktree remove x"), cwd, home);
+        assert_eq!(dirs.len(), 1, "{word}: {dirs:?}");
+        dirs.into_iter().next().expect("one directory")
+    }
+
+    #[test]
+    fn the_8145b6c0_boundary_names_the_chezmoi_source() {
+        let text = include_str!(
+            "../../greenbelay-guard/tests/corpus/stop/clear-at-boundary/8145b6c0-1794667260.json"
+        );
+        let fixture: Value = serde_json::from_str(text).expect("the fixture parses");
+        let entries = fixture["entries"].as_array().expect("entries").clone();
+        let window = turn_window(&entries).expect("a window");
+        let found = boundaries(
+            &window,
+            Path::new("~/Developer/Perso"),
+            Some(Path::new("~")),
+        );
+        let last = found.last().expect("a boundary");
+        assert_eq!(last.what, "worktree remove");
+        assert_eq!(last.dirs, [PathBuf::from("~/.local/share/chezmoi")]);
+    }
+
+    #[test]
+    fn a_home_word_resolves_as_the_shell_expands_it() {
+        for (word, expected) in [
+            ("~", "/h"),
+            ("~/a", "/h/a"),
+            ("$HOME", "/h"),
+            ("$HOME/a", "/h/a"),
+            ("${HOME}/a", "/h/a"),
+            ("\"$HOME/a\"", "/h/a"),
+            ("\"$HOME\"/a", "/h/a"),
+            ("~/a/../b", "/h/b"),
+        ] {
+            assert_eq!(
+                one_dir(word, "/work", Some("/h")),
+                PathBuf::from(expected),
+                "{word}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_word_the_shell_does_not_expand_keeps_the_cwd_join() {
+        // Checked against zsh 5.9 (`HO=x; print -r -- <word>`): none of these
+        // is a path under home. `$HOMEX/a` is `/a`, `${HOME}x` is home's
+        // sibling `/hx`, `$HO"ME"/a` is `xME/a`; the rule keeps each one as
+        // written, as it keeps every word it does not resolve.
+        for (word, expected) in [
+            ("~user/a", "/work/~user/a"),
+            ("~+", "/work/~+"),
+            ("~-", "/work/~-"),
+            ("$OTHER/a", "/work/$OTHER/a"),
+            ("$HOMEX/a", "/work/$HOMEX/a"),
+            ("'${HOME}x'", "/work/${HOME}x"),
+            ("${HOME}x", "/work/${HOME}x"),
+            ("\"~/a\"", "/work/~/a"),
+            ("'~/a'", "/work/~/a"),
+            ("'$HOME/a'", "/work/$HOME/a"),
+            ("\\~/a", "/work/~/a"),
+            ("\"\\$HOME/a\"", "/work/$HOME/a"),
+            ("$HO\"ME\"/a", "/work/$HOME/a"),
+        ] {
+            assert_eq!(
+                one_dir(word, "/work", Some("/h")),
+                PathBuf::from(expected),
+                "{word}"
+            );
+        }
+    }
+
+    #[test]
+    fn without_a_home_a_tilde_word_is_joined_as_before() {
+        assert_eq!(one_dir("~/a", "/work", None), PathBuf::from("/work/~/a"));
+    }
+
+    #[test]
+    fn a_home_word_replaces_the_chain_built_so_far() {
+        let chained = |words: &str, cwd: &str, home: &str| {
+            dirs_with_home(&format!("git {words} worktree remove x"), cwd, Some(home))
+        };
+        assert_eq!(
+            chained("-C ~/a -C ../b", "/work", "/h"),
+            [PathBuf::from("/h/b")]
+        );
+        assert_eq!(
+            chained("-C rel -C ~/a", "/work", "/h"),
+            [PathBuf::from("/h/a")]
+        );
+        assert_eq!(
+            chained("-C ~ -C rel", "/work", "/h"),
+            [PathBuf::from("/h/rel")]
+        );
+        // The replay's symbolic home: the same answers, written from `~`.
+        let cwd = "~/Developer/Perso";
+        assert_eq!(chained("-C ~/a -C ../b", cwd, "~"), [PathBuf::from("~/b")]);
+        assert_eq!(chained("-C rel -C ~/a", cwd, "~"), [PathBuf::from("~/a")]);
+        // Above the symbolic home a `..` pops `~` itself: an empty path, which
+        // the check skips. Live, the same word climbs to home's parent.
+        assert_eq!(chained("-C ~/..", cwd, "~"), [PathBuf::new()]);
+        assert_eq!(chained("-C ~ -C ..", cwd, "~"), [PathBuf::new()]);
+        assert_eq!(
+            chained("-C ~/..", cwd, "/Users/me"),
+            [PathBuf::from("/Users")]
+        );
+    }
+
+    #[test]
+    fn only_an_absolute_home_is_read() {
+        assert_eq!(home_from(None), None);
+        assert_eq!(home_from(Some("".into())), None);
+        assert_eq!(home_from(Some("relative/home".into())), None);
+        assert_eq!(home_from(Some("/h".into())), Some(PathBuf::from("/h")));
+    }
+
+    #[test]
+    fn a_dirty_repository_under_home_is_not_clean() {
+        let repo = TestRepo::new();
+        repo.commit_file("f", "one\n", "init");
+        let home = repo
+            .path()
+            .parent()
+            .expect("a parent")
+            .to_string_lossy()
+            .into_owned();
+        let name = repo
+            .path()
+            .file_name()
+            .expect("a name")
+            .to_string_lossy()
+            .into_owned();
+        let dirs = dirs_with_home(
+            &format!("git -C ~/{name} worktree remove x"),
+            "/nowhere",
+            Some(&home),
+        );
+        assert_eq!(dirs, [repo.path().to_path_buf()]);
+        repo.write("f", "two\n");
+        assert!(matches!(
+            check_repositories(None, &dirs, deadline()),
+            Repositories::NotClean { reason, .. } if reason == "uncommitted changes"
+        ));
+    }
+
+    fn home_boundary_entries() -> Vec<Value> {
+        vec![
+            prompt("p1"),
+            with_uuid(
+                assistant(
+                    Some((250_000, 0, 0)),
+                    false,
+                    json!([{"type": "tool_use", "id": "b1", "name": "Bash",
+                            "input": {"command": "git -C ~/repo worktree remove x"}}]),
+                ),
+                "home-boundary",
+            ),
+        ]
+    }
+
+    #[test]
+    fn a_per_directory_fact_answers_the_resolved_directory() {
+        let mut case = fixture(&home_boundary_entries());
+        case["facts"]["repositories"] = json!({"per_directory": {"~/repo": "uncommitted changes"}});
+        assert_eq!(
+            replay(&case),
+            Ok(false),
+            "held: the resolved directory is dirty"
+        );
+        case["facts"]["repositories"] = json!({"per_directory": {"~/repo": "timed_out"}});
+        assert_eq!(replay(&case), Ok(false), "a timeout is silence");
+        case["facts"]["repositories"] = json!({"per_directory": {"~/repo": "clean"}});
+        assert_eq!(replay(&case), Ok(true));
+        // The path the rule resolved before home was read: not asked for any
+        // more, so the case fires. It passes only through the expansion.
+        case["facts"]["repositories"] =
+            json!({"per_directory": {"/work/~/repo": "uncommitted changes"}});
+        assert_eq!(replay(&case), Ok(true));
+        case["facts"]["repositories"] = json!({"per_directory": {"/work": "dirty"}});
+        assert_eq!(replay(&case), Ok(false), "the payload cwd is walked first");
+    }
+
+    #[test]
+    fn a_pending_saved_before_home_was_read_is_checked_as_saved() {
+        let entries = home_boundary_entries();
+        let prior = State {
+            pending: Some(Pending {
+                uuid: "home-boundary".to_string(),
+                command: "git -C ~/repo worktree remove x".to_string(),
+                what: "worktree remove".to_string(),
+                dirs: vec![PathBuf::from("/work/~/repo")],
+            }),
+            ..State::default()
+        };
+        let view = StopView {
+            cwd: Some(PathBuf::from("/work")),
+            home: Some(PathBuf::from("/h")),
+            ..StopView::default()
+        };
+        let asked = std::cell::RefCell::new(Vec::new());
+        super::decide(
+            &view,
+            &entries,
+            prior,
+            || PhaseFact::NoOpenPhase,
+            || Stance::Deny,
+            |dirs| {
+                asked.borrow_mut().extend(dirs.iter().cloned());
+                Repositories::Clean { heads: Vec::new() }
+            },
+            |_| true,
+        );
+        // One resume with the old joined path; the next person prompt clears
+        // the pending (see `judge`), so no migration is needed.
+        assert_eq!(*asked.borrow(), [PathBuf::from("/work/~/repo")]);
     }
 }

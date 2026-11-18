@@ -27,6 +27,10 @@ nomatch	echo safe to /clear
 # Labels judge what was visible at that Stop, not later turns (the person,
 # 2026-11-18), read against the original transcript; `early` in a fixture
 # marks an advice followed by an editing turn and is never read by the judge.
+# A fixture may freeze the repositories fact per directory instead
+# (`{"per_directory": {"<dir>": "<reason>"}}`): keys are the directories the rule
+# resolves in replay, with home written `~`, not git toplevels, and each names a
+# checkout the original transcript showed dirty. Unnamed directories are clean.
 
 # why: 180063a6@stop: greengate 4.11.0 released, worktree removed, PR merged; nothing running (early)
 match	Stop 180063a6-1794893825
@@ -58,9 +62,10 @@ nomatch	Stop c2449a0f-1794742061
 nomatch	Stop e2fb2812-1794745202
 # why: 1dbedd97@stop: no teardown this turn; fix deployed but untested, follow-up open
 nomatch	Stop 1dbedd97-1794869349
-# reviewed nomatch (the person, 2026-11-18): dotfiles PR merged and worktree removed,
-# but the turn's last message flagged an uncommitted edit in the chezmoi source, a
-# checkout outside the repositories the rule checks. The rule advised, so a `nomatch`
-# here disagrees; it stays `?` until the dirty-tree check is widened (follow-up of
-# decisions session-boundaries t20), and clear-at-boundary stays at advise.
-?	Stop 8145b6c0-1794667260
+# why: 8145b6c0@stop: dotfiles PR merged and worktree removed, but the chezmoi source
+# the boundary named (`git -C ~/.local/share/chezmoi worktree remove`) held an
+# uncommitted edit: the turn's own check printed "live: uncommitted changes; left
+# alone" and " M dot_zshrc" (original transcript). The rule advised because it joined
+# `~` to the cwd and counted the missing path clean (session-boundaries t21); with
+# home resolved it checks that checkout, and the per-directory fact freezes it dirty.
+nomatch	Stop 8145b6c0-1794667260
