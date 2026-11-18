@@ -39,6 +39,69 @@ pub struct Notice {
     pub being_filed: usize,
 }
 
+impl Notice {
+    /// Whether a session can still file something here: orphans or fresh
+    /// lines. A take being filed, or a notice that only counts, is not.
+    pub fn has_unfiled(&self) -> bool {
+        self.orphans + self.fresh > 0
+    }
+}
+
+/// Notices shown at most, from the checkouts under a directory that is not
+/// itself a repository.
+const MAX_CHILD_NOTICES: usize = 3;
+
+/// The text for a session started outside any repository. `children` are
+/// `(name, quoted path, notice)` of the checkouts that hold an inbox. In name
+/// order, the first three with unfiled lines and a text each follow an
+/// `in <name>: cd <path>` line; the rest are counted in one closing line.
+/// Notices that only file, or carry no text, take no slot and are not counted.
+pub fn outside_notice(children: &[(String, String, Notice)]) -> Option<String> {
+    let mut ordered: Vec<&(String, String, Notice)> = children
+        .iter()
+        .filter(|(_, _, found)| found.has_unfiled() && found.text.is_some())
+        .collect();
+    ordered.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut shown: Vec<String> = ordered
+        .iter()
+        .take(MAX_CHILD_NOTICES)
+        .filter_map(|(name, quoted, found)| {
+            let text = found.text.as_deref()?;
+            Some(format!("in {name}: cd {quoted}\n{text}"))
+        })
+        .collect();
+    if shown.is_empty() {
+        return None;
+    }
+    let unshown: Vec<&str> = ordered
+        .iter()
+        .skip(MAX_CHILD_NOTICES)
+        .map(|(name, _, _)| name.as_str())
+        .collect();
+    if !unshown.is_empty() {
+        let mut names: Vec<&str> = unshown.iter().take(MAX_CHILD_NOTICES).copied().collect();
+        if unshown.len() > MAX_CHILD_NOTICES {
+            names.push("…");
+        }
+        let (count, verb, noun) = if unshown.len() == 1 {
+            (1, "holds", "repository")
+        } else {
+            (unshown.len(), "hold", "repositories")
+        };
+        shown.push(format!(
+            concat!(
+                greenbelay_guard::bin!(),
+                "/inbox: {} more {} {} unfiled lines: {}; start a session in one to see them"
+            ),
+            count,
+            noun,
+            verb,
+            names.join(", ")
+        ));
+    }
+    Some(shown.join("\n"))
+}
+
 /// The inbox notice for `inbox`, or `None` when nothing scanned has a line.
 /// `today` is the local calendar day, the clock the writers date lines by;
 /// `now` ages the takes.
@@ -224,6 +287,69 @@ fn cut(line: &str) -> String {
 mod tests {
     use super::*;
     use greenbelay_guard::civil;
+
+    fn child(
+        name: &str,
+        orphans: usize,
+        fresh: usize,
+        being_filed: usize,
+    ) -> (String, String, Notice) {
+        (
+            name.to_string(),
+            format!("'/w/{name}'"),
+            Notice {
+                text: Some(format!("text-{name}")),
+                orphans,
+                fresh,
+                being_filed,
+            },
+        )
+    }
+
+    #[test]
+    fn seven_children_show_three_and_count_four_with_an_ellipsis() {
+        let children: Vec<_> = ["g", "a", "f", "b", "e", "c", "d"]
+            .iter()
+            .map(|n| child(n, 1, 0, 0))
+            .collect();
+        let out = outside_notice(&children).unwrap();
+        assert_eq!(
+            out,
+            concat!(
+                "in a: cd '/w/a'\ntext-a\n",
+                "in b: cd '/w/b'\ntext-b\n",
+                "in c: cd '/w/c'\ntext-c\n",
+                "greenbelay/inbox: 4 more repositories hold unfiled lines: d, e, f, …; ",
+                "start a session in one to see them"
+            )
+        );
+    }
+
+    #[test]
+    fn one_more_repository_uses_the_singular() {
+        let children: Vec<_> = ["a", "b", "c", "d"]
+            .iter()
+            .map(|n| child(n, 0, 2, 0))
+            .collect();
+        let out = outside_notice(&children).unwrap();
+        assert!(out.ends_with(
+            "greenbelay/inbox: 1 more repository holds unfiled lines: d; start a session in one to see them"
+        ));
+    }
+
+    #[test]
+    fn filing_only_children_take_no_slot_and_are_not_counted() {
+        let children = vec![
+            child("a", 0, 0, 3),
+            child("b", 1, 0, 0),
+            child("c", 0, 0, 1),
+        ];
+        assert_eq!(
+            outside_notice(&children).unwrap(),
+            "in b: cd '/w/b'\ntext-b"
+        );
+        assert_eq!(outside_notice(&[child("a", 0, 0, 3)]), None);
+    }
 
     fn today() -> Day {
         civil::day_of("2026-11-17").unwrap()

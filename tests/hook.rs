@@ -5020,3 +5020,155 @@ fn observe_prints_no_block_but_journals_the_count() {
         "{journal}"
     );
 }
+
+/// A scratch root that is not a repository, holding the named child
+/// repositories, each with `lines` in its inbox.
+fn inbox_root(root_name: &str, children: &[(&str, &str)]) -> PathBuf {
+    let root = home().join(root_name);
+    if root.exists() {
+        std::fs::remove_dir_all(&root).expect("clear the scratch root");
+    }
+    std::fs::create_dir_all(&root).expect("scratch root");
+    for (name, lines) in children {
+        let child = root.join(name);
+        std::fs::create_dir_all(child.join(".git").join("greenharness")).expect("child");
+        let init = Command::new("git")
+            .args(["init", "-q"])
+            .arg(&child)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .status()
+            .expect("git runs");
+        assert!(init.success(), "git init failed");
+        std::fs::create_dir_all(child.join(".git").join("greenharness")).expect("inbox dir");
+        if !lines.is_empty() {
+            std::fs::write(
+                child.join(".git").join("greenharness").join("inbox.md"),
+                lines,
+            )
+            .expect("inbox");
+        }
+    }
+    root
+}
+
+fn journal_text() -> String {
+    std::fs::read_to_string(home().join("greenbelay").join("journal.log")).unwrap_or_default()
+}
+
+#[test]
+fn outside_a_repository_each_child_inbox_is_told_in_name_order() {
+    let root = inbox_root(
+        "inbox-root-two",
+        &[("beta", OLD_ORPHAN), ("alpha", OLD_ORPHAN)],
+    );
+    let reply = send(&session_start_of("clear", "rootsa01", &root));
+    let text = reply.reason();
+    let alpha = text.find("in alpha: cd '").expect(&text);
+    let beta = text.find("in beta: cd '").expect(&text);
+    assert!(alpha < beta, "{text}");
+    let notice_after_alpha = text[alpha..].find("greenbelay/inbox:").expect(&text);
+    assert!(alpha + notice_after_alpha < beta, "{text}");
+    assert!(text[beta..].contains("greenbelay/inbox:"), "{text}");
+    let journal = journal_text();
+    for child in ["alpha", "beta"] {
+        assert!(
+            journal
+                .lines()
+                .any(|l| l.contains("rootsa01") && l.contains(child) && l.contains("orphans 1")),
+            "{child}: {journal}"
+        );
+    }
+}
+
+#[test]
+fn outside_a_repository_three_notices_show_and_the_rest_are_counted() {
+    let root = inbox_root(
+        "inbox-root-four",
+        &[
+            ("d4", OLD_ORPHAN),
+            ("a1", OLD_ORPHAN),
+            ("c3", OLD_ORPHAN),
+            ("b2", OLD_ORPHAN),
+        ],
+    );
+    let reply = send(&session_start_of("startup", "rootsb02", &root));
+    let text = reply.reason();
+    assert_eq!(text.matches("greenbelay/inbox: ").count(), 4, "{text}");
+    for shown in ["in a1: cd", "in b2: cd", "in c3: cd"] {
+        assert!(text.contains(shown), "{text}");
+    }
+    assert!(!text.contains("in d4: cd"), "{text}");
+    assert!(
+        text.contains("greenbelay/inbox: 1 more repository holds unfiled lines: d4; start a session in one to see them"),
+        "{text}"
+    );
+}
+
+#[test]
+fn outside_a_repository_a_filing_only_child_takes_no_slot_and_is_not_counted() {
+    let root = inbox_root(
+        "inbox-root-filing",
+        &[
+            ("a1", OLD_ORPHAN),
+            ("b2", OLD_ORPHAN),
+            ("c3", OLD_ORPHAN),
+            ("d4", ""),
+        ],
+    );
+    let take = root.join("d4/.git/greenharness/inbox.live.filing");
+    std::fs::write(&take, OLD_ORPHAN).unwrap();
+    let reply = send(&session_start_of("startup", "rootsc03", &root));
+    let text = reply.reason();
+    assert!(!text.contains("in d4"), "{text}");
+    assert!(!text.contains("more repositories"), "{text}");
+    for shown in ["in a1: cd", "in b2: cd", "in c3: cd"] {
+        assert!(text.contains(shown), "{text}");
+    }
+}
+
+#[test]
+fn outside_a_repository_observe_prints_nothing_but_journals() {
+    let root = inbox_root("inbox-root-observe", &[("a1", OLD_ORPHAN)]);
+    let reply = send_with_global(&session_start_of("clear", "rootsd04", &root), INBOX_OBSERVE);
+    assert!(
+        !reply.reason().contains("greenbelay/inbox"),
+        "{}",
+        reply.stdout
+    );
+    assert!(
+        journal_text()
+            .lines()
+            .any(|l| l.contains("rootsd04") && l.contains("a1") && l.contains("watched")),
+        "{}",
+        journal_text()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn outside_a_repository_a_child_named_with_a_newline_is_skipped() {
+    let root = inbox_root("inbox-root-newline", &[("na\nme", OLD_ORPHAN)]);
+    let reply = send(&session_start_of("startup", "rootse05", &root));
+    assert!(
+        !reply.reason().contains("greenbelay/inbox"),
+        "{}",
+        reply.stdout
+    );
+}
+
+#[test]
+fn a_git_entry_in_a_parent_directory_means_no_child_scan() {
+    let root = inbox_root("inbox-root-parent-git", &[("a1", OLD_ORPHAN)]);
+    // An invalid `.git` file: rev-parse fails, yet the cwd is inside a git tree.
+    std::fs::write(root.join(".git"), "not a gitdir\n").unwrap();
+    let cwd = root.join("work");
+    std::fs::create_dir_all(cwd.join("a1/.git/greenharness")).unwrap();
+    std::fs::write(cwd.join("a1/.git/greenharness/inbox.md"), OLD_ORPHAN).unwrap();
+    let reply = send(&session_start_of("startup", "rootsf06", &cwd));
+    assert!(
+        !reply.reason().contains("greenbelay/inbox"),
+        "{}",
+        reply.stdout
+    );
+}
