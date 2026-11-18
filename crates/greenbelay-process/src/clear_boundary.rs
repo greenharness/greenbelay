@@ -279,6 +279,9 @@ pub struct Boundary {
     /// The `-C` chain of the git call, resolved against the payload cwd;
     /// empty when the call had none.
     pub dirs: Vec<PathBuf>,
+    /// The shape that kept the walk from reading the directory the command
+    /// acted on (`subshell`, `cd-dash`, …); `None` when it read it.
+    pub unresolved: Option<&'static str>,
 }
 
 /// The boundary commands among the Bash tool calls of the window. `home`
@@ -305,6 +308,7 @@ pub fn boundaries(window: &TurnWindow<'_>, cwd: &Path, home: Option<&Path>) -> V
                         uuid: entry["uuid"].as_str().unwrap_or("").to_string(),
                         command: command.to_string(),
                         dirs,
+                        unresolved: None,
                     });
                 }
             }
@@ -2763,5 +2767,206 @@ mod tests {
         // One resume with the old joined path; the next person prompt clears
         // the pending (see `judge`), so no migration is needed.
         assert_eq!(*asked.borrow(), [PathBuf::from("/work/~/repo")]);
+    }
+
+    /// The 4526105a boundary command (session-boundaries t23): `LIVE` is set
+    /// at the top, and the `if … fi` between never assigns it.
+    const LIVE_4526105A: &str = r#"LIVE=~/Developer/Perso/decisions; git -C "$LIVE" fetch origin -q; DEF=$(git -C "$LIVE" symbolic-ref --short refs/remotes/origin/HEAD | sed 's#^origin/##'); GD=$(git -C "$LIVE" rev-parse --absolute-git-dir); if [ "$(git -C "$LIVE" branch --show-current)" != "$DEF" ]; then echo "live: on $(git -C "$LIVE" branch --show-current), not $DEF; left alone"; elif [ -n "$(git -C "$LIVE" status --porcelain --untracked-files=no)" ]; then echo "live: uncommitted changes; left alone"; elif [ -e "$GD/MERGE_HEAD" ] || [ -d "$GD/rebase-merge" ] || [ -d "$GD/rebase-apply" ]; then echo "live: merge/rebase in progress; left alone"; else git -C "$LIVE" merge --ff-only -q "origin/$DEF" && echo "live: fast-forwarded to $(git -C "$LIVE" rev-parse --short HEAD)" || echo "live: cannot fast-forward; left alone"; fi; git -C "$LIVE" worktree remove ../decisions-wt-t21 && echo "removed decisions-wt-t21" && git -C "$LIVE" branch -D docs/session-boundaries-t21"#;
+
+    /// The dirs and the unresolved shape of each boundary in `command`, with
+    /// the payload cwd `cwd`, home `/h`, and the Bash call's entry carrying
+    /// `entry_cwd` (none when `None`).
+    fn walked(
+        command: &str,
+        cwd: &str,
+        entry_cwd: Option<&str>,
+    ) -> Vec<(Vec<PathBuf>, Option<&'static str>)> {
+        let mut call = bash("b0", command);
+        if let Some(entry_cwd) = entry_cwd {
+            call["cwd"] = json!(entry_cwd);
+        }
+        let entries = vec![prompt("p1"), call];
+        let window = turn_window(&entries).expect("a window");
+        boundaries(&window, Path::new(cwd), Some(Path::new("/h")))
+            .into_iter()
+            .map(|boundary| (boundary.dirs, boundary.unresolved))
+            .collect()
+    }
+
+    fn paths(dirs: &[&str]) -> Vec<PathBuf> {
+        dirs.iter().map(PathBuf::from).collect()
+    }
+
+    /// The plan's Phase 1 table (cwd `/w`, home `/h`): a command that fixes
+    /// its directory is read, one that does not keeps today's dirs and is
+    /// unresolved.
+    #[test]
+    #[ignore = "t23: red until the walk lands"]
+    fn the_walk_follows_a_chained_cd_and_same_command_assignments() {
+        let resolved: &[(&str, &[&str])] = &[
+            ("cd /h/repo && git worktree remove ../x", &["/h/repo"]),
+            ("cd ~/repo; git commit -m \"docs(plan): p\"", &["/h/repo"]),
+            (
+                "LIVE=~/repo; git -C \"$LIVE\" worktree remove x",
+                &["/h/repo"],
+            ),
+            (LIVE_4526105A, &["/h/Developer/Perso/decisions"]),
+            ("W=/h/a; cd \"$W\" && git worktree remove ../b", &["/h/a"]),
+            (
+                "R=/h; git -C \"$R/relais\" worktree remove x",
+                &["/h/relais"],
+            ),
+            ("cd /h/a && git -C ~/b worktree remove x", &["/h/b"]),
+            ("cd /h/a 2>&1 && git worktree remove ../b", &["/h/a"]),
+            ("cd /h/a >/dev/null && git worktree remove ../b", &["/h/a"]),
+            ("LIVE='$x'; git -C \"$LIVE\" worktree remove y", &["/w/$x"]),
+            ("cd ./child && git worktree remove ../x", &["/w/child"]),
+            (
+                "cd /h/a; R=/h/b; git -C \"$R\" worktree remove x",
+                &["/h/b"],
+            ),
+            (
+                "X=$(cd /h/a; pwd); git -C /h/b worktree remove x",
+                &["/h/b"],
+            ),
+        ];
+        for (command, dirs) in resolved {
+            assert_eq!(
+                walked(command, "/w", Some("/w")),
+                vec![(paths(dirs), None)],
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "t23: red until the walk lands"]
+    fn a_shape_the_walk_cannot_read_keeps_todays_dirs_and_is_unresolved() {
+        let unresolved: &[(&str, &[&str], &str)] = &[
+            (
+                "git -C \"$LIVE\" worktree remove x",
+                &["/w/$LIVE"],
+                "unassigned",
+            ),
+            ("(cd /h/a && git worktree remove ../b)", &[], "subshell"),
+            (
+                "LIVE=$(git rev-parse --show-toplevel); git -C \"$LIVE\" worktree remove x",
+                &["/w/$LIVE"],
+                "command-subst",
+            ),
+            (
+                "for r in a b; do LIVE=/h/$r; git -C \"$LIVE\" worktree remove x; done",
+                &["/w/$LIVE"],
+                "loop-var",
+            ),
+            ("cd - && git worktree remove x", &[], "cd-dash"),
+            ("cd /h/a | cat; git worktree remove x", &[], "cd-piped"),
+            ("cd /h/a || git worktree remove x", &[], "cd-or"),
+            ("cd ~- && git worktree remove x", &[], "not-literal"),
+        ];
+        for (command, dirs, shape) in unresolved {
+            assert_eq!(
+                walked(command, "/w", Some("/w")),
+                vec![(paths(dirs), Some(*shape))],
+                "{command}"
+            );
+        }
+        // Carried from review: CDPATH is invisible to the hook, so a relative
+        // `cd` word without `./` or `../` is not read (unix B); a leading
+        // `then`/`do`/`else`/`elif`/`{` inside a compound is stripped before
+        // the walk reads the command, so its `cd` or assignment still counts
+        // as made inside the compound (backend 7).
+        let unread: &[(&str, &[&str])] = &[
+            ("cd repo && git worktree remove ../x", &[]),
+            ("if c; then cd /h/a; fi; git worktree remove x", &[]),
+            (
+                "if c; then LIVE=/h/b; fi; git -C \"$LIVE\" worktree remove x",
+                &["/w/$LIVE"],
+            ),
+            (
+                "R=/a; false && R=/b; git -C \"$R\" worktree remove x",
+                &["/w/$R"],
+            ),
+        ];
+        for (command, dirs) in unread {
+            let found = walked(command, "/w", Some("/w"));
+            assert_eq!(found.len(), 1, "{command}");
+            assert_eq!(found[0].0, paths(dirs), "{command}");
+            assert!(found[0].1.is_some(), "{command} is unresolved");
+        }
+    }
+
+    /// The walk starts where the call began, the entry's cwd: the payload cwd
+    /// can already be past the call's own `cd`. Without an entry cwd it
+    /// starts at the payload cwd.
+    #[test]
+    #[ignore = "t23: red until the walk lands"]
+    fn the_walk_starts_at_the_entry_cwd_then_the_payload_cwd() {
+        let command = "cd ./child && git worktree remove ../x";
+        assert_eq!(
+            walked(command, "/w/child", Some("/w")),
+            vec![(paths(&["/w/child"]), None)]
+        );
+        assert_eq!(
+            walked(command, "/w", None),
+            vec![(paths(&["/w/child"]), None)]
+        );
+    }
+
+    /// An unresolved own boundary adds one `watched unresolved <shape>
+    /// <what>` record, first, and the decision is the one without it.
+    #[test]
+    #[ignore = "t23: red until the walk lands"]
+    fn an_unresolved_boundary_is_journalled_and_decides_the_same() {
+        let entries_for = |command: &str| {
+            vec![
+                prompt("p1"),
+                with_uuid(
+                    assistant(
+                        Some((250_000, 0, 0)),
+                        false,
+                        json!([{"type": "tool_use", "id": "b1", "name": "Bash",
+                                "input": {"command": command}}]),
+                    ),
+                    "boundary-entry",
+                ),
+            ]
+        };
+        let view = StopView {
+            cwd: Some(PathBuf::from("/work")),
+            home: Some(PathBuf::from("/h")),
+            ..StopView::default()
+        };
+        let verdict_for = |command: &str| {
+            super::decide(
+                &view,
+                &entries_for(command),
+                State::default(),
+                || PhaseFact::NoOpenPhase,
+                || Stance::Deny,
+                |_| Repositories::Clean { heads: Vec::new() },
+                |_| true,
+            )
+        };
+        let unresolved = verdict_for("(cd /h/a && git worktree remove ../b)");
+        let plain = verdict_for("git worktree remove ../b");
+        assert_eq!(
+            unresolved.records.first(),
+            Some(&(
+                "watched".to_string(),
+                "unresolved subshell worktree remove".to_string()
+            ))
+        );
+        assert_eq!(
+            unresolved
+                .records
+                .iter()
+                .filter(|(_, what)| what.starts_with("unresolved "))
+                .count(),
+            1
+        );
+        assert_eq!(unresolved.records[1..], plain.records[..]);
+        assert!(matches!(unresolved.decision, Decision::Continue(_)));
+        assert!(matches!(plain.decision, Decision::Continue(_)));
     }
 }
