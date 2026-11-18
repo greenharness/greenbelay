@@ -187,7 +187,7 @@ fn a_stop_with_no_transcript_is_skipped_and_all_skipped_exits_1() {
 }
 
 #[test]
-fn a_journal_with_no_stop_exits_0() {
+fn a_journal_with_no_stop_exits_1() {
     let world = World::new("empty", &[]);
     let output = world.export(&[]);
     assert_eq!(output.status.code(), Some(1), "{}", text(&output.stderr));
@@ -276,6 +276,14 @@ fn temp_files_of_earlier_runs_are_removed_and_never_end_in_json() {
         greenbelay_guard::names::TEMP_PREFIX
     ));
     std::fs::write(&leftover, "{").unwrap();
+    // Only a leftover past the cleanup's age is another run's litter.
+    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+    std::fs::File::options()
+        .write(true)
+        .open(&leftover)
+        .unwrap()
+        .set_modified(past)
+        .unwrap();
     let output = world.export(&[]);
     assert!(output.status.success(), "{}", text(&output.stderr));
     assert_eq!(world.files(), ["feedc0de-1794960484.json"]);
@@ -341,4 +349,10 @@ fn an_excluded_stop_prints_a_comment_and_no_case_line() {
         read(&world.out().join("feedc0de-1794960484.json"))["countable"],
         json!(false)
     );
+    // A second run counts it again but prints nothing, so `>> <rule>.cases`
+    // never gains the comment twice.
+    let again = world.export(&[]);
+    assert!(again.status.success(), "{}", text(&again.stderr));
+    assert_eq!(text(&again.stdout), "");
+    assert!(text(&again.stderr).contains("1 excluded"));
 }

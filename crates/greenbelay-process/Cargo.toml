@@ -23,7 +23,9 @@ serde_json = { version = "1", features = ["preserve_order"] }
 # `serde_derive` proc-macro (with `proc-macro2`, `quote`, `syn`), which the
 # lock file already resolves. Both are maintained by the same authors as
 # serde_json; abandoned, the pin keeps building and the fallback is the
-# accessors this replaced.
+# accessors this replaced. Build scripts: `serde_derive` and `quote` have
+# none; `proc-macro2` runs one that only probes the compiler version. Release
+# cadence: serde and proc-macro2 ship several releases a year.
 serde = { version = "1", features = ["derive"] }
 
 # A plan's sha (`plan_review::body_sha`) is taken over the Markdown as

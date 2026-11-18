@@ -1308,7 +1308,12 @@ pub fn export(options: &Options) -> Report {
         match &fixture.standing {
             Standing::Excluded(why) => {
                 report.excluded += 1;
-                case_lines.push(format!("# excluded: Stop {}: {why}", fixture.name));
+                // An excluded Stop never gets a case line, so `known` never
+                // holds it: print its comment only when the fixture is new,
+                // or `>> <rule>.cases` would gain it again on every run.
+                if fresh {
+                    case_lines.push(format!("# excluded: Stop {}: {why}", fixture.name));
+                }
             }
             Standing::Differs(why) => {
                 report.replay_differs += 1;

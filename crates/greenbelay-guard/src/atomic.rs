@@ -36,8 +36,14 @@ use std::path::{Path, PathBuf};
 /// destination extension never meets a temp file.
 const TEMP_SUFFIX: &str = ".tmp";
 
-/// Remove the temp files of earlier runs in `dir`, whatever suffix their
-/// writer gave them. A directory that does not exist has none.
+/// A temp file younger than this may belong to a writer still running in the
+/// same directory, so [`remove_leftover_temps`] leaves it alone: a write and
+/// its rename take milliseconds, and a killed run's leftover is older.
+const LEFTOVER_AGE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Remove the temp files earlier runs left in `dir`, whatever suffix their
+/// writer gave them, once they are older than [`LEFTOVER_AGE`]. A directory
+/// that does not exist has none.
 pub fn remove_leftover_temps(dir: &Path) -> io::Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -46,15 +52,28 @@ pub fn remove_leftover_temps(dir: &Path) -> io::Result<()> {
     };
     for entry in entries {
         let entry = entry?;
-        if entry
+        if !entry
             .file_name()
             .to_string_lossy()
             .starts_with(crate::names::TEMP_PREFIX)
         {
+            continue;
+        }
+        let age = entry.metadata()?.modified()?.elapsed().unwrap_or_default();
+        if age >= LEFTOVER_AGE {
             std::fs::remove_file(entry.path())?;
         }
     }
     Ok(())
+}
+
+/// The temp file [`write_atomic`] stages `name` in, inside `dir`.
+fn temp_path(dir: &Path, name: &str) -> PathBuf {
+    dir.join(format!(
+        "{}{}-{name}{TEMP_SUFFIX}",
+        crate::names::TEMP_PREFIX,
+        std::process::id()
+    ))
 }
 
 /// Write `body` over `dest`, atomically.
@@ -67,11 +86,7 @@ pub fn write_atomic(dest: &Path, body: &str) -> io::Result<()> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "settings.json".to_string());
-    let tmp = dir.join(format!(
-        "{}{}-{name}{TEMP_SUFFIX}",
-        crate::names::TEMP_PREFIX,
-        std::process::id()
-    ));
+    let tmp = temp_path(&dir, &name);
 
     // A leftover from a killed run could be a symlink; `fs::write` follows.
     let _ = std::fs::remove_file(&tmp);
@@ -146,18 +161,34 @@ mod tests {
 
     #[test]
     fn a_temp_file_never_ends_in_the_destinations_extension() {
-        let d = scratch("suffix");
-        let temp = d.join(format!(
-            "{}1-a.json{TEMP_SUFFIX}",
-            crate::names::TEMP_PREFIX
-        ));
-        std::fs::write(&temp, "x").unwrap();
-        std::fs::write(d.join("keep.json"), "{}").unwrap();
-        remove_leftover_temps(&d).unwrap();
-        assert!(!temp.exists());
-        assert!(d.join("keep.json").exists());
-        assert!(!TEMP_SUFFIX.ends_with("json"));
-        let _ = std::fs::remove_dir_all(&d);
+        let dir = scratch("suffix");
+        let staged = temp_path(&dir, "a.json");
+        let staged_name = staged.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(!staged_name.ends_with(".json"), "{staged_name}");
+        assert!(staged_name.starts_with(crate::names::TEMP_PREFIX));
+        let _ = std::fs::remove_dir_all(&dir); // best-effort cleanup of a scratch dir
+    }
+
+    #[test]
+    fn only_an_old_leftover_temp_is_removed() {
+        let dir = scratch("leftover");
+        let old = dir.join(format!("{}1-old.json.tmp", crate::names::TEMP_PREFIX));
+        let young = dir.join(format!("{}2-young.json.tmp", crate::names::TEMP_PREFIX));
+        std::fs::write(&old, "x").unwrap();
+        std::fs::write(&young, "x").unwrap();
+        std::fs::write(dir.join("keep.json"), "{}").unwrap();
+        let past = std::time::SystemTime::now() - LEFTOVER_AGE - LEFTOVER_AGE;
+        std::fs::File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(past)
+            .unwrap();
+        remove_leftover_temps(&dir).unwrap();
+        assert!(!old.exists(), "an old leftover is removed");
+        assert!(young.exists(), "a young temp may be another writer's");
+        assert!(dir.join("keep.json").exists());
+        let _ = std::fs::remove_dir_all(&dir); // best-effort cleanup of a scratch dir
     }
 
     #[test]

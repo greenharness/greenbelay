@@ -1553,7 +1553,10 @@ impl TryFrom<StopFixture> for StopInputs {
     }
 }
 
-/// A serde failure, as the fixture error it means.
+/// A serde failure, as the fixture error it means. Telling a missing member
+/// from a wrong type reads serde_json's message text, which is not a stable
+/// API: `a_malformed_fixture_is_an_error` pins the wording, so an upgrade
+/// that rewords it turns that test red rather than mislabelling silently.
 fn fixture_error(error: &serde_json::Error) -> FixtureError {
     use serde_json::error::Category;
     let message = error.to_string();

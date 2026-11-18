@@ -208,6 +208,9 @@ explain flags:
                         fixtures there (default: the checkout's
                         tests/corpus/stop/clear-at-boundary/); --sample <n>
                         keeps the n most recent Stops
+  --cases <file>        explain clear-at-boundary --format cases: the .cases
+                        file whose Stop lines are not printed again (default:
+                        the checkout's tests/corpus/clear-at-boundary.cases)
 
 backtest flags:
   --compliance          per model, per week: what the model did NEXT after a
@@ -924,10 +927,13 @@ fn flags(args: &[OsString]) -> Result<Flags, String> {
             "--rule" => f.only.push(value(&mut i, &a)?),
             "--sample" => {
                 let v = value(&mut i, &a)?;
-                f.sample = Some(
-                    v.parse()
-                        .map_err(|_| format!("--sample: `{v}` is not a number"))?,
-                );
+                let n: usize = v
+                    .parse()
+                    .map_err(|_| format!("--sample: `{v}` is not a number"))?;
+                if n == 0 {
+                    return Err("--sample: takes 1 or more".to_string());
+                }
+                f.sample = Some(n);
             }
             "--window" => {
                 let v = value(&mut i, &a)?;
