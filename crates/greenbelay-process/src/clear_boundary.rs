@@ -60,6 +60,11 @@ pub struct Tail {
     /// The cap was reached before the start of the file: older entries exist
     /// that were not read (the hook journals `tail-capped`).
     pub capped: bool,
+    /// The byte offset of the first entry read (0 when the file start was
+    /// reached).
+    pub start: u64,
+    /// The byte offset the read ended at.
+    pub end: u64,
 }
 
 /// [`read_tail_until`] with the defaults, stopping once both the context size
@@ -114,18 +119,25 @@ pub fn read_tail_until_at(
             return Ok(Tail {
                 entries,
                 capped: false,
+                start: 0,
+                end: size,
             });
         }
+        let first_whole_line = start + (bytes.len() - whole_lines.len()) as u64;
         if chunk >= cap {
             return Ok(Tail {
                 entries,
                 capped: true,
+                start: first_whole_line,
+                end: size,
             });
         }
         if enough(&entries) {
             return Ok(Tail {
                 entries,
                 capped: false,
+                start: first_whole_line,
+                end: size,
             });
         }
         chunk = chunk.saturating_mul(2).min(cap);
@@ -148,16 +160,16 @@ fn parse_lines(bytes: &[u8]) -> Vec<Value> {
         .collect()
 }
 
-fn is_sidechain(entry: &Value) -> bool {
+pub(crate) fn is_sidechain(entry: &Value) -> bool {
     entry["isSidechain"].as_bool() == Some(true)
 }
 
-fn entry_type(entry: &Value) -> &str {
+pub(crate) fn entry_type(entry: &Value) -> &str {
     entry["type"].as_str().unwrap_or("")
 }
 
 /// The content blocks of an entry's message; a plain string is no blocks.
-fn blocks(entry: &Value) -> &[Value] {
+pub(crate) fn blocks(entry: &Value) -> &[Value] {
     entry
         .pointer("/message/content")
         .and_then(Value::as_array)
@@ -529,7 +541,7 @@ impl RelaisFlight {
 /// recognised keeps the run pending, and the rule silent), except a start
 /// not recognised, which the plan's Decision log names as the one contract
 /// to recheck at each relais release.
-mod relais_messages {
+pub(crate) mod relais_messages {
     /// The engine's frame around a message the relais plugin sent.
     pub const PLUGIN_MESSAGE_PREFIX: &str = "The relais plugin sent a message:\n";
     /// The start of an `mcp__relais__run` result that started a run.
@@ -560,7 +572,7 @@ fn result_text(block: &Value) -> String {
 }
 
 /// The word after `needle` (`run-65abc-1f2e`, `needs_decision`).
-fn word_after<'a>(text: &'a str, needle: &str) -> Option<&'a str> {
+pub(crate) fn word_after<'a>(text: &'a str, needle: &str) -> Option<&'a str> {
     let rest = &text[text.find(needle)? + needle.len()..];
     let end = rest
         .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
@@ -801,15 +813,15 @@ pub struct Pending {
 pub(crate) struct State {
     /// The opening prompt's uuid of the turn advised in, empty when the rule
     /// only observed.
-    turn: String,
+    pub(crate) turn: String,
     /// The key of the last boundary judged.
-    key: String,
+    pub(crate) key: String,
     /// The advices given in the session; a file in the old format reads 0.
-    advices: u32,
-    pending: Option<Pending>,
+    pub(crate) advices: u32,
+    pub(crate) pending: Option<Pending>,
 }
 
-fn parse_pending(pending_json: &Value) -> Option<Pending> {
+pub(crate) fn parse_pending(pending_json: &Value) -> Option<Pending> {
     let text = |name: &str| pending_json[name].as_str().map(str::to_string);
     Some(Pending {
         uuid: text("uuid")?,
@@ -856,7 +868,7 @@ fn read_state(session: &str) -> Option<State> {
     parse_state(&std::fs::read_to_string(state_file(session)?).ok()?)
 }
 
-fn render_state(state: &State) -> String {
+pub(crate) fn render_state(state: &State) -> String {
     let pending = state.pending.as_ref().map_or(Value::Null, |pending| {
         serde_json::json!({
             "uuid": pending.uuid,
@@ -1011,15 +1023,21 @@ pub fn on_stop(
     let prior = read_state(&stop.session).unwrap_or_default();
     let pending_uuid = prior.pending.as_ref().map(|pending| pending.uuid.clone());
     let Ok(tail) = read_tail_until(transcript, TAIL_FIRST_CHUNK, TAIL_CAP, |entries| {
-        context_size(entries).is_some()
-            && turn_window(entries).is_some()
-            && pending_uuid
-                .as_deref()
-                .is_none_or(|uuid| position_of(entries, uuid).is_some())
+        window_is_enough(entries, pending_uuid.as_deref())
     }) else {
         return Decision::Silent;
     };
     judge_boundary(stop, &tail, prior, fact, deadline, stance)
+}
+
+/// Whether a Stop's tail holds what the judgement reads: the context size, the
+/// turn window and, when a boundary is pending, the entry it was found in.
+/// The one stopping predicate of [`on_stop`] and of the exporter's replay of
+/// its window.
+pub(crate) fn window_is_enough(entries: &[Value], pending_uuid: Option<&str>) -> bool {
+    context_size(entries).is_some()
+        && turn_window(entries).is_some()
+        && pending_uuid.is_none_or(|uuid| position_of(entries, uuid).is_some())
 }
 
 /// The boundary a Stop judges: one this turn reached, or one kept pending
@@ -1037,7 +1055,7 @@ impl Candidate {
     }
 }
 
-fn position_of(entries: &[Value], uuid: &str) -> Option<usize> {
+pub(crate) fn position_of(entries: &[Value], uuid: &str) -> Option<usize> {
     if uuid.is_empty() {
         return None;
     }
@@ -1048,7 +1066,7 @@ fn position_of(entries: &[Value], uuid: &str) -> Option<usize> {
 
 /// Whether the entries show work started: an Edit, Write or NotebookEdit, a
 /// `git worktree add`, or an `mcp__relais__run`.
-fn work_in(entries: &[Value]) -> bool {
+pub(crate) fn work_in(entries: &[Value]) -> bool {
     entries
         .iter()
         .filter(|entry| entry_type(entry) == "assistant" && !is_sidechain(entry))
@@ -1219,6 +1237,23 @@ pub(crate) fn decide(
     }
 }
 
+/// The boundary a turn kept pending: `boundary`, with the directories of
+/// every boundary the turn reached.
+pub(crate) fn pending_from(found: &[Boundary], boundary: &Boundary) -> Pending {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for dir in found.iter().flat_map(|boundary| boundary.dirs.iter()) {
+        if !dirs.contains(dir) {
+            dirs.push(dir.clone());
+        }
+    }
+    Pending {
+        uuid: boundary.uuid.clone(),
+        command: boundary.command.clone(),
+        what: boundary.what.clone(),
+        dirs,
+    }
+}
+
 /// `None` is silence, journalled or not as each check decides.
 fn judge<P: FnMut(&State) -> bool>(
     view: &StopView,
@@ -1244,20 +1279,7 @@ fn judge<P: FnMut(&State) -> bool>(
             .is_none_or(|pending| pending.uuid != boundary.uuid)
     });
     let candidate = match (own, state.pending.clone()) {
-        (Some(boundary), _) => {
-            let mut dirs: Vec<PathBuf> = Vec::new();
-            for dir in found.iter().flat_map(|boundary| boundary.dirs.iter()) {
-                if !dirs.contains(dir) {
-                    dirs.push(dir.clone());
-                }
-            }
-            Candidate::Own(Pending {
-                uuid: boundary.uuid.clone(),
-                command: boundary.command.clone(),
-                what: boundary.what.clone(),
-                dirs,
-            })
-        }
+        (Some(boundary), _) => Candidate::Own(pending_from(&found, boundary)),
         (None, None) => return ledger.watched("no boundary"),
         (None, Some(pending)) => {
             let Some(at) = position_of(entries, &pending.uuid) else {
@@ -1394,6 +1416,10 @@ fn flag(fixture: &Value, path: &str) -> Result<bool, String> {
 pub fn judge_case(fixture_json: &str) -> Result<bool, String> {
     let fixture: Value = serde_json::from_str(fixture_json)
         .map_err(|error| format!("fixture is not JSON: {error}"))?;
+    if fixture["countable"].as_bool() == Some(false) {
+        let why = fixture["excluded"].as_str().unwrap_or("no reason given");
+        return Err(format!("not countable: {why}"));
+    }
     let text = |path: &str| member(&fixture, path).map(|value| value.as_str().map(str::to_string));
     let view = StopView {
         cwd: text("/payload/cwd")?.map(PathBuf::from),
@@ -1441,16 +1467,44 @@ pub fn judge_case(fixture_json: &str) -> Result<bool, String> {
     let entries = member(&fixture, "/entries")?
         .as_array()
         .ok_or("fixture /entries is not a list")?;
+    Ok(replay_at_deny(&view, entries, prior, phase, repositories).fired)
+}
+
+/// What a replay at `deny` settled.
+pub(crate) struct Replay {
+    /// The decision is a Continue.
+    pub fired: bool,
+    pub records: Vec<(String, String)>,
+    /// The last state the judgement persisted.
+    pub saved: Option<State>,
+}
+
+/// [`decide`] at `deny` with frozen facts and a state write that holds.
+pub(crate) fn replay_at_deny(
+    view: &StopView,
+    entries: &[Value],
+    prior: State,
+    phase: PhaseFact,
+    repositories: Repositories,
+) -> Replay {
+    let mut saved = None;
     let verdict = decide(
-        &view,
+        view,
         entries,
         prior,
         || phase,
         || Stance::Deny,
         |_| repositories,
-        |_| true,
+        |state| {
+            saved = Some(state.clone());
+            true
+        },
     );
-    Ok(matches!(verdict.decision, Decision::Continue(_)))
+    Replay {
+        fired: matches!(verdict.decision, Decision::Continue(_)),
+        records: verdict.records,
+        saved,
+    }
 }
 
 /// The replay of a Stop case for `rule_id`; `None` for a rule this module

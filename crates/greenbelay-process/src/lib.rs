@@ -11,6 +11,7 @@ pub mod block_registry;
 pub mod board;
 pub mod candidates_block;
 pub mod clear_boundary;
+pub mod clear_boundary_export;
 pub mod code_review;
 pub mod content_id;
 pub mod file_types;

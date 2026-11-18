@@ -204,6 +204,10 @@ mine flags:
 
 explain flags:
   --rank novelty        label the matches least like the ones already reviewed
+  --out <dir>           explain clear-at-boundary --format cases: write the Stop
+                        fixtures there (default: the checkout's
+                        tests/corpus/stop/clear-at-boundary/); --sample <n>
+                        keeps the n most recent Stops
 
 backtest flags:
   --compliance          per model, per week: what the model did NEXT after a
@@ -1034,6 +1038,16 @@ fn run_backtest(args: &[OsString], explain: bool) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    let as_cases = explain && f.format.as_deref() == Some("cases");
+    if let Some(other) = f.format.as_deref() {
+        if other != "cases" {
+            eprintln!("{BIN}: --format takes `cases`, not `{other}`");
+            return ExitCode::from(2);
+        }
+    }
+    if as_cases && f.only == [greenbelay_guard::rules::clear_at_boundary::RULE.id] {
+        return run_export_stops(&f);
+    }
     let roots = match transcript::roots(&f.transcripts) {
         Ok(r) => r,
         Err(e) => {
@@ -1046,13 +1060,6 @@ fn run_backtest(args: &[OsString], explain: bool) -> ExitCode {
         tool: "Bash",
         since: f.since,
     };
-    let as_cases = explain && f.format.as_deref() == Some("cases");
-    if let Some(other) = f.format.as_deref() {
-        if other != "cases" {
-            eprintln!("{BIN}: --format takes `cases`, not `{other}`");
-            return ExitCode::from(2);
-        }
-    }
     let novelty = match f.rank.as_deref() {
         None => false,
         Some("novelty") if explain => true,
@@ -1118,6 +1125,57 @@ fn run_backtest(args: &[OsString], explain: bool) -> ExitCode {
             eprintln!(concat!(greenbelay_guard::bin!(), ": {}"), e.explain());
             ExitCode::from(2)
         }
+    }
+}
+
+/// `explain clear-at-boundary --format cases`: freeze the Stops the rule's
+/// journal lines record as fixtures, and print one `?` case line for each.
+/// Stdout carries only case lines; the notes and the summary go to stderr.
+fn run_export_stops(f: &Flags) -> ExitCode {
+    let rule = greenbelay_guard::rules::clear_at_boundary::RULE.id;
+    let out = match &f.out {
+        Some(dir) => dir.clone(),
+        None if corpus::checkout_present() => corpus::stop_dir_for(rule),
+        None => {
+            eprintln!(
+                concat!(
+                    "{}: this build has no checkout to write fixtures into; ",
+                    "pass --out <dir>, or run `cargo run -- explain {} --format cases` ",
+                    "from a checkout of ",
+                    greenbelay_guard::bin!()
+                ),
+                BIN, rule
+            );
+            return ExitCode::from(2);
+        }
+    };
+    let roots = match transcript::roots(&f.transcripts) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!(concat!(greenbelay_guard::bin!(), ": {}"), e.explain());
+            return ExitCode::from(2);
+        }
+    };
+    let mut options = greenbelay_process::clear_boundary_export::Options::new(out);
+    options.journal = journal::dir()
+        .map(|dir| greenbelay_process::clear_boundary_export::journal_files(&dir))
+        .unwrap_or_default();
+    options.transcripts = transcript::files(&roots);
+    options.cases_text = std::fs::read_to_string(corpus::path_for(rule)).unwrap_or_default();
+    options.sample = f.sample;
+    options.home = std::env::var("HOME").ok();
+    let report = greenbelay_process::clear_boundary_export::export(&options);
+    for note in &report.notes {
+        eprintln!("{BIN}: {note}");
+    }
+    eprintln!("{}", report.summary());
+    for line in &report.stdout {
+        println!("{line}");
+    }
+    if report.failed() {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
     }
 }
 

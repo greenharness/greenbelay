@@ -272,7 +272,7 @@ in t20's Resolution.
   check` and `graduate` in `src/main.rs`. Also the root-crate corpus test,
   `tests/corpus_stop.rs`, and a test that fails when any embedded Stop
   fixture exceeds 64 KiB.
-- [ ] Phase 3: the exporter (`crates/greenbelay-process/src/clear_boundary.rs`
+- [x] Phase 3: the exporter (`crates/greenbelay-process/src/clear_boundary.rs`
   and the explain arm in `src/main.rs`). Freeze the 14 sessions'
   transcripts first, because transcripts get deleted: run the export once
   with `--out` set to a scratch directory outside the embedded tree

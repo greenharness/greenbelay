@@ -90,6 +90,17 @@ pub fn path_for(rule: &str) -> PathBuf {
         .join(format!("{rule}.cases"))
 }
 
+/// Where a rule's Stop fixtures live IN A CHECKOUT: the directory `explain
+/// --format cases` writes to by default. Like [`path_for`], it names the
+/// machine that built the binary; the compiled-in copy is `EMBEDDED_STOP`.
+pub fn stop_dir_for(rule: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("corpus")
+        .join("stop")
+        .join(rule)
+}
+
 /// Every rule's reviewed cases, compiled into the binary at the version
 /// they were reviewed for. A release carries its own evidence, so
 /// `graduate` on an installed copy judges against the same corpus the test
