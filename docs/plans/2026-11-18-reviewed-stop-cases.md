@@ -267,7 +267,7 @@ in t20's Resolution.
   Stop suite `tests/clear_at_boundary.rs` passes unchanged. New unit tests
   replay hand-built fixtures for an advice, a `pending-work`, a `pending
   relais`, a `background_busy`, and a malformed fixture.
-- [ ] Phase 2: `StopCase`, `EMBEDDED_STOP` and `score_cases_with` in
+- [x] Phase 2: `StopCase`, `EMBEDDED_STOP` and `score_cases_with` in
   `crates/greenbelay-guard/src/corpus.rs`, and the wiring for `corpus
   check` and `graduate` in `src/main.rs`. Also the root-crate corpus test,
   `tests/corpus_stop.rs`, and a test that fails when any embedded Stop

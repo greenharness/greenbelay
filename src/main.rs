@@ -3563,7 +3563,7 @@ fn run_corpus(args: &[OsString]) -> ExitCode {
     let mut healthy = true;
     let w = ui::id_column(rule_table::RULES);
     for rule in rule_table::RULES {
-        let score = corpus::score(rule);
+        let score = corpus::score_with(rule, Some(greenbelay_process::clear_boundary::stop_judge));
         if score.reviewed == 0 && score.unreviewed == 0 {
             println!("{:<w$}no cases yet", rule.id);
             continue;
@@ -3586,13 +3586,23 @@ fn run_corpus(args: &[OsString]) -> ExitCode {
             } else {
                 format!("{}.cases", rule.id)
             };
-            println!(
-                "  {}:{} expected {} — {}",
-                shown,
-                d.line,
-                d.expected.as_str(),
-                corpus::escape(&d.command)
-            );
+            match &d.fixture {
+                Some(fixture) => println!(
+                    "  {}:{} expected {} — {} ({fixture}): {}",
+                    shown,
+                    d.line,
+                    d.expected.as_str(),
+                    corpus::escape(&d.command),
+                    d.why
+                ),
+                None => println!(
+                    "  {}:{} expected {} — {}",
+                    shown,
+                    d.line,
+                    d.expected.as_str(),
+                    corpus::escape(&d.command)
+                ),
+            }
         }
     }
     if healthy {
@@ -3632,7 +3642,11 @@ fn run_graduate(args: &[OsString], promoting: bool) -> ExitCode {
         rules::Stance::Observe
     };
 
-    let verdict = graduate::assess(rule, to);
+    let verdict = graduate::assess_score(
+        rule,
+        to,
+        &corpus::score_with(rule, Some(greenbelay_process::clear_boundary::stop_judge)),
+    );
     for (ok, line) in &verdict.lines {
         println!(
             "  {} {line}",
