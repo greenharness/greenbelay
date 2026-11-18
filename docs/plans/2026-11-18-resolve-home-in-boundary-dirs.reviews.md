@@ -1,0 +1,67 @@
+# Full reviews: clear-at-boundary resolves `~` in a boundary's `-C` directory
+
+All seats ran on opus-5-5. Round 1: rust 31k / 28 s, tui 32k / 38 s, unix 28k / 34 s, backend 44k / 71 s.
+
+- **lang:rust**, approve-with-changes.
+  - Round 1:
+    - #1 high: the fixture enum is externally tagged, so a bare map cannot be read (accepted, `per_directory`).
+    - #2: the `$HOME` word rules, and `None` for an empty home (accepted).
+    - #3: replay keys are resolved directories, not toplevels (accepted).
+    - #4: stale `Pending.dirs` (accepted: no migration).
+    - #5: tests inject home (accepted).
+    - #6: a pass bar (dup of backend#4).
+  - Round 2: all resolved.
+  - Carried:
+    - the probe repository is created and removed by the plan;
+    - a hold counts as confirmed when its dirty file is the one named in the transcript.
+- **tui**, approve-with-changes.
+  - Round 1:
+    - #1: the journal holds do not name the directory, so the recipe selects them through the transcript (accepted).
+    - #2: rewrite the stale `?` comment (accepted).
+  - Round 2: both resolved.
+  - Carried:
+    - #3 medium: the pass bar needs at least one confirmed hold, else extend the check once;
+    - #4: restore the `cargo test` verification line;
+    - #5: delete the probe repository, and paste both outputs into t21.
+- **unix**, approve-with-changes.
+  - Round 1:
+    - #1: `segments` drops quoting, so a quoted `~` or a single-quoted `$HOME` must stay literal (accepted).
+    - #2: an unset HOME (dup of rust#2).
+    - #3: run graduate bare and record its exit code (accepted).
+  - Round 2: all resolved.
+  - Carried:
+    - #4 medium: restore the `cargo test` line (same as tui#4).
+- **backend**, approve-with-changes.
+  - Round 1:
+    - #1: the map shape (dup of rust#1).
+    - #2: Phase 3 file names (accepted).
+    - #3: a live check under ADR-0060 (accepted).
+    - #4: a pass bar and a rollback (accepted).
+    - #5: draw the replay in the picture (accepted).
+    - #6: the stale pending (accepted).
+  - Round 2: all resolved.
+  - Carried:
+    - #7 low: name the `Word` type and both callers of `segments`, `adds_worktree` included;
+    - after Codex: `-C ~ -C ..` folds to empty in replay.
+- **codex**, approve-with-changes, high effort.
+  - #1 high: with the literal home `~`, an expanded word is still joined to the cwd (accepted, backend re-ran: resolved).
+  - Carried:
+    - #2 medium: `$HO"ME"` and `"\$HOME"` need the provenance of each token kept;
+    - #3 medium: the probe needs a clean baseline with a comparison ref, a restore rather than a commit, and a run at deny.
+- **The delta after Codex** (every seat re-bound to the final body):
+  - lang:rust, medium: an expanded word replaces the whole base `chain` has built so far, not just the cwd. Test `-C rel -C ~/a` → `~/a`.
+  - tui (approve), unix, rust, low: pin `-C ~/..` and `-C ~ -C ..` with the symbolic home. Replay gives an empty path; live gives home's parent.
+  - unix: `Word` keeps whether each character of the prefix was quoted or escaped. `$HO"ME"/a`, `"\$HOME/a"` and `\~/a` stay as written, checked against zsh.
+
+**Carried checklist for implementation:**
+- `Word` provenance per character, with both callers of `segments` and the zsh cases.
+- An expanded word replaces the chained base.
+- Pin the `..`-past-`~` behaviour.
+- Restore the `cargo test -p greenbelay-process clear_boundary` + `cargo test -p greenbelay-guard` verification line.
+- The probe:
+  - its repository is created with a clean baseline and an upstream;
+  - it is run dirty, then restored (not committed), at deny;
+  - both outputs are pasted into t21, then the repository is deleted.
+- The 7-day pass bar:
+  - at least one selected hold must be confirmed by the dirty file its transcript names;
+  - with none by 11-25, extend the check once.

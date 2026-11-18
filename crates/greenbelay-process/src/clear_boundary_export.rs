@@ -23,9 +23,10 @@ use greenbelay_guard::rules::clear_at_boundary::RULE;
 use serde_json::{json, Map, Value};
 
 use crate::clear_boundary::{
-    blocks, boundaries, entry_type, is_person_prompt, is_sidechain, judge_case, pending_from,
-    read_tail_until_at, relais_messages, replay_at_deny, turn_window, window_is_enough, word_after,
-    work_in, Pending, Repositories, State, StopView, Tail, TAIL_CAP, TAIL_FIRST_CHUNK,
+    blocks, boundaries, entry_type, home_from, is_person_prompt, is_sidechain, judge_case,
+    pending_from, read_tail_until_at, relais_messages, replay_at_deny, turn_window,
+    window_is_enough, word_after, work_in, Pending, Repositories, State, StopView, Tail,
+    SYMBOLIC_HOME, TAIL_CAP, TAIL_FIRST_CHUNK,
 };
 use crate::plan_phases::PhaseFact;
 
@@ -409,6 +410,11 @@ impl Scrub {
         scrubbed
     }
 
+    /// The home the live hook resolved `~` against, when there is one.
+    fn home_dir(&self) -> Option<PathBuf> {
+        home_from(self.home.clone().map(Into::into))
+    }
+
     /// A Bash command, through the backtest's redaction.
     fn command(&self, command: &str) -> String {
         self.text(&journal::redact(command))
@@ -582,7 +588,7 @@ impl Exporter<'_> {
             Ok(placed) => {
                 let cwd = PathBuf::from(placed.cwd.clone().unwrap_or_default());
                 let own = turn_window(&placed.tail.entries).and_then(|window| {
-                    let found = boundaries(&window, &cwd);
+                    let found = boundaries(&window, &cwd, self.scrub.home_dir().as_deref());
                     let boundary = found.last()?;
                     before
                         .as_ref()
@@ -653,6 +659,7 @@ impl Exporter<'_> {
         let frozen = Frozen {
             view: StopView {
                 cwd: placed.cwd.as_ref().map(PathBuf::from),
+                home: self.scrub.home_dir(),
                 permission_mode: Some(row.mode.clone()).filter(|mode| mode != "-"),
                 background_busy: kind == Kind::PendingBackground,
                 stop_hook_active: false,
@@ -822,7 +829,7 @@ impl Exporter<'_> {
             &placed.tail.entries,
             frozen.prior.clone(),
             frozen.phase,
-            frozen.repositories.clone(),
+            |_| frozen.repositories.clone(),
         );
         let entries: Vec<Value> = placed
             .tail
@@ -837,6 +844,7 @@ impl Exporter<'_> {
                     .cwd
                     .as_ref()
                     .map(|cwd| PathBuf::from(self.scrub.text(&cwd.to_string_lossy()))),
+                home: Some(PathBuf::from(SYMBOLIC_HOME)),
                 ..frozen.view.clone()
             },
             prior: State {
@@ -859,7 +867,7 @@ impl Exporter<'_> {
             &entries,
             scrubbed.prior.clone(),
             scrubbed.phase,
-            scrubbed.repositories.clone(),
+            |_| scrubbed.repositories.clone(),
         );
         let disagreement = self.disagreement(&original, &redacted);
         let write = |excluded: Option<&str>| {

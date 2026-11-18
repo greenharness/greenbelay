@@ -2,7 +2,7 @@
   "source": {"session":"8145b6c0","journal":1794667260,"outcome":"advised","what":"worktree remove","stop_uuid":"d8a818de-afae-49f2-975e-52057320353f","window":{"start":6284582,"end":6347389,"capped":false}},
   "payload": {"cwd":"~/Developer/Perso","permission_mode":"bypassPermissions","background_busy":false,"stop_hook_active":false,"ends_with_question":false,"waiting_line":false,"marker":false},
   "state": {"turn":"","key":"","advices":0,"pending":null},
-  "facts": {"phase":"none","repositories":"clean"},
+  "facts": {"phase":"none","repositories":{"per_directory":{"~/.local/share/chezmoi":"uncommitted changes"}}},
   "early": false,
   "countable": true,
   "entries": [
