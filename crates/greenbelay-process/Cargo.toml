@@ -15,6 +15,17 @@ categories = ["development-tools"]
 greenbelay-guard.workspace = true
 serde_json = { version = "1", features = ["preserve_order"] }
 
+# Only `clear_boundary::StopFixture`: a recorded Stop is OUR file, written by
+# `explain --format cases` and read back by the corpus, so one typed decode
+# replaces a dozen hand-written accessors (unlike the hook payload, whose
+# shape is somebody else's; see the guard's manifest). What this owns:
+# `serde` is already in the tree through the guard, and `derive` adds the
+# `serde_derive` proc-macro (with `proc-macro2`, `quote`, `syn`), which the
+# lock file already resolves. Both are maintained by the same authors as
+# serde_json; abandoned, the pin keeps building and the fallback is the
+# accessors this replaced.
+serde = { version = "1", features = ["derive"] }
+
 # A plan's sha (`plan_review::body_sha`) is taken over the Markdown as
 # CommonMark reads it, so a formatter that only moves blank lines, list
 # markers or table padding keeps the review bound, while `a * b` and a list

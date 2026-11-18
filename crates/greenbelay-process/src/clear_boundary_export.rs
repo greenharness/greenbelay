@@ -35,6 +35,9 @@ pub struct Options {
     pub journal: Vec<PathBuf>,
     /// Every transcript file under the roots.
     pub transcripts: Vec<PathBuf>,
+    /// The directories `transcripts` were found under, for the note that
+    /// names where a missing transcript was looked for.
+    pub transcript_roots: Vec<PathBuf>,
     /// Where the fixtures are written.
     pub out: PathBuf,
     /// The target `.cases` file's text, `""` when there is none.
@@ -53,6 +56,7 @@ impl Options {
         Self {
             journal: Vec::new(),
             transcripts: Vec::new(),
+            transcript_roots: Vec::new(),
             out,
             cases_text: String::new(),
             sample: None,
@@ -91,6 +95,11 @@ impl Report {
             self.already,
             self.skipped
         )
+    }
+
+    /// The journal holds no Stop line of the rule at all.
+    pub fn found_nothing(&self) -> bool {
+        self.candidates == 0
     }
 
     /// Candidates were found and every one was skipped.
@@ -213,35 +222,42 @@ fn parse_row(line: &str) -> Option<Row> {
 }
 
 /// The journal files in `dir`: `journal.log`, its generations and any copy
-/// kept beside them, in name order.
-pub fn journal_files(dir: &Path) -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map(|entries| {
-            entries
-                .flatten()
-                .filter(|entry| {
-                    entry
-                        .file_name()
-                        .to_string_lossy()
-                        .starts_with("journal.log")
-                })
-                .map(|entry| entry.path())
-                .filter(|path| path.is_file())
-                .collect()
-        })
-        .unwrap_or_default();
+/// kept beside them, in name order. A directory that does not exist has none.
+pub fn journal_files(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let mut files = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("journal.log")
+            && entry.path().is_file()
+        {
+            files.push(entry.path());
+        }
+    }
     files.sort();
-    files
+    Ok(files)
 }
 
-/// The rows of `paths`; a line a later file repeats from an earlier one (a
-/// rotated copy) counts once.
-fn read_rows(paths: &[PathBuf]) -> Vec<Row> {
+/// The rows of `paths`, and one note for each file that could not be read; a
+/// line a later file repeats from an earlier one (a rotated copy) counts once.
+fn read_rows(paths: &[PathBuf]) -> (Vec<Row>, Vec<String>) {
     let mut rows = Vec::new();
+    let mut notes = Vec::new();
     let mut earlier: HashSet<String> = HashSet::new();
     for path in paths {
-        let Ok(text) = std::fs::read_to_string(path) else {
-            continue;
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) => {
+                notes.push(format!("skipped: {}: {error}", path.display()));
+                continue;
+            }
         };
         let lines: Vec<&str> = text.lines().collect();
         rows.extend(
@@ -253,7 +269,7 @@ fn read_rows(paths: &[PathBuf]) -> Vec<Row> {
         earlier.extend(lines.iter().map(|line| (*line).to_string()));
     }
     rows.sort_by_key(|row| row.ts); // stable: lines of one second keep their file order
-    rows
+    (rows, notes)
 }
 
 /// A transcript line: where it ends, and what finds a Stop in it.
@@ -330,13 +346,42 @@ enum Built {
     Fixture(Box<Fixture>),
 }
 
+/// Where a built fixture stands as a case.
+enum Standing {
+    Countable,
+    /// The replay at deny disagrees with the journal line, in these words.
+    Differs(String),
+    /// Not countable, for this reason.
+    Excluded(String),
+}
+
+/// Whether the person's next turn after a Stop ran work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NextTurn {
+    Worked,
+    Idle,
+}
+
+impl NextTurn {
+    fn of_work(worked: &[Value]) -> Self {
+        if work_in(worked) {
+            NextTurn::Worked
+        } else {
+            NextTurn::Idle
+        }
+    }
+
+    fn json(self) -> Value {
+        json!(self == NextTurn::Worked)
+    }
+}
+
 struct Fixture {
     name: String,
     text: String,
-    /// Why the fixture is not countable.
-    excluded: Option<String>,
-    /// How the replay at deny disagrees with the journal line.
-    replay_differs: Option<String>,
+    standing: Standing,
+    /// Something to tell on stderr about this fixture.
+    note: Option<String>,
 }
 
 /// Path scrubbing and command redaction.
@@ -387,6 +432,18 @@ struct Exporter<'a> {
 }
 
 impl Exporter<'_> {
+    fn searched_roots(&self) -> String {
+        if self.options.transcript_roots.is_empty() {
+            return "(no root given)".to_string();
+        }
+        self.options
+            .transcript_roots
+            .iter()
+            .map(|root| root.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     fn transcript_for(&self, session: &str) -> Result<PathBuf, Unplaced> {
         let matching: Vec<&PathBuf> = self
             .options
@@ -402,7 +459,8 @@ impl Exporter<'_> {
             .collect();
         match matching.as_slice() {
             [] => Err(Unplaced::Skipped(format!(
-                "session {session}: no transcript"
+                "session {session}: no transcript under {}; name another root with --transcripts <dir>",
+                self.searched_roots()
             ))),
             [only] => Ok((*only).clone()),
             _ => Err(Unplaced::Skipped(format!(
@@ -614,13 +672,25 @@ impl Exporter<'_> {
                     directory: PathBuf::new(),
                     reason: reason.clone(),
                 },
-                _ => Repositories::Clean { heads: Vec::new() },
+                Kind::Advised
+                | Kind::Denied
+                | Kind::PendingWork
+                | Kind::PendingRelais
+                | Kind::PendingBackground => Repositories::Clean { heads: Vec::new() },
             },
         };
-        let early = early_after(&placed.path, placed.end).unwrap_or(false);
-        Built::Fixture(Box::new(
-            self.freeze(target, &kind, name, &placed, &frozen, early),
-        ))
+        let (early, note) = match early_after(&placed.path, placed.end) {
+            Ok(next) => (Some(next), None),
+            Err(error) => (
+                None,
+                Some(format!(
+                    "{name}: the transcript after the Stop is unreadable ({error}); `early` is left null and out of the early share"
+                )),
+            ),
+        };
+        let mut fixture = self.freeze(target, &kind, name, &placed, &frozen, early);
+        fixture.note = note;
+        Built::Fixture(Box::new(fixture))
     }
 
     /// A fixture for a Stop whose window cannot be rebuilt: no entries, not
@@ -636,14 +706,14 @@ impl Exporter<'_> {
                 repositories: Repositories::Clean { heads: Vec::new() },
             },
             None,
-            false,
+            None,
             Some(why),
         );
         Fixture {
             name: name.to_string(),
             text: render(&head, &[]),
-            excluded: Some(why.to_string()),
-            replay_differs: None,
+            standing: Standing::Excluded(why.to_string()),
+            note: None,
         }
     }
 
@@ -654,7 +724,7 @@ impl Exporter<'_> {
         kind: &Kind,
         frozen: &Frozen,
         placed: Option<&Placed>,
-        early: bool,
+        early: Option<NextTurn>,
         excluded: Option<&str>,
     ) -> Map<String, Value> {
         let row = &self.rows[target];
@@ -726,7 +796,10 @@ impl Exporter<'_> {
                 },
             }),
         );
-        head.insert("early".to_string(), json!(early));
+        head.insert(
+            "early".to_string(),
+            early.map_or(Value::Null, NextTurn::json),
+        );
         head.insert("countable".to_string(), json!(excluded.is_none()));
         if let Some(why) = excluded {
             head.insert("excluded".to_string(), json!(why));
@@ -742,7 +815,7 @@ impl Exporter<'_> {
         name: String,
         placed: &Placed,
         frozen: &Frozen,
-        early: bool,
+        early: Option<NextTurn>,
     ) -> Fixture {
         let original = replay_at_deny(
             &frozen.view,
@@ -809,16 +882,17 @@ impl Exporter<'_> {
                 text = write(excluded.as_deref());
             }
         }
-        let replay_differs = if excluded.is_some() {
-            None
-        } else {
-            replay_difference(kind, &redacted)
+        let standing = match excluded {
+            Some(why) => Standing::Excluded(why),
+            None => {
+                replay_difference(kind, &redacted).map_or(Standing::Countable, Standing::Differs)
+            }
         };
         Fixture {
             name,
             text,
-            excluded,
-            replay_differs,
+            standing,
+            note: None,
         }
     }
 
@@ -833,8 +907,8 @@ impl Exporter<'_> {
         if original.fired != redacted.fired {
             return Some(format!(
                 "the redacted window {} where the original {}",
-                fires(redacted.fired),
-                fires(original.fired)
+                Firing::of(redacted),
+                Firing::of(original)
             ));
         }
         if original.records != redacted.records {
@@ -842,14 +916,7 @@ impl Exporter<'_> {
         }
         // The original window's commands are normalised the way the trimmed
         // entries were; the redacted window's already are.
-        let normal = |state: &Option<State>, original_window: bool| {
-            let command = |text: &str| {
-                if original_window {
-                    self.scrub.command(text)
-                } else {
-                    text.to_string()
-                }
-            };
+        let normal = |state: &Option<State>, command: &dyn Fn(&str) -> String| {
             state.as_ref().map(|state| {
                 (
                     state.turn.clone(),
@@ -865,7 +932,9 @@ impl Exporter<'_> {
                 )
             })
         };
-        (normal(&original.saved, true) != normal(&redacted.saved, false))
+        let scrubbed = |text: &str| self.scrub.command(text);
+        let unchanged = |text: &str| text.to_string();
+        (normal(&original.saved, &scrubbed) != normal(&redacted.saved, &unchanged))
             .then(|| "the redacted window writes another state".to_string())
     }
 
@@ -982,11 +1051,29 @@ impl Exporter<'_> {
     }
 }
 
-fn fires(fired: bool) -> &'static str {
-    if fired {
-        "fires"
-    } else {
-        "is silent"
+/// What a replay did, in words.
+#[derive(Debug, Clone, Copy)]
+enum Firing {
+    Fires,
+    Silent,
+}
+
+impl Firing {
+    fn of(replay: &crate::clear_boundary::Replay) -> Self {
+        if replay.fired {
+            Firing::Fires
+        } else {
+            Firing::Silent
+        }
+    }
+}
+
+impl std::fmt::Display for Firing {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str(match self {
+            Firing::Fires => "fires",
+            Firing::Silent => "is silent",
+        })
     }
 }
 
@@ -1092,7 +1179,7 @@ fn render(head: &Map<String, Value>, entries: &[Value]) -> String {
 
 /// Whether the person's next turn after the Stop at byte `end` ran work: an
 /// Edit, a Write, a NotebookEdit, a `git worktree add` or a relais run.
-fn early_after(path: &Path, end: u64) -> std::io::Result<bool> {
+fn early_after(path: &Path, end: u64) -> std::io::Result<NextTurn> {
     let mut file = std::fs::File::open(path)?;
     file.seek(SeekFrom::Start(end))?;
     let mut turn: Vec<Value> = Vec::new();
@@ -1110,14 +1197,15 @@ fn early_after(path: &Path, end: u64) -> std::io::Result<bool> {
             turn.push(entry);
         }
     }
-    Ok(work_in(&turn))
+    Ok(NextTurn::of_work(&turn))
 }
 
 /// Export the Stops the journal records.
 pub fn export(options: &Options) -> Report {
+    let (rows, journal_notes) = read_rows(&options.journal);
     let mut exporter = Exporter {
         options,
-        rows: read_rows(&options.journal),
+        rows,
         scrub: Scrub {
             home: options.home.clone(),
         },
@@ -1135,6 +1223,7 @@ pub fn export(options: &Options) -> Report {
     let mut report = Report {
         dir: options.out.clone(),
         candidates: targets.len(),
+        notes: journal_notes,
         ..Report::default()
     };
     let known: HashSet<String> = corpus::parse(&options.cases_text)
@@ -1143,6 +1232,12 @@ pub fn export(options: &Options) -> Report {
         .filter_map(Result::ok)
         .map(|stop| stop.name)
         .collect();
+    if let Err(error) = greenbelay_guard::atomic::remove_leftover_temps(&options.out) {
+        report.notes.push(format!(
+            "could not remove temp files in {}: {error}",
+            options.out.display()
+        ));
+    }
     let mut seen = HashSet::new();
     let mut case_lines: Vec<String> = Vec::new();
     for target in targets {
@@ -1193,33 +1288,34 @@ pub fn export(options: &Options) -> Report {
                 continue;
             }
             report.written += 1;
-            report.excluded += usize::from(fixture.excluded.is_some());
-            report.replay_differs += usize::from(fixture.replay_differs.is_some());
         } else {
             report.already += 1;
+        }
+        if let Some(note) = &fixture.note {
+            report.notes.push(format!("note: {note}"));
         }
         if known.contains(&fixture.name) {
             continue;
         }
-        match (&fixture.excluded, &fixture.replay_differs) {
-            (Some(why), _) => {
-                if fresh {
-                    case_lines.push(format!("# excluded: Stop {}: {why}", fixture.name));
-                }
+        let case_line = || {
+            corpus::line_for(
+                corpus::Verdict::Unreviewed,
+                &format!("Stop {}", fixture.name),
+            )
+            .trim_end()
+            .to_string()
+        };
+        match &fixture.standing {
+            Standing::Excluded(why) => {
+                report.excluded += 1;
+                case_lines.push(format!("# excluded: Stop {}: {why}", fixture.name));
             }
-            (None, differs) => {
-                if let Some(why) = differs {
-                    case_lines.push(format!("# replay differs: {why}"));
-                }
-                case_lines.push(
-                    corpus::line_for(
-                        corpus::Verdict::Unreviewed,
-                        &format!("Stop {}", fixture.name),
-                    )
-                    .trim_end()
-                    .to_string(),
-                );
+            Standing::Differs(why) => {
+                report.replay_differs += 1;
+                case_lines.push(format!("# replay differs: {why}"));
+                case_lines.push(case_line());
             }
+            Standing::Countable => case_lines.push(case_line()),
         }
     }
     report.stdout = case_lines;
@@ -1767,10 +1863,12 @@ mod tests {
         );
         let report = export(&world.options);
         assert_eq!(report.excluded, 1);
-        let result = judge_case(&world.text("abcd1234-1794960484"));
+        let replayed = judge_case(&world.text("abcd1234-1794960484"));
         assert_eq!(
-            result,
-            Err("not countable: no entry uuid=nowhere in the transcript".to_string())
+            replayed,
+            Err(corpus::FixtureError::NotCountable(
+                "no entry uuid=nowhere in the transcript".to_string()
+            ))
         );
         assert!(report.stdout[0].starts_with("# excluded: Stop abcd1234-1794960484: "));
         assert_eq!(report.stdout.len(), 1, "an excluded Stop has no case line");

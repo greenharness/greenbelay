@@ -32,6 +32,31 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// Ends every temp file's name, so a directory scan for `*.json` or any other
+/// destination extension never meets a temp file.
+const TEMP_SUFFIX: &str = ".tmp";
+
+/// Remove the temp files of earlier runs in `dir`, whatever suffix their
+/// writer gave them. A directory that does not exist has none.
+pub fn remove_leftover_temps(dir: &Path) -> io::Result<()> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let entry = entry?;
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(crate::names::TEMP_PREFIX)
+        {
+            std::fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
+}
+
 /// Write `body` over `dest`, atomically.
 pub fn write_atomic(dest: &Path, body: &str) -> io::Result<()> {
     let dir = match dest.parent() {
@@ -43,7 +68,7 @@ pub fn write_atomic(dest: &Path, body: &str) -> io::Result<()> {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "settings.json".to_string());
     let tmp = dir.join(format!(
-        "{}{}-{name}",
+        "{}{}-{name}{TEMP_SUFFIX}",
         crate::names::TEMP_PREFIX,
         std::process::id()
     ));
@@ -116,6 +141,22 @@ mod tests {
             .filter(|n| n.starts_with('.'))
             .collect();
         assert!(leftovers.is_empty(), "temp files left: {leftovers:?}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_temp_file_never_ends_in_the_destinations_extension() {
+        let d = scratch("suffix");
+        let temp = d.join(format!(
+            "{}1-a.json{TEMP_SUFFIX}",
+            crate::names::TEMP_PREFIX
+        ));
+        std::fs::write(&temp, "x").unwrap();
+        std::fs::write(d.join("keep.json"), "{}").unwrap();
+        remove_leftover_temps(&d).unwrap();
+        assert!(!temp.exists());
+        assert!(d.join("keep.json").exists());
+        assert!(!TEMP_SUFFIX.ends_with("json"));
         let _ = std::fs::remove_dir_all(&d);
     }
 

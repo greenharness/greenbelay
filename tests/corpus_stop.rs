@@ -4,7 +4,7 @@
 //! file, the fixture under `tests/corpus/stop/<rule>/`). The embedded corpora
 //! must agree with the judge; hand-made fixtures show the failure shapes.
 
-use greenbelay_guard::corpus;
+use greenbelay_guard::corpus::{self, DisagreementReason, FixtureError};
 use greenbelay_guard::rules::clear_at_boundary::RULE;
 use greenbelay_guard::rules::Rule;
 use greenbelay_process::clear_boundary::stop_judge;
@@ -71,12 +71,15 @@ fn a_fixture_labelled_the_wrong_way_names_the_line_the_path_and_the_firing() {
         disagreement.fixture.as_deref(),
         Some("stop/clear-at-boundary/loud.json")
     );
-    assert_eq!(disagreement.why, "rule fired at deny");
+    assert_eq!(disagreement.why, DisagreementReason::FiredAtDeny);
 
     let never_fires: corpus::StopJudge = |_, _| Some(Ok(false));
     let score = corpus::score_cases_in(rule, &cases, Some(never_fires), &fixtures);
     assert_eq!(score.disagreements[0].line, 1);
-    assert_eq!(score.disagreements[0].why, "rule did not fire at deny");
+    assert_eq!(
+        score.disagreements[0].why,
+        DisagreementReason::DidNotFireAtDeny
+    );
 }
 
 #[test]
@@ -88,11 +91,74 @@ fn a_malformed_fixture_is_a_disagreement_whatever_its_label() {
         let score = corpus::score_cases_in(rule, &cases, Some(stop_judge), &fixtures);
         assert_eq!(score.disagreements.len(), 1, "{label}");
         assert!(
-            score.disagreements[0]
-                .why
-                .starts_with("fixture malformed: "),
-            "{}",
+            matches!(
+                score.disagreements[0].why,
+                DisagreementReason::FixtureMalformed(FixtureError::NotJson(_))
+            ),
+            "{:?}",
             score.disagreements[0].why
         );
+        assert!(score.disagreements[0]
+            .why
+            .to_string()
+            .starts_with("fixture malformed: "));
     }
+}
+
+#[test]
+fn a_fixture_missing_a_member_or_with_a_wrong_one_names_which() {
+    let rule = clear_at_boundary();
+    let cases = corpus::parse("match\tStop broken\n");
+    let missing = |_: &str| Some("{}".to_string());
+    let score = corpus::score_cases_in(rule, &cases, Some(stop_judge), &missing);
+    assert!(
+        matches!(
+            &score.disagreements[0].why,
+            DisagreementReason::FixtureMalformed(FixtureError::Missing(member)) if member == "payload"
+        ),
+        "{:?}",
+        score.disagreements[0].why
+    );
+    let wrong = |_: &str| {
+        Some(
+            r#"{"payload": {"cwd": null, "permission_mode": null, "background_busy": false,
+                "stop_hook_active": false, "ends_with_question": false,
+                "waiting_line": false, "marker": false},
+              "state": {"key": "", "advices": 0, "pending": null},
+              "facts": {"phase": "sideways", "repositories": "clean"},
+              "entries": []}"#
+                .to_string(),
+        )
+    };
+    let score = corpus::score_cases_in(rule, &cases, Some(stop_judge), &wrong);
+    assert!(
+        matches!(
+            score.disagreements[0].why,
+            DisagreementReason::FixtureMalformed(FixtureError::WrongType(_))
+        ),
+        "{:?}",
+        score.disagreements[0].why
+    );
+}
+
+#[test]
+fn an_excluded_fixture_says_it_is_excluded_and_why() {
+    let rule = clear_at_boundary();
+    let cases = corpus::parse("match\tStop gone\n");
+    let excluded = |_: &str| {
+        Some(
+            r#"{"payload": {"cwd": null, "permission_mode": null, "background_busy": false,
+                "stop_hook_active": false, "ends_with_question": false,
+                "waiting_line": false, "marker": false},
+              "state": {"key": "", "advices": 0, "pending": null},
+              "facts": {"phase": "none", "repositories": "clean"},
+              "countable": false, "excluded": "no entry uuid=x", "entries": []}"#
+                .to_string(),
+        )
+    };
+    let score = corpus::score_cases_in(rule, &cases, Some(stop_judge), &excluded);
+    assert_eq!(
+        score.disagreements[0].why.to_string(),
+        "fixture excluded: no entry uuid=x"
+    );
 }

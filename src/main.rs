@@ -892,6 +892,7 @@ struct Flags {
     compliance: bool,
     check: bool,
     out: Option<PathBuf>,
+    cases: Option<PathBuf>,
     model: Option<String>,
     dialect: Option<rules::Dialect>,
     cwd: Option<PathBuf>,
@@ -912,6 +913,7 @@ fn flags(args: &[OsString]) -> Result<Flags, String> {
         };
         match a.as_str() {
             "--out" => f.out = Some(PathBuf::from(value(&mut i, &a)?)),
+            "--cases" => f.cases = Some(PathBuf::from(value(&mut i, &a)?)),
             "--model" => f.model = Some(value(&mut i, &a)?),
             "--transcripts" => f.transcripts.push(PathBuf::from(value(&mut i, &a)?)),
             "--since" => {
@@ -1045,7 +1047,28 @@ fn run_backtest(args: &[OsString], explain: bool) -> ExitCode {
             return ExitCode::from(2);
         }
     }
-    if as_cases && f.only == [greenbelay_guard::rules::clear_at_boundary::RULE.id] {
+    let exporting = as_cases && f.only == [greenbelay_guard::rules::clear_at_boundary::RULE.id];
+    let unused: &[(bool, &str)] = if exporting {
+        &[
+            (f.since.is_some(), "--since"),
+            (f.json, "--json"),
+            (f.rank.is_some(), "--rank"),
+        ]
+    } else if explain {
+        &[(f.out.is_some(), "--out"), (f.cases.is_some(), "--cases")]
+    } else {
+        &[(f.cases.is_some(), "--cases")]
+    };
+    if let Some((_, name)) = unused.iter().find(|(given, _)| *given) {
+        let scope = if exporting {
+            "the Stop export does not use"
+        } else {
+            "only `explain clear-at-boundary --format cases` takes"
+        };
+        eprintln!("{BIN}: {name}: {scope} it");
+        return ExitCode::from(2);
+    }
+    if exporting {
         return run_export_stops(&f);
     }
     let roots = match transcript::roots(&f.transcripts) {
@@ -1131,9 +1154,9 @@ fn run_backtest(args: &[OsString], explain: bool) -> ExitCode {
 /// `explain clear-at-boundary --format cases`: freeze the Stops the rule's
 /// journal lines record as fixtures, and print one `?` case line for each.
 /// Stdout carries only case lines; the notes and the summary go to stderr.
-fn run_export_stops(f: &Flags) -> ExitCode {
+fn run_export_stops(flags: &Flags) -> ExitCode {
     let rule = greenbelay_guard::rules::clear_at_boundary::RULE.id;
-    let out = match &f.out {
+    let out = match &flags.out {
         Some(dir) => dir.clone(),
         None if corpus::checkout_present() => corpus::stop_dir_for(rule),
         None => {
@@ -1149,24 +1172,54 @@ fn run_export_stops(f: &Flags) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let roots = match transcript::roots(&f.transcripts) {
+    let roots = match transcript::roots(&flags.transcripts) {
         Ok(r) => r,
         Err(e) => {
             eprintln!(concat!(greenbelay_guard::bin!(), ": {}"), e.explain());
             return ExitCode::from(2);
         }
     };
+    let Some(journal_dir) = journal::dir() else {
+        eprintln!("{BIN}: no journal directory: neither CLAUDE_CONFIG_DIR nor HOME is set");
+        return ExitCode::from(2);
+    };
+    let journal_files = match greenbelay_process::clear_boundary_export::journal_files(&journal_dir)
+    {
+        Ok(files) => files,
+        Err(error) => {
+            eprintln!("{BIN}: {}: {error}", journal_dir.display());
+            return ExitCode::from(2);
+        }
+    };
+    let cases_path = flags
+        .cases
+        .clone()
+        .unwrap_or_else(|| corpus::path_for(rule));
+    let cases_text = match std::fs::read_to_string(&cases_path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            eprintln!("{BIN}: {}: {error}", cases_path.display());
+            return ExitCode::from(2);
+        }
+    };
     let mut options = greenbelay_process::clear_boundary_export::Options::new(out);
-    options.journal = journal::dir()
-        .map(|dir| greenbelay_process::clear_boundary_export::journal_files(&dir))
-        .unwrap_or_default();
+    options.journal = journal_files;
     options.transcripts = transcript::files(&roots);
-    options.cases_text = std::fs::read_to_string(corpus::path_for(rule)).unwrap_or_default();
-    options.sample = f.sample;
+    options.transcript_roots = roots.dirs.clone();
+    options.cases_text = cases_text;
+    options.sample = flags.sample;
     options.home = std::env::var("HOME").ok();
     let report = greenbelay_process::clear_boundary_export::export(&options);
     for note in &report.notes {
         eprintln!("{BIN}: {note}");
+    }
+    if report.found_nothing() {
+        eprintln!(
+            "{BIN}: no clear-at-boundary lines in {}",
+            journal_dir.display()
+        );
+        return ExitCode::FAILURE;
     }
     eprintln!("{}", report.summary());
     for line in &report.stdout {
@@ -3654,11 +3707,12 @@ fn run_corpus(args: &[OsString]) -> ExitCode {
                     d.why
                 ),
                 None => println!(
-                    "  {}:{} expected {} — {}",
+                    "  {}:{} expected {} — {}: {}",
                     shown,
                     d.line,
                     d.expected.as_str(),
-                    corpus::escape(&d.command)
+                    corpus::escape(&d.command),
+                    d.why
                 ),
             }
         }

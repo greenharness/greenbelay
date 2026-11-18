@@ -54,18 +54,28 @@ impl World {
         self.root.join("fixtures")
     }
 
-    fn export(&self, extra: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_greenbelay"))
+    fn command(&self) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
+        command
             .env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
             .env("XDG_STATE_HOME", self.root.join("state"))
             .env("GIT_CONFIG_GLOBAL", self.root.join("gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("HOME", &self.root)
+            .env("HOME", &self.root);
+        command
+    }
+
+    fn export(&self, extra: &[&str]) -> Output {
+        self.command()
             .args(["explain", "clear-at-boundary", "--format", "cases", "--out"])
             .arg(self.out())
             .args(extra)
             .output()
             .expect("the binary runs")
+    }
+
+    fn journal_dir(&self) -> PathBuf {
+        self.root.join("claude/greenbelay")
     }
 
     fn files(&self) -> Vec<String> {
@@ -165,7 +175,13 @@ fn a_stop_with_no_transcript_is_skipped_and_all_skipped_exits_1() {
     let world = World::new("missing", &[advised(1_794_960_484, "00000000")]);
     let output = world.export(&[]);
     assert_eq!(output.status.code(), Some(1));
-    assert!(text(&output.stderr).contains("no transcript"));
+    let stderr = text(&output.stderr);
+    assert!(stderr.contains("no transcript"), "{stderr}");
+    assert!(
+        stderr.contains(&world.root.join("claude/projects").display().to_string())
+            && stderr.contains("--transcripts <dir>"),
+        "{stderr}"
+    );
     assert!(text(&output.stderr).contains("1 skipped"));
     assert_eq!(text(&output.stdout), "");
 }
@@ -174,8 +190,131 @@ fn a_stop_with_no_transcript_is_skipped_and_all_skipped_exits_1() {
 fn a_journal_with_no_stop_exits_0() {
     let world = World::new("empty", &[]);
     let output = world.export(&[]);
+    assert_eq!(output.status.code(), Some(1), "{}", text(&output.stderr));
+    assert!(
+        text(&output.stderr).contains(&format!(
+            "greenbelay: no clear-at-boundary lines in {}",
+            world.journal_dir().display()
+        )),
+        "{}",
+        text(&output.stderr)
+    );
+    assert_eq!(text(&output.stdout), "");
+}
+
+#[test]
+fn a_missing_journal_directory_is_a_usage_error_naming_it() {
+    let world = World::new("nodir", &[advised(1_794_960_484, "feedc0de")]);
+    let output = world
+        .command()
+        .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("HOME")
+        .args(["explain", "clear-at-boundary", "--format", "cases", "--out"])
+        .arg(world.out())
+        .arg("--transcripts")
+        .arg(world.root.join("claude/projects"))
+        .output()
+        .expect("the binary runs");
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output.stderr));
+    assert!(
+        text(&output.stderr).contains("no journal directory"),
+        "{}",
+        text(&output.stderr)
+    );
+    assert_eq!(text(&output.stdout), "");
+}
+
+#[test]
+fn an_unreadable_journal_file_gets_one_note_and_the_rest_is_read() {
+    let world = World::new("badjournal", &[advised(1_794_960_484, "feedc0de")]);
+    let broken = world.journal_dir().join("journal.log.1");
+    std::fs::write(&broken, [0xff, 0xfe, 0xfd]).unwrap();
+    let output = world.export(&[]);
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    let stderr = text(&output.stderr);
+    let note = format!("skipped: {}: ", broken.display());
+    assert_eq!(stderr.matches(&note).count(), 1, "{stderr}");
+    assert_eq!(text(&output.stdout), "?\tStop feedc0de-1794960484\n");
+}
+
+#[test]
+fn a_cases_file_that_is_missing_means_empty_and_one_that_cannot_be_read_exits_2() {
+    let world = World::new("cases", &[advised(1_794_960_484, "feedc0de")]);
+    let absent = world.root.join("absent.cases");
+    let output = world.export(&["--cases", &absent.to_string_lossy()]);
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert_eq!(text(&output.stdout), "?\tStop feedc0de-1794960484\n");
+
+    let unreadable = world.root.join("a-directory.cases");
+    std::fs::create_dir_all(&unreadable).unwrap();
+    let output = world.export(&["--cases", &unreadable.to_string_lossy()]);
+    assert_eq!(output.status.code(), Some(2), "{}", text(&output.stderr));
+    assert!(
+        text(&output.stderr).contains(&unreadable.display().to_string()),
+        "{}",
+        text(&output.stderr)
+    );
+}
+
+#[test]
+fn a_stop_already_in_the_named_cases_file_is_not_printed_again() {
+    let world = World::new("known", &[advised(1_794_960_484, "feedc0de")]);
+    let cases = world.root.join("mine.cases");
+    std::fs::write(&cases, "match\tStop feedc0de-1794960484\n").unwrap();
+    let output = world.export(&["--cases", &cases.to_string_lossy()]);
     assert!(output.status.success(), "{}", text(&output.stderr));
     assert_eq!(text(&output.stdout), "");
+    assert_eq!(world.files(), ["feedc0de-1794960484.json"]);
+}
+
+#[test]
+fn temp_files_of_earlier_runs_are_removed_and_never_end_in_json() {
+    let world = World::new("temps", &[advised(1_794_960_484, "feedc0de")]);
+    std::fs::create_dir_all(world.out()).unwrap();
+    let leftover = world.out().join(format!(
+        "{}999-feedc0de-1.json",
+        greenbelay_guard::names::TEMP_PREFIX
+    ));
+    std::fs::write(&leftover, "{").unwrap();
+    let output = world.export(&[]);
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert_eq!(world.files(), ["feedc0de-1794960484.json"]);
+    assert!(!leftover.exists());
+}
+
+#[test]
+fn flags_the_export_does_not_use_are_refused_naming_the_flag() {
+    let world = World::new("unused", &[advised(1_794_960_484, "feedc0de")]);
+    for extra in [
+        ["--since", "2026-01-01"],
+        ["--rank", "novelty"],
+        ["--json", "--sample"],
+    ] {
+        let args: Vec<&str> = if extra[0] == "--json" {
+            vec!["--json"]
+        } else {
+            extra.to_vec()
+        };
+        let output = world.export(&args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(text(&output.stderr).contains(args[0]), "{args:?}");
+    }
+    assert!(world.files().is_empty(), "a refused run writes nothing");
+}
+
+#[test]
+fn out_and_cases_on_another_explain_are_refused_naming_the_flag() {
+    let world = World::new("other", &[]);
+    for flag in ["--out", "--cases"] {
+        let output = world
+            .command()
+            .args(["explain", "pipe-to-tail", flag])
+            .arg(world.root.join("x"))
+            .output()
+            .expect("the binary runs");
+        assert_eq!(output.status.code(), Some(2), "{flag}");
+        assert!(text(&output.stderr).contains(flag), "{flag}");
+    }
 }
 
 #[test]

@@ -17,12 +17,14 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
 
 use greenbelay_guard::atomic::write_atomic;
+use greenbelay_guard::corpus::FixtureError;
 use greenbelay_guard::decision::{self, Decision};
 use greenbelay_guard::git::{bytes_bounded_detail, BoundedFailure};
 use greenbelay_guard::journal;
 use greenbelay_guard::payload::Stop;
 use greenbelay_guard::rules::clear_at_boundary::RULE;
 use greenbelay_guard::rules::Stance;
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::plan_phases::PhaseFact;
@@ -1097,13 +1099,37 @@ fn adds_worktree(words: &[String]) -> bool {
 /// The journal's excerpt limit; `journal::redact_and_trim` cuts past it.
 const EXCERPT_LIMIT: usize = 200;
 
+/// Whether the tail read hit its cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TailCut {
+    Whole,
+    Capped,
+}
+
+impl TailCut {
+    fn of(tail: &Tail) -> Self {
+        if tail.capped {
+            TailCut::Capped
+        } else {
+            TailCut::Whole
+        }
+    }
+
+    fn suffix(self) -> &'static str {
+        match self {
+            TailCut::Whole => "",
+            TailCut::Capped => " tail-capped",
+        }
+    }
+}
+
 /// The journal excerpt of a record: `what`, then ` tail-capped` when the tail
 /// hit its cap, then ` uuid=<id>` of the tail's last entry. `what` is cut to
 /// leave room for the suffix, so `redact_and_trim` never drops the uuid.
-fn excerpt(what: &str, capped: bool, last_uuid: Option<&str>) -> String {
+fn excerpt(what: &str, cut: TailCut, last_uuid: Option<&str>) -> String {
     let suffix = format!(
         "{}{}",
-        if capped { " tail-capped" } else { "" },
+        cut.suffix(),
         last_uuid.map_or_else(String::new, |uuid| format!(" uuid={uuid}"))
     );
     let room = EXCERPT_LIMIT.saturating_sub(suffix.chars().count());
@@ -1154,7 +1180,7 @@ fn judge_boundary(
                 session: &stop.session,
                 repo: &repo,
                 mode,
-                excerpt: &excerpt(what, tail.capped, last_uuid),
+                excerpt: &excerpt(what, TailCut::of(tail), last_uuid),
             });
         }
     }
@@ -1186,6 +1212,152 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
             self.record("watched", "state-unwritable");
         }
         written
+    }
+
+    /// A boundary that cannot be advised yet: an own boundary is saved as
+    /// pending for a later Stop, and the Stop stays silent.
+    fn hold(&mut self, candidate: &Candidate, mut state: State, reason: &str) -> Option<Decision> {
+        if let Candidate::Own(boundary) = candidate {
+            state.pending = Some(boundary.clone());
+            if !self.save(&state) {
+                return None;
+            }
+        }
+        self.watched(&format!("pending {reason}"))
+    }
+
+    /// `None` is silence, journalled or not as each check decides.
+    fn judge(
+        &mut self,
+        view: &StopView,
+        entries: &[Value],
+        prior: State,
+        (fact, stance, size): (PhaseFact, Stance, u64),
+        repos: impl FnOnce(&[PathBuf]) -> Repositories,
+    ) -> Option<Decision> {
+        let cwd = view.cwd.as_deref();
+        let mut state = prior;
+        if fact == PhaseFact::TimedOut {
+            return self.watched("timeout");
+        }
+        let Some(window) = turn_window(entries) else {
+            return self.watched("turn-too-long");
+        };
+        let found = boundaries(&window, cwd.unwrap_or(Path::new("")));
+        let own = found.last().filter(|boundary| {
+            state
+                .pending
+                .as_ref()
+                .is_none_or(|pending| pending.uuid != boundary.uuid)
+        });
+        let candidate = match (own, state.pending.clone()) {
+            (Some(boundary), _) => Candidate::Own(pending_from(&found, boundary)),
+            (None, None) => return self.watched("no boundary"),
+            (None, Some(pending)) => {
+                let Some(at) = position_of(entries, &pending.uuid) else {
+                    state.pending = None;
+                    self.save(&state);
+                    return self.watched("pending-lost");
+                };
+                let after = &entries[at + 1..];
+                if after.iter().any(is_person_prompt) {
+                    state.pending = None;
+                    self.save(&state);
+                    return self.watched("no boundary");
+                }
+                if work_in(after) {
+                    return self.watched("pending-work");
+                }
+                Candidate::Resumed(pending)
+            }
+        };
+        if view.background_busy {
+            return self.hold(&candidate, state, "background");
+        }
+        let flight = relais_flight(entries);
+        if let Some((id, relais_state)) = flight.waiting.first() {
+            return self.hold(&candidate, state, &format!("relais {id} {relais_state}"));
+        }
+        if flight.pending > 0 {
+            return self.hold(
+                &candidate,
+                state,
+                &format!("relais pending {}", flight.pending),
+            );
+        }
+        let boundary = candidate.boundary();
+        let heads = match repos(&boundary.dirs) {
+            Repositories::Clean { heads } => heads,
+            Repositories::NotClean { reason, .. } => return self.hold(&candidate, state, &reason),
+            Repositories::TimedOut => return self.watched("timeout"),
+        };
+        let key = boundary_key(&boundary.command, &heads);
+        let advices = state.advices;
+        if state.key == key {
+            if state.pending.is_some() {
+                state.pending = None;
+                self.save(&state);
+            }
+            return None;
+        }
+        if advices >= MAX_ADVICES_PER_SESSION {
+            return self.watched("cap");
+        }
+        // At `advise` a note cannot carry the plan on, and a lone plan commit's
+        // next step is the plan's: `plan-phases-open` speaks instead.
+        let carried_by_plan = stance == Stance::Advise && fact == PhaseFact::PlanOnly;
+        let counted = stance != Stance::Observe && !carried_by_plan;
+        // Only a Continue asks for a handoff Stop, which `spoke_this_turn` lets end.
+        let turn = if stance == Stance::Deny {
+            window.prompt_uuid.as_str()
+        } else {
+            ""
+        };
+        let state = State {
+            turn: turn.to_string(),
+            key,
+            advices: advices + u32::from(counted),
+            pending: None,
+        };
+        if !self.save(&state) {
+            return None;
+        }
+        if carried_by_plan {
+            return self.watched(&format!(
+                "{} (advise, plan-phases-open carries the plan)",
+                boundary.what
+            ));
+        }
+        let fact = format!(
+            "this turn reached a boundary ({}) with nothing in flight, and the context is at {}k tokens, past {}k.",
+            boundary.what,
+            size / 1000,
+            SIZE / 1000
+        );
+        match stance {
+            Stance::Observe => self.watched(&format!("{} (observe)", boundary.what)),
+            Stance::Advise => {
+                self.record("advised", &boundary.what);
+                // The agent hands off unasked (worktree-task `## Handoff`), so
+                // the note names that step; the line it quotes still works with
+                // no handoff skill installed.
+                let remedy = format!(
+                    "The agent hands off by itself at a boundary, as the worktree-task skill's Handoff section says. Without that skill, the handoff is complete when the plan or ticket states the next action. Either way, the turn ends with the line \"{MARKER}; next: `<the exact first prompt>`\". This turn ended without that line. To clear and carry on, reply: hand off now. The clear-relay plugin then clears and submits that prompt. Or /clear yourself."
+                );
+                Some(Decision::UserNote(decision::phrase(
+                    RULE.id, &fact, &remedy,
+                )))
+            }
+            Stance::Deny => {
+                self.record("denied", &boundary.what);
+                let remedy = format!(
+                    "Hand off now, as the worktree-task skill's Handoff section says. Without that skill, the handoff is complete when the plan or ticket states the next action and the turn ends with one line: \"{MARKER}; next: `<the exact first prompt>`\"."
+                );
+                Some(Decision::Continue(decision::phrase(
+                    RULE.id, &fact, &remedy,
+                )))
+            }
+        }
     }
 }
 
@@ -1222,14 +1394,7 @@ pub(crate) fn decide(
         records: Vec::new(),
         persist,
     };
-    let decision = judge(
-        view,
-        entries,
-        prior,
-        (fact, stance, size),
-        repos,
-        &mut ledger,
-    );
+    let decision = ledger.judge(view, entries, prior, (fact, stance, size), repos);
     Verdict {
         decision: decision.unwrap_or(Decision::Silent),
         records: ledger.records,
@@ -1254,220 +1419,171 @@ pub(crate) fn pending_from(found: &[Boundary], boundary: &Boundary) -> Pending {
     }
 }
 
-/// `None` is silence, journalled or not as each check decides.
-fn judge<P: FnMut(&State) -> bool>(
-    view: &StopView,
-    entries: &[Value],
+/// A recorded Stop as `explain --format cases` writes it; members the replay
+/// does not read (`source`, `early`, `inferred`) are left out.
+#[derive(Deserialize)]
+struct StopFixture {
+    payload: PayloadFixture,
+    state: StateFixture,
+    facts: FactsFixture,
+    entries: Vec<Value>,
+    #[serde(default = "countable_by_default")]
+    countable: bool,
+    excluded: Option<String>,
+}
+
+fn countable_by_default() -> bool {
+    true
+}
+
+#[derive(Deserialize)]
+struct PayloadFixture {
+    cwd: Option<String>,
+    permission_mode: Option<String>,
+    background_busy: bool,
+    stop_hook_active: bool,
+    ends_with_question: bool,
+    waiting_line: bool,
+    marker: bool,
+}
+
+#[derive(Deserialize)]
+struct StateFixture {
+    #[serde(default)]
+    turn: String,
+    key: String,
+    advices: u32,
+    pending: Option<PendingFixture>,
+}
+
+#[derive(Deserialize)]
+struct PendingFixture {
+    uuid: String,
+    command: String,
+    what: String,
+    dirs: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct FactsFixture {
+    phase: PhaseFixture,
+    repositories: RepositoriesFixture,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PhaseFixture {
+    #[serde(rename = "none")]
+    NoOpenPhase,
+    PlanOnly,
+    Working,
+    TimedOut,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RepositoriesFixture {
+    Clean,
+    TimedOut,
+    NotClean(String),
+}
+
+/// What a countable fixture replays with.
+struct StopInputs {
+    view: StopView,
+    entries: Vec<Value>,
     prior: State,
-    (fact, stance, size): (PhaseFact, Stance, u64),
-    repos: impl FnOnce(&[PathBuf]) -> Repositories,
-    ledger: &mut Ledger<P>,
-) -> Option<Decision> {
-    let cwd = view.cwd.as_deref();
-    let mut state = prior;
-    if fact == PhaseFact::TimedOut {
-        return ledger.watched("timeout");
-    }
-    let Some(window) = turn_window(entries) else {
-        return ledger.watched("turn-too-long");
-    };
-    let found = boundaries(&window, cwd.unwrap_or(Path::new("")));
-    let own = found.last().filter(|boundary| {
-        state
-            .pending
-            .as_ref()
-            .is_none_or(|pending| pending.uuid != boundary.uuid)
-    });
-    let candidate = match (own, state.pending.clone()) {
-        (Some(boundary), _) => Candidate::Own(pending_from(&found, boundary)),
-        (None, None) => return ledger.watched("no boundary"),
-        (None, Some(pending)) => {
-            let Some(at) = position_of(entries, &pending.uuid) else {
-                state.pending = None;
-                ledger.save(&state);
-                return ledger.watched("pending-lost");
-            };
-            let after = &entries[at + 1..];
-            if after.iter().any(is_person_prompt) {
-                state.pending = None;
-                ledger.save(&state);
-                return ledger.watched("no boundary");
-            }
-            if work_in(after) {
-                return ledger.watched("pending-work");
-            }
-            Candidate::Resumed(pending)
+    phase: PhaseFact,
+    repositories: Repositories,
+}
+
+impl TryFrom<StopFixture> for StopInputs {
+    type Error = FixtureError;
+
+    fn try_from(fixture: StopFixture) -> Result<Self, FixtureError> {
+        if !fixture.countable {
+            return Err(FixtureError::NotCountable(
+                fixture
+                    .excluded
+                    .unwrap_or_else(|| "no reason given".to_string()),
+            ));
         }
-    };
-    let hold = |ledger: &mut Ledger<P>, state: &mut State, reason: &str| -> Option<Decision> {
-        if let Candidate::Own(boundary) = &candidate {
-            state.pending = Some(boundary.clone());
-            if !ledger.save(state) {
-                return None;
-            }
-        }
-        ledger.watched(&format!("pending {reason}"))
-    };
-    if view.background_busy {
-        return hold(ledger, &mut state, "background");
-    }
-    let flight = relais_flight(entries);
-    if let Some((id, relais_state)) = flight.waiting.first() {
-        return hold(ledger, &mut state, &format!("relais {id} {relais_state}"));
-    }
-    if flight.pending > 0 {
-        return hold(
-            ledger,
-            &mut state,
-            &format!("relais pending {}", flight.pending),
-        );
-    }
-    let boundary = candidate.boundary();
-    let heads = match repos(&boundary.dirs) {
-        Repositories::Clean { heads } => heads,
-        Repositories::NotClean { reason, .. } => return hold(ledger, &mut state, &reason),
-        Repositories::TimedOut => return ledger.watched("timeout"),
-    };
-    let key = boundary_key(&boundary.command, &heads);
-    let advices = state.advices;
-    if state.key == key {
-        if state.pending.is_some() {
-            state.pending = None;
-            ledger.save(&state);
-        }
-        return None;
-    }
-    if advices >= MAX_ADVICES_PER_SESSION {
-        return ledger.watched("cap");
-    }
-    // At `advise` a note cannot carry the plan on, and a lone plan commit's
-    // next step is the plan's: `plan-phases-open` speaks instead.
-    let carried_by_plan = stance == Stance::Advise && fact == PhaseFact::PlanOnly;
-    let counted = stance != Stance::Observe && !carried_by_plan;
-    // Only a Continue asks for a handoff Stop, which `spoke_this_turn` lets end.
-    let turn = if stance == Stance::Deny {
-        window.prompt_uuid.as_str()
-    } else {
-        ""
-    };
-    let state = State {
-        turn: turn.to_string(),
-        key,
-        advices: advices + u32::from(counted),
-        pending: None,
-    };
-    if !ledger.save(&state) {
-        return None;
-    }
-    if carried_by_plan {
-        return ledger.watched(&format!(
-            "{} (advise, plan-phases-open carries the plan)",
-            boundary.what
-        ));
-    }
-    let fact = format!(
-        "this turn reached a boundary ({}) with nothing in flight, and the context is at {}k tokens, past {}k.",
-        boundary.what,
-        size / 1000,
-        SIZE / 1000
-    );
-    match stance {
-        Stance::Observe => ledger.watched(&format!("{} (observe)", boundary.what)),
-        Stance::Advise => {
-            ledger.record("advised", &boundary.what);
-            // The agent hands off unasked (worktree-task `## Handoff`), so
-            // the note names that step; the line it quotes still works with
-            // no handoff skill installed.
-            let remedy = format!(
-                "The agent hands off by itself at a boundary, as the worktree-task skill's Handoff section says. Without that skill, the handoff is complete when the plan or ticket states the next action. Either way, the turn ends with the line \"{MARKER}; next: `<the exact first prompt>`\". This turn ended without that line. To clear and carry on, reply: hand off now. The clear-relay plugin then clears and submits that prompt. Or /clear yourself."
-            );
-            Some(Decision::UserNote(decision::phrase(
-                RULE.id, &fact, &remedy,
-            )))
-        }
-        Stance::Deny => {
-            ledger.record("denied", &boundary.what);
-            let remedy = format!(
-                "Hand off now, as the worktree-task skill's Handoff section says. Without that skill, the handoff is complete when the plan or ticket states the next action and the turn ends with one line: \"{MARKER}; next: `<the exact first prompt>`\"."
-            );
-            Some(Decision::Continue(decision::phrase(
-                RULE.id, &fact, &remedy,
-            )))
-        }
+        let payload = fixture.payload;
+        let view = StopView {
+            cwd: payload.cwd.map(PathBuf::from),
+            permission_mode: payload.permission_mode,
+            background_busy: payload.background_busy,
+            stop_hook_active: payload.stop_hook_active,
+            ends_with_question: payload.ends_with_question,
+            waiting_line: payload.waiting_line,
+            marker: payload.marker,
+        };
+        let prior = State {
+            turn: fixture.state.turn,
+            key: fixture.state.key,
+            advices: fixture.state.advices,
+            pending: fixture.state.pending.map(|pending| Pending {
+                uuid: pending.uuid,
+                command: pending.command,
+                what: pending.what,
+                dirs: pending.dirs.into_iter().map(PathBuf::from).collect(),
+            }),
+        };
+        let phase = match fixture.facts.phase {
+            PhaseFixture::NoOpenPhase => PhaseFact::NoOpenPhase,
+            PhaseFixture::PlanOnly => PhaseFact::PlanOnly,
+            PhaseFixture::Working => PhaseFact::Working,
+            PhaseFixture::TimedOut => PhaseFact::TimedOut,
+        };
+        let repositories = match fixture.facts.repositories {
+            RepositoriesFixture::Clean => Repositories::Clean { heads: Vec::new() },
+            RepositoriesFixture::TimedOut => Repositories::TimedOut,
+            RepositoriesFixture::NotClean(reason) => Repositories::NotClean {
+                directory: PathBuf::new(),
+                reason,
+            },
+        };
+        Ok(StopInputs {
+            view,
+            entries: fixture.entries,
+            prior,
+            phase,
+            repositories,
+        })
     }
 }
 
-/// A fixture's JSON member, or the error naming it.
-fn member<'a>(fixture: &'a Value, path: &str) -> Result<&'a Value, String> {
-    fixture
-        .pointer(path)
-        .ok_or_else(|| format!("fixture has no {path}"))
-}
-
-fn flag(fixture: &Value, path: &str) -> Result<bool, String> {
-    member(fixture, path)?
-        .as_bool()
-        .ok_or_else(|| format!("fixture {path} is not a boolean"))
+/// A serde failure, as the fixture error it means.
+fn fixture_error(error: &serde_json::Error) -> FixtureError {
+    use serde_json::error::Category;
+    let message = error.to_string();
+    match error.classify() {
+        Category::Io | Category::Syntax | Category::Eof => FixtureError::NotJson(message),
+        Category::Data => match message
+            .strip_prefix("missing field `")
+            .and_then(|rest| rest.split_once('`'))
+        {
+            Some((member, _)) => FixtureError::Missing(member.to_string()),
+            None => FixtureError::WrongType(message),
+        },
+    }
 }
 
 /// Replay a fixture (the plan's case form) through [`decide`] at `deny`, with
 /// the facts it froze and a state write that holds. `Ok(true)` when the
-/// decision is a Continue; a malformed fixture is an `Err`.
-pub fn judge_case(fixture_json: &str) -> Result<bool, String> {
-    let fixture: Value = serde_json::from_str(fixture_json)
-        .map_err(|error| format!("fixture is not JSON: {error}"))?;
-    if fixture["countable"].as_bool() == Some(false) {
-        let why = fixture["excluded"].as_str().unwrap_or("no reason given");
-        return Err(format!("not countable: {why}"));
-    }
-    let text = |path: &str| member(&fixture, path).map(|value| value.as_str().map(str::to_string));
-    let view = StopView {
-        cwd: text("/payload/cwd")?.map(PathBuf::from),
-        permission_mode: text("/payload/permission_mode")?,
-        background_busy: flag(&fixture, "/payload/background_busy")?,
-        stop_hook_active: flag(&fixture, "/payload/stop_hook_active")?,
-        ends_with_question: flag(&fixture, "/payload/ends_with_question")?,
-        waiting_line: flag(&fixture, "/payload/waiting_line")?,
-        marker: flag(&fixture, "/payload/marker")?,
-    };
-    let state_json = member(&fixture, "/state")?;
-    let prior = State {
-        turn: state_json["turn"].as_str().unwrap_or("").to_string(),
-        key: state_json["key"]
-            .as_str()
-            .ok_or("fixture /state/key is not a string")?
-            .to_string(),
-        advices: state_json["advices"]
-            .as_u64()
-            .and_then(|count| u32::try_from(count).ok())
-            .ok_or("fixture /state/advices is not a count")?,
-        pending: match &state_json["pending"] {
-            Value::Null => None,
-            pending => Some(parse_pending(pending).ok_or("fixture /state/pending is malformed")?),
-        },
-    };
-    let phase = match member(&fixture, "/facts/phase")?.as_str() {
-        Some("none") => PhaseFact::NoOpenPhase,
-        Some("plan_only") => PhaseFact::PlanOnly,
-        Some("working") => PhaseFact::Working,
-        Some("timed_out") => PhaseFact::TimedOut,
-        _ => return Err("fixture /facts/phase is not a known phase".to_string()),
-    };
-    let repositories = match member(&fixture, "/facts/repositories")? {
-        Value::String(word) if word == "clean" => Repositories::Clean { heads: Vec::new() },
-        Value::String(word) if word == "timed_out" => Repositories::TimedOut,
-        other => match other["not_clean"].as_str() {
-            Some(reason) => Repositories::NotClean {
-                directory: PathBuf::new(),
-                reason: reason.to_string(),
-            },
-            None => return Err("fixture /facts/repositories is not a known state".to_string()),
-        },
-    };
-    let entries = member(&fixture, "/entries")?
-        .as_array()
-        .ok_or("fixture /entries is not a list")?;
-    Ok(replay_at_deny(&view, entries, prior, phase, repositories).fired)
+/// decision is a Continue; a malformed or uncountable fixture is an `Err`.
+pub fn judge_case(fixture_json: &str) -> Result<bool, FixtureError> {
+    let fixture: StopFixture =
+        serde_json::from_str(fixture_json).map_err(|error| fixture_error(&error))?;
+    let inputs = StopInputs::try_from(fixture)?;
+    Ok(replay_at_deny(
+        &inputs.view,
+        &inputs.entries,
+        inputs.prior,
+        inputs.phase,
+        inputs.repositories,
+    )
+    .fired)
 }
 
 /// What a replay at `deny` settled.
@@ -1509,7 +1625,7 @@ pub(crate) fn replay_at_deny(
 
 /// The replay of a Stop case for `rule_id`; `None` for a rule this module
 /// does not judge.
-pub fn stop_judge(rule_id: &str, fixture: &str) -> Option<Result<bool, String>> {
+pub fn stop_judge(rule_id: &str, fixture: &str) -> Option<Result<bool, FixtureError>> {
     (rule_id == RULE.id).then(|| judge_case(fixture))
 }
 
@@ -2032,7 +2148,7 @@ mod tests {
         })
     }
 
-    fn replay(fixture: &Value) -> Result<bool, String> {
+    fn replay(fixture: &Value) -> Result<bool, FixtureError> {
         judge_case(&fixture.to_string())
     }
 
@@ -2078,11 +2194,31 @@ mod tests {
 
     #[test]
     fn a_malformed_fixture_is_an_error() {
-        assert!(judge_case("not json").is_err());
-        assert!(judge_case("{}").is_err());
+        assert!(matches!(
+            judge_case("not json"),
+            Err(FixtureError::NotJson(_))
+        ));
+        assert_eq!(
+            judge_case("{}"),
+            Err(FixtureError::Missing("payload".to_string()))
+        );
         let mut case = fixture(&boundary_entries());
         case["facts"]["phase"] = json!("sideways");
-        assert!(replay(&case).is_err());
+        assert!(matches!(replay(&case), Err(FixtureError::WrongType(_))));
+        let mut case = fixture(&boundary_entries());
+        case["countable"] = json!(false);
+        case["excluded"] = json!("why not");
+        assert_eq!(
+            replay(&case),
+            Err(FixtureError::NotCountable("why not".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_not_clean_repository_fact_decodes() {
+        let mut case = fixture(&boundary_entries());
+        case["facts"]["repositories"] = json!({"not_clean": "dirty"});
+        assert_eq!(replay(&case), Ok(false));
     }
 
     #[test]
@@ -2118,13 +2254,13 @@ mod tests {
     #[test]
     fn the_uuid_suffix_survives_the_journal_trim() {
         let what = "x".repeat(400);
-        let line = excerpt(&what, true, Some("0123-uuid"));
+        let line = excerpt(&what, TailCut::Capped, Some("0123-uuid"));
         let trimmed = journal::redact_and_trim(&line);
         assert!(
             trimmed.ends_with(" tail-capped uuid=0123-uuid"),
             "got {trimmed}"
         );
-        assert_eq!(excerpt("short", false, None), "short");
+        assert_eq!(excerpt("short", TailCut::Whole, None), "short");
     }
 
     #[test]
