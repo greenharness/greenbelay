@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 branch: feat/stop-cases
 repos: [amont-agent, decisions]
 adrs: [ADR-0062]
@@ -324,6 +324,7 @@ in t20's Resolution.
   - the stderr summary before the case lines;
   - `read_tail_until_at`;
   - a replay at `deny` compared with `advised`/`denied`.
+- 2026-11-18: the export refuses `--since`, `--json` and `--rank`, and refuses `--out`/`--cases` on any other `explain`, with exit 2 naming the flag (unix code review, cli.args.posix-syntax). Invocations that were silently accepted before now fail loudly; none of them did anything for the export.
 - 2026-11-18: 161 of the 435 exported fixtures are over 64 KiB, so only
   fixtures at or under the cap were candidates for labelling. Two picked
   cases had no Stop uuid (3571e691, 88dca900). They stay in the scratch
@@ -331,17 +332,17 @@ in t20's Resolution.
 
 ## Verification
 
-Results (2026-11-18, worktree `feat/stop-cases`):
+Results (2026-11-18, worktree `feat/stop-cases`; the export, corpus and graduate rows re-run on the final tree, 832cb4c0 + 62737109, review tree 483022e7):
 
 | Check | Expected | Actual |
 |---|---|---|
-| `cargo test --workspace` and the unchanged `tests/clear_at_boundary.rs` | pass | pass at each phase commit; the gate passed 28 checks at b0c15375, e1397cd4 and 5481be6d |
+| `cargo test --workspace` and the unchanged `tests/clear_at_boundary.rs` | pass | pass; the gate passed 28 checks at every commit, the last at 62737109 |
 | uuid survives `redact_and_trim`; failing `persist`; `read_tail_until_at` | unit tests pass | pass (Phase 1 criteria, relais receipt) |
-| export over the journal (release build, `--out ~/.local/state/t20-stop-export`) | fixtures per outcome; 0 replay differs for `advised` | 435 written: advised 27, pending-work 217 (20 excluded: no earlier hold), pending background 173, pending relais 11, pending not-clean 7; 3 skipped (no transcript). 5 replay differs, 1 of them `advised` (ba1516c6-1794887837), listed in t20 |
-| export run twice | nothing rewritten, exit 0 | `wrote 0 … 435 already exported`, exit 0 |
+| export over the journal (release build, fresh `--out ~/.local/state/t20-stop-export-final`) | fixtures per outcome; 0 replay differs for `advised` | final tree: 442 written (5 replay differs, 25 excluded, 3 skipped: no transcript), exit 0. The first freeze (5481be6d, `~/.local/state/t20-stop-export`) wrote 435: advised 27, pending-work 217 (20 excluded: no earlier hold), pending background 173, pending relais 11, pending not-clean 7. 1 of the 5 replay differs is `advised` (ba1516c6-1794887837), listed in t20 |
+| export run twice | nothing rewritten, exit 0 | final tree: `wrote 0 … 442 already exported`, exit 0; an excluded Stop's comment is not printed again (test) |
 | a wrong label | `corpus check` names line, fixture, why | 8145b6c0 as `nomatch`: `…cases:66 expected nomatch — Stop 8145b6c0-1794667260 (stop/clear-at-boundary/8145b6c0-1794667260.json): rule fired at deny`, precision 90% |
-| committed corpus | agrees | 19 reviewed (10 negative), 1 unreviewed, precision 100%; `tests/corpus_stop.rs` passes |
-| installed-like `graduate`, scratch `HOME`/`GIT_CONFIG_GLOBAL`/`XDG_CONFIG_HOME` | counts embedded Stop cases; live config unchanged | `19 reviewed cases`, all ✓; the scratch `.gitconfig` took `deny`, and the live `greenbelay.*` config hash is unchanged |
+| committed corpus | agrees | final tree: 19 reviewed (10 negative), 1 unreviewed, precision 100%; `tests/corpus_stop.rs` passes |
+| installed-like `graduate`, scratch `HOME`/`GIT_CONFIG_GLOBAL`/`XDG_CONFIG_HOME` | counts embedded Stop cases; live config unchanged | final tree: `19 reviewed cases`, all ✓; the scratch `.gitconfig` took `deny`, and the live `greenbelay.*` config hash is unchanged |
 | redaction | no `/Users/`, no prose | `grep` finds none in the 16 committed fixtures; only placeholder content (`<text>`, `<task-notification>`) remains; 324 KB in all |
 | early-fire share | recorded | 13 of 27 exported advices (48%); 4 of the 9 labelled `match` |
 | live graduation | `deny` | not run: the person kept `advise` (Decision log) |
@@ -383,7 +384,7 @@ Planned checks:
 
 ## Outcome
 
-- 2026-11-18: the case form, the exporter and 16 reviewed Stop cases ship
+- 2026-11-18: the case form, the exporter and 16 Stop fixtures (15 labelled, 1 left `?`) ship
   in greenbelay's next release. `clear-at-boundary` stays at `advise` (the
   person). Next: the follow-up widens the dirty-tree check to the
   checkouts a turn touched; then 8145b6c0 is labelled `nomatch`, and the
@@ -394,5 +395,13 @@ Planned checks:
   denied boundaries. Rollback: `greenbelay demote clear-at-boundary` if
   denied boundaries are followed by editing above the measured early-fire
   share.
+
+## Implementation review
+
+- implementation-review: approve-with-changes (2 blocking: flag args, out-params), then Delta approve-with-changes, then approve on 483022e7. Every finding was fixed except the optional `PayloadFixture` fields: deliberate, because the live payload has them optional too. 62k+120k+118k tokens.
+- backend: approve-with-changes, then approve-with-changes (re-run appended excluded comments, fixed), then approve. Deliberate: a sweep that stops on a NotFound race only leaves a note. 74k+114k+121k tokens.
+- lang:rust: approve-with-changes, then approve-with-changes, then approve-with-changes. Typed fixture, reasons and errors were fixed. Deliberate: string journal outcomes, the `countable`/`excluded` pair kept for readers, and the NotFound race. 99k+139k+146k tokens.
+- unix: approve-with-changes twice, then approve. Exit codes, `--cases`, temp suffix and age, unused flags and `--sample 0` were fixed. 60k+99k+103k tokens.
+- tui: approve-with-changes twice, then approve. Messages and help were fixed. Deliberate: the 200-column disagreement line, which the plan pins. 58k+97k+104k tokens.
 
 <!-- panel: repos=amont-agent,decisions adds= reviewers=backend,lang:rust,tui,unix,codex body-sha=f5e6add40667 -->
