@@ -1,5 +1,21 @@
 # Changelog
 
+## v6.4.0
+
+greenbelay 6.4.0 adds reviewed corpus cases for rules answered at Stop
+(session-boundaries t20, #291).
+
+- A corpus line `Stop <name>` names a fixture compiled into the binary.
+  `corpus check` and `graduate` replay it through `clear-at-boundary`'s own
+  core at `deny`. A disagreement names the line, the fixture and the reason.
+- `explain clear-at-boundary --format cases [--out DIR] [--cases FILE]
+  [--sample N]` exports journalled Stops as redacted fixtures. It rebuilds the
+  window the hook read, and it is idempotent.
+- The journal records the Stop's own `uuid=` for `clear-at-boundary`.
+- 16 Stop fixtures from live sessions. `clear-at-boundary` stays at `advise`:
+  one reviewed advice missed uncommitted work outside the repositories it
+  checks (t21).
+
 ## v6.3.2
 
 greenbelay 6.3.2 points the `clear-at-boundary` texts at the agent's Handoff
