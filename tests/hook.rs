@@ -5100,7 +5100,7 @@ fn outside_a_repository_three_notices_show_and_the_rest_are_counted() {
     }
     assert!(!text.contains("in d4: cd"), "{text}");
     assert!(
-        text.contains("greenbelay/inbox: 1 more repositories hold unfiled lines: d4"),
+        text.contains("greenbelay/inbox: 1 more repository holds unfiled lines: d4; start a session in one to see them"),
         "{text}"
     );
 }
@@ -5145,10 +5145,30 @@ fn outside_a_repository_observe_prints_nothing_but_journals() {
     );
 }
 
+#[cfg(unix)]
 #[test]
-fn outside_a_repository_a_newline_in_a_child_name_is_replaced() {
+fn outside_a_repository_a_child_named_with_a_newline_is_skipped() {
     let root = inbox_root("inbox-root-newline", &[("na\nme", OLD_ORPHAN)]);
     let reply = send(&session_start_of("startup", "rootse05", &root));
-    let text = reply.reason();
-    assert!(text.contains("in na?me: cd $'"), "{text}");
+    assert!(
+        !reply.reason().contains("greenbelay/inbox"),
+        "{}",
+        reply.stdout
+    );
+}
+
+#[test]
+fn a_git_entry_in_a_parent_directory_means_no_child_scan() {
+    let root = inbox_root("inbox-root-parent-git", &[("a1", OLD_ORPHAN)]);
+    // An invalid `.git` file: rev-parse fails, yet the cwd is inside a git tree.
+    std::fs::write(root.join(".git"), "not a gitdir\n").unwrap();
+    let cwd = root.join("work");
+    std::fs::create_dir_all(cwd.join("a1/.git/greenharness")).unwrap();
+    std::fs::write(cwd.join("a1/.git/greenharness/inbox.md"), OLD_ORPHAN).unwrap();
+    let reply = send(&session_start_of("startup", "rootsf06", &cwd));
+    assert!(
+        !reply.reason().contains("greenbelay/inbox"),
+        "{}",
+        reply.stdout
+    );
 }

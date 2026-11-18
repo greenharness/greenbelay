@@ -60,16 +60,17 @@ as unfiled. Other lines, malformed ones included (session
 `?`), are fresh. The block follows the `clear-at-boundary` stance: `observe`
 journals the counts and prints nothing.
 
-When the session's directory is not inside a git repository, the notice looks
-instead at the directories directly under it whose `.git` is a real directory
+When the session's directory is not inside a git repository (neither it nor
+any ancestor holds a `.git` entry), the notice looks instead at the directories directly under it whose `.git` is a real directory
 (symlinked children and linked worktrees are skipped) holding
 `.git/greenharness/`. Each match is journalled under the child's name. At most
 three children with unfiled lines (orphans or fresh; a child with only lines
 being filed is neither shown nor counted) are printed in name order, each
 notice preceded by `in <name>: cd <path>`, followed by one line,
-`greenbelay/inbox: N more repositories hold unfiled lines: a, b, c, …`, for the
-rest. Control characters in printed names are replaced. Inside a repository
-nothing changes.
+`greenbelay/inbox: N more repositories hold unfiled lines: a, b, c, …; start a
+session in one to see them` (`1 more repository holds` when N is 1), for the
+rest. A child whose name is not valid UTF-8 or contains a control character is
+skipped. Inside a repository, or below a `.git` entry, nothing changes.
 
 ## Relationship to amont
 
