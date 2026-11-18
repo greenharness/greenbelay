@@ -204,6 +204,13 @@ mine flags:
 
 explain flags:
   --rank novelty        label the matches least like the ones already reviewed
+  --out <dir>           explain clear-at-boundary --format cases: write the Stop
+                        fixtures there (default: the checkout's
+                        tests/corpus/stop/clear-at-boundary/); --sample <n>
+                        keeps the n most recent Stops
+  --cases <file>        explain clear-at-boundary --format cases: the .cases
+                        file whose Stop lines are not printed again (default:
+                        the checkout's tests/corpus/clear-at-boundary.cases)
 
 backtest flags:
   --compliance          per model, per week: what the model did NEXT after a
@@ -888,6 +895,7 @@ struct Flags {
     compliance: bool,
     check: bool,
     out: Option<PathBuf>,
+    cases: Option<PathBuf>,
     model: Option<String>,
     dialect: Option<rules::Dialect>,
     cwd: Option<PathBuf>,
@@ -908,6 +916,7 @@ fn flags(args: &[OsString]) -> Result<Flags, String> {
         };
         match a.as_str() {
             "--out" => f.out = Some(PathBuf::from(value(&mut i, &a)?)),
+            "--cases" => f.cases = Some(PathBuf::from(value(&mut i, &a)?)),
             "--model" => f.model = Some(value(&mut i, &a)?),
             "--transcripts" => f.transcripts.push(PathBuf::from(value(&mut i, &a)?)),
             "--since" => {
@@ -918,10 +927,13 @@ fn flags(args: &[OsString]) -> Result<Flags, String> {
             "--rule" => f.only.push(value(&mut i, &a)?),
             "--sample" => {
                 let v = value(&mut i, &a)?;
-                f.sample = Some(
-                    v.parse()
-                        .map_err(|_| format!("--sample: `{v}` is not a number"))?,
-                );
+                let count: usize = v
+                    .parse()
+                    .map_err(|_| format!("--sample: `{v}` is not a number"))?;
+                if count == 0 {
+                    return Err("--sample: takes 1 or more".to_string());
+                }
+                f.sample = Some(count);
             }
             "--window" => {
                 let v = value(&mut i, &a)?;
@@ -1034,6 +1046,37 @@ fn run_backtest(args: &[OsString], explain: bool) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    let as_cases = explain && f.format.as_deref() == Some("cases");
+    if let Some(other) = f.format.as_deref() {
+        if other != "cases" {
+            eprintln!("{BIN}: --format takes `cases`, not `{other}`");
+            return ExitCode::from(2);
+        }
+    }
+    let exporting = as_cases && f.only == [greenbelay_guard::rules::clear_at_boundary::RULE.id];
+    let unused: &[(bool, &str)] = if exporting {
+        &[
+            (f.since.is_some(), "--since"),
+            (f.json, "--json"),
+            (f.rank.is_some(), "--rank"),
+        ]
+    } else if explain {
+        &[(f.out.is_some(), "--out"), (f.cases.is_some(), "--cases")]
+    } else {
+        &[(f.cases.is_some(), "--cases")]
+    };
+    if let Some((_, name)) = unused.iter().find(|(given, _)| *given) {
+        let scope = if exporting {
+            "the Stop export does not use"
+        } else {
+            "only `explain clear-at-boundary --format cases` takes"
+        };
+        eprintln!("{BIN}: {name}: {scope} it");
+        return ExitCode::from(2);
+    }
+    if exporting {
+        return run_export_stops(&f);
+    }
     let roots = match transcript::roots(&f.transcripts) {
         Ok(r) => r,
         Err(e) => {
@@ -1046,13 +1089,6 @@ fn run_backtest(args: &[OsString], explain: bool) -> ExitCode {
         tool: "Bash",
         since: f.since,
     };
-    let as_cases = explain && f.format.as_deref() == Some("cases");
-    if let Some(other) = f.format.as_deref() {
-        if other != "cases" {
-            eprintln!("{BIN}: --format takes `cases`, not `{other}`");
-            return ExitCode::from(2);
-        }
-    }
     let novelty = match f.rank.as_deref() {
         None => false,
         Some("novelty") if explain => true,
@@ -1118,6 +1154,87 @@ fn run_backtest(args: &[OsString], explain: bool) -> ExitCode {
             eprintln!(concat!(greenbelay_guard::bin!(), ": {}"), e.explain());
             ExitCode::from(2)
         }
+    }
+}
+
+/// `explain clear-at-boundary --format cases`: freeze the Stops the rule's
+/// journal lines record as fixtures, and print one `?` case line for each.
+/// Stdout carries only case lines; the notes and the summary go to stderr.
+fn run_export_stops(flags: &Flags) -> ExitCode {
+    let rule = greenbelay_guard::rules::clear_at_boundary::RULE.id;
+    let out = match &flags.out {
+        Some(dir) => dir.clone(),
+        None if corpus::checkout_present() => corpus::stop_dir_for(rule),
+        None => {
+            eprintln!(
+                concat!(
+                    "{}: this build has no checkout to write fixtures into; ",
+                    "pass --out <dir>, or run `cargo run -- explain {} --format cases` ",
+                    "from a checkout of ",
+                    greenbelay_guard::bin!()
+                ),
+                BIN, rule
+            );
+            return ExitCode::from(2);
+        }
+    };
+    let roots = match transcript::roots(&flags.transcripts) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!(concat!(greenbelay_guard::bin!(), ": {}"), e.explain());
+            return ExitCode::from(2);
+        }
+    };
+    let Some(journal_dir) = journal::dir() else {
+        eprintln!("{BIN}: no journal directory: neither CLAUDE_CONFIG_DIR nor HOME is set");
+        return ExitCode::from(2);
+    };
+    let journal_files = match greenbelay_process::clear_boundary_export::journal_files(&journal_dir)
+    {
+        Ok(files) => files,
+        Err(error) => {
+            eprintln!("{BIN}: {}: {error}", journal_dir.display());
+            return ExitCode::from(2);
+        }
+    };
+    let cases_path = flags
+        .cases
+        .clone()
+        .unwrap_or_else(|| corpus::path_for(rule));
+    let cases_text = match std::fs::read_to_string(&cases_path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            eprintln!("{BIN}: {}: {error}", cases_path.display());
+            return ExitCode::from(2);
+        }
+    };
+    let mut options = greenbelay_process::clear_boundary_export::Options::new(out);
+    options.journal = journal_files;
+    options.transcripts = transcript::files(&roots);
+    options.transcript_roots = roots.dirs.clone();
+    options.cases_text = cases_text;
+    options.sample = flags.sample;
+    options.home = std::env::var("HOME").ok();
+    let report = greenbelay_process::clear_boundary_export::export(&options);
+    for note in &report.notes {
+        eprintln!("{BIN}: {note}");
+    }
+    if report.found_nothing() {
+        eprintln!(
+            "{BIN}: no clear-at-boundary lines in {}",
+            journal_dir.display()
+        );
+        return ExitCode::FAILURE;
+    }
+    eprintln!("{}", report.summary());
+    for line in &report.stdout {
+        println!("{line}");
+    }
+    if report.failed() {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
     }
 }
 
@@ -3563,7 +3680,7 @@ fn run_corpus(args: &[OsString]) -> ExitCode {
     let mut healthy = true;
     let w = ui::id_column(rule_table::RULES);
     for rule in rule_table::RULES {
-        let score = corpus::score(rule);
+        let score = corpus::score_with(rule, Some(greenbelay_process::clear_boundary::stop_judge));
         if score.reviewed == 0 && score.unreviewed == 0 {
             println!("{:<w$}no cases yet", rule.id);
             continue;
@@ -3586,13 +3703,24 @@ fn run_corpus(args: &[OsString]) -> ExitCode {
             } else {
                 format!("{}.cases", rule.id)
             };
-            println!(
-                "  {}:{} expected {} — {}",
-                shown,
-                d.line,
-                d.expected.as_str(),
-                corpus::escape(&d.command)
-            );
+            match &d.fixture {
+                Some(fixture) => println!(
+                    "  {}:{} expected {} — {} ({fixture}): {}",
+                    shown,
+                    d.line,
+                    d.expected.as_str(),
+                    corpus::escape(&d.command),
+                    d.why
+                ),
+                None => println!(
+                    "  {}:{} expected {} — {}: {}",
+                    shown,
+                    d.line,
+                    d.expected.as_str(),
+                    corpus::escape(&d.command),
+                    d.why
+                ),
+            }
         }
     }
     if healthy {
@@ -3632,7 +3760,11 @@ fn run_graduate(args: &[OsString], promoting: bool) -> ExitCode {
         rules::Stance::Observe
     };
 
-    let verdict = graduate::assess(rule, to);
+    let verdict = graduate::assess_score(
+        rule,
+        to,
+        &corpus::score_with(rule, Some(greenbelay_process::clear_boundary::stop_judge)),
+    );
     for (ok, line) in &verdict.lines {
         println!(
             "  {} {line}",

@@ -90,6 +90,17 @@ pub fn path_for(rule: &str) -> PathBuf {
         .join(format!("{rule}.cases"))
 }
 
+/// Where a rule's Stop fixtures live IN A CHECKOUT: the directory `explain
+/// --format cases` writes to by default. Like [`path_for`], it names the
+/// machine that built the binary; the compiled-in copy is `EMBEDDED_STOP`.
+pub fn stop_dir_for(rule: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("corpus")
+        .join("stop")
+        .join(rule)
+}
+
 /// Every rule's reviewed cases, compiled into the binary at the version
 /// they were reviewed for. A release carries its own evidence, so
 /// `graduate` on an installed copy judges against the same corpus the test
@@ -431,10 +442,81 @@ pub struct Score {
     pub disagreements: Vec<Disagreement>,
 }
 
+/// Why a recorded Stop fixture cannot be replayed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FixtureError {
+    /// The case line's name is not a valid `Stop <name>`.
+    BadCaseLine(String),
+    /// No fixture is compiled in or on disk at this path.
+    NoFixture(String),
+    NotJson(String),
+    /// A member the replay needs is absent; names it.
+    Missing(String),
+    /// A member has another type or value than the replay accepts.
+    WrongType(String),
+    /// The exporter marked the fixture not countable, with its reason.
+    NotCountable(String),
+}
+
+impl std::fmt::Display for FixtureError {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FixtureError::BadCaseLine(why) => write!(out, "{why}"),
+            FixtureError::NoFixture(path) => write!(out, "no fixture at {path}"),
+            FixtureError::NotJson(why) => write!(out, "fixture is not JSON: {why}"),
+            FixtureError::Missing(member) => write!(out, "fixture has no {member}"),
+            FixtureError::WrongType(why) => write!(out, "fixture member is invalid: {why}"),
+            FixtureError::NotCountable(why) => write!(out, "not countable: {why}"),
+        }
+    }
+}
+
+/// Why the engine and the human differ.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DisagreementReason {
+    FixtureMalformed(FixtureError),
+    /// The fixture is marked not countable, with the exporter's reason.
+    FixtureExcluded(String),
+    NoStopJudge {
+        rule: String,
+    },
+    FiredAtDeny,
+    DidNotFireAtDeny,
+    Fired,
+    DidNotFire,
+    ReadMalformed(String),
+    NoReadJudge,
+}
+
+impl std::fmt::Display for DisagreementReason {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DisagreementReason::FixtureMalformed(error) => {
+                write!(out, "fixture malformed: {error}")
+            }
+            DisagreementReason::FixtureExcluded(why) => write!(out, "fixture excluded: {why}"),
+            DisagreementReason::NoStopJudge { rule } => write!(
+                out,
+                "no Stop judge for {rule} in this build; remove the line or label it after the judge lands"
+            ),
+            DisagreementReason::FiredAtDeny => write!(out, "rule fired at deny"),
+            DisagreementReason::DidNotFireAtDeny => write!(out, "rule did not fire at deny"),
+            DisagreementReason::Fired => write!(out, "rule fired"),
+            DisagreementReason::DidNotFire => write!(out, "rule did not fire"),
+            DisagreementReason::ReadMalformed(why) => write!(out, "Read case malformed: {why}"),
+            DisagreementReason::NoReadJudge => write!(out, "no Read judge for this rule"),
+        }
+    }
+}
+
 pub struct Disagreement {
     pub line: usize,
     pub expected: Verdict,
     pub command: String,
+    /// Why the engine and the human differ.
+    pub why: DisagreementReason,
+    /// For a Stop case, the fixture's path under `tests/corpus/`.
+    pub fixture: Option<String>,
 }
 
 impl Score {
@@ -461,7 +543,149 @@ impl Score {
 
 /// Run one rule's cases through the engine as it stands today.
 pub fn score(rule: &crate::rules::Rule) -> Score {
-    score_cases(rule, &read(rule.id))
+    score_with(rule, None)
+}
+
+/// [`score`] with a judge for Stop cases.
+pub fn score_with(rule: &crate::rules::Rule, stop: Option<StopJudge>) -> Score {
+    score_cases_with(rule, &read(rule.id), stop)
+}
+
+/// Replays one recorded Stop for a rule: the rule id and the fixture's JSON.
+/// `None` when the rule has no Stop judgement; `Some(Err)` for a malformed
+/// fixture; `Some(Ok(fired))` otherwise. Injected, because the replay needs
+/// the process crate, which this one does not depend on.
+pub type StopJudge = fn(&str, &str) -> Option<Result<bool, FixtureError>>;
+
+/// A recorded Stop, for a rule judged from a frozen fixture. In a cases file
+/// its line is `<verdict>\tStop <name>`; the fixture is
+/// `tests/corpus/stop/<rule>/<name>.json`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StopCase {
+    pub name: String,
+}
+
+impl StopCase {
+    /// `None` when the text is not a Stop line; `Some(Err)` when it is and
+    /// the name is malformed (empty, with spaces or path separators).
+    pub fn parse(text: &str) -> Option<Result<StopCase, String>> {
+        let name = text.strip_prefix("Stop ")?;
+        let valid = !name.is_empty()
+            && name != ".."
+            && name != "."
+            && !name.contains(|c: char| c.is_whitespace() || c == '/' || c == '\\');
+        if !valid {
+            return Some(Err(
+                "expected `Stop <name>`, a name without spaces or path separators".into(),
+            ));
+        }
+        Some(Ok(StopCase {
+            name: name.to_string(),
+        }))
+    }
+
+    /// The fixture's path below `tests/corpus/`.
+    pub fn fixture_path(&self, rule: &str) -> String {
+        format!("stop/{rule}/{}.json", self.name)
+    }
+}
+
+/// The largest embedded Stop fixture, in bytes: the table is compiled into
+/// the binary.
+pub const MAX_STOP_FIXTURE_BYTES: usize = 64 * 1024;
+
+/// Stop fixtures compiled into the binary: `(rule, name, json)`, one entry
+/// per file at `tests/corpus/stop/<rule>/<name>.json`, kept by hand like
+/// [`EMBEDDED`]. `every_stop_fixture_on_disk_has_an_entry` refuses a file
+/// without an entry or an entry without a file.
+const EMBEDDED_STOP: &[(&str, &str, &str)] = &[
+    (
+        "clear-at-boundary",
+        "180063a6-1794893825",
+        include_str!("../tests/corpus/stop/clear-at-boundary/180063a6-1794893825.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "1dbedd97-1794869349",
+        include_str!("../tests/corpus/stop/clear-at-boundary/1dbedd97-1794869349.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "32290a5c-1794774945",
+        include_str!("../tests/corpus/stop/clear-at-boundary/32290a5c-1794774945.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "32290a5c-1794907585",
+        include_str!("../tests/corpus/stop/clear-at-boundary/32290a5c-1794907585.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "52e82064-1794880526",
+        include_str!("../tests/corpus/stop/clear-at-boundary/52e82064-1794880526.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "72e46887-1794922694",
+        include_str!("../tests/corpus/stop/clear-at-boundary/72e46887-1794922694.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "72e46887-1794943716",
+        include_str!("../tests/corpus/stop/clear-at-boundary/72e46887-1794943716.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "7458c00c-1794961613",
+        include_str!("../tests/corpus/stop/clear-at-boundary/7458c00c-1794961613.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "8145b6c0-1794667260",
+        include_str!("../tests/corpus/stop/clear-at-boundary/8145b6c0-1794667260.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "8a2ca22e-1794903106",
+        include_str!("../tests/corpus/stop/clear-at-boundary/8a2ca22e-1794903106.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "960ad27d-1794783012",
+        include_str!("../tests/corpus/stop/clear-at-boundary/960ad27d-1794783012.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "a3171864-1794929214",
+        include_str!("../tests/corpus/stop/clear-at-boundary/a3171864-1794929214.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "c2449a0f-1794742061",
+        include_str!("../tests/corpus/stop/clear-at-boundary/c2449a0f-1794742061.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "c2449a0f-1794836880",
+        include_str!("../tests/corpus/stop/clear-at-boundary/c2449a0f-1794836880.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "e2fb2812-1794745202",
+        include_str!("../tests/corpus/stop/clear-at-boundary/e2fb2812-1794745202.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "e2fb2812-1794806880",
+        include_str!("../tests/corpus/stop/clear-at-boundary/e2fb2812-1794806880.json"),
+    ),
+];
+
+fn embedded_stop(rule: &str, name: &str) -> Option<&'static str> {
+    EMBEDDED_STOP
+        .iter()
+        .find(|(id, fixture, _)| *id == rule && *fixture == name)
+        .map(|(_, _, text)| *text)
 }
 
 /// A Read tool call, for a rule answered from the Read payload and a stat
@@ -521,6 +745,27 @@ fn read_judge(rule: &str) -> Option<fn(&ReadCase) -> bool> {
 }
 
 pub fn score_cases(rule: &crate::rules::Rule, cases: &[Case]) -> Score {
+    score_cases_with(rule, cases, None)
+}
+
+pub fn score_cases_with(
+    rule: &crate::rules::Rule,
+    cases: &[Case],
+    stop: Option<StopJudge>,
+) -> Score {
+    score_cases_in(rule, cases, stop, &|name| {
+        embedded_stop(rule.id, name).map(str::to_string)
+    })
+}
+
+/// [`score_cases_with`], reading a Stop case's fixture from `fixture_named`
+/// instead of the embedded table.
+pub fn score_cases_in(
+    rule: &crate::rules::Rule,
+    cases: &[Case],
+    stop: Option<StopJudge>,
+    fixture_named: &dyn Fn(&str) -> Option<String>,
+) -> Score {
     let mut score = Score {
         reviewed: 0,
         negatives: 0,
@@ -537,35 +782,84 @@ pub fn score_cases(rule: &crate::rules::Rule, cases: &[Case]) -> Score {
             score.negatives += 1;
         }
         let expected = case.verdict == Verdict::Match;
-        // `None` is a judgement that cannot be made: a malformed Read case,
-        // or one in the file of a rule with no Read judge. Either disagrees,
-        // whatever its label.
-        let fired = match ReadCase::parse(&case.command) {
-            Some(read) => match (read, read_judge(rule.id)) {
-                (Ok(read), Some(judge)) => Some(judge(&read)),
-                _ => None,
-            },
-            None => {
-                let parsed = crate::shell::lex(&case.command);
-                // Replayed as the backtester replays: no shell is recorded
-                // for a case, so the dialect is unknown.
-                let input = crate::rules::Input::new(
-                    &case.command,
-                    crate::rules::Dialect::Unknown,
-                    &parsed,
-                );
-                Some(rule.judge(&input).is_some())
-            }
+        let mut fixture = None;
+        // `Err` is a judgement that cannot be made: a malformed Stop or Read
+        // case, or one in the file of a rule with no judge for it. Either
+        // disagrees, whatever its label.
+        let outcome: Result<bool, DisagreementReason> =
+            if let Some(stop_case) = StopCase::parse(&case.command) {
+                match stop_case {
+                    Err(why) => Err(DisagreementReason::FixtureMalformed(
+                        FixtureError::BadCaseLine(why),
+                    )),
+                    Ok(stop_case) => {
+                        fixture = Some(stop_case.fixture_path(rule.id));
+                        replay_stop(rule.id, &stop_case, stop, fixture_named)
+                    }
+                }
+            } else {
+                match ReadCase::parse(&case.command) {
+                    Some(Ok(read)) => match read_judge(rule.id) {
+                        Some(judge) => Ok(judge(&read)),
+                        None => Err(DisagreementReason::NoReadJudge),
+                    },
+                    Some(Err(why)) => Err(DisagreementReason::ReadMalformed(why)),
+                    None => {
+                        let parsed = crate::shell::lex(&case.command);
+                        // Replayed as the backtester replays: no shell is recorded
+                        // for a case, so the dialect is unknown.
+                        let input = crate::rules::Input::new(
+                            &case.command,
+                            crate::rules::Dialect::Unknown,
+                            &parsed,
+                        );
+                        Ok(rule.judge(&input).is_some())
+                    }
+                }
+            };
+        let is_stop = fixture.is_some();
+        let why = match outcome {
+            Ok(fired) if fired == expected => continue,
+            Ok(true) if is_stop => DisagreementReason::FiredAtDeny,
+            Ok(false) if is_stop => DisagreementReason::DidNotFireAtDeny,
+            Ok(true) => DisagreementReason::Fired,
+            Ok(false) => DisagreementReason::DidNotFire,
+            Err(why) => why,
         };
-        if fired != Some(expected) {
-            score.disagreements.push(Disagreement {
-                line: case.line,
-                expected: case.verdict,
-                command: case.command.clone(),
-            });
-        }
+        score.disagreements.push(Disagreement {
+            line: case.line,
+            expected: case.verdict,
+            command: case.command.clone(),
+            why,
+            fixture,
+        });
     }
     score
+}
+
+/// The replay of one Stop case: whether the rule fires, or why it cannot be
+/// judged.
+fn replay_stop(
+    rule_id: &str,
+    stop_case: &StopCase,
+    stop: Option<StopJudge>,
+    fixture_named: &dyn Fn(&str) -> Option<String>,
+) -> Result<bool, DisagreementReason> {
+    let no_judge = || DisagreementReason::NoStopJudge {
+        rule: rule_id.to_string(),
+    };
+    let judge = stop.ok_or_else(no_judge)?;
+    let text = fixture_named(&stop_case.name).ok_or_else(|| {
+        DisagreementReason::FixtureMalformed(FixtureError::NoFixture(
+            stop_case.fixture_path(rule_id),
+        ))
+    })?;
+    match judge(rule_id, &text) {
+        None => Err(no_judge()),
+        Some(Err(FixtureError::NotCountable(why))) => Err(DisagreementReason::FixtureExcluded(why)),
+        Some(Err(error)) => Err(DisagreementReason::FixtureMalformed(error)),
+        Some(Ok(fired)) => Ok(fired),
+    }
 }
 
 #[cfg(test)]
@@ -691,5 +985,126 @@ mod tests {
         assert!(!s.agrees());
         assert_eq!(s.disagreements[0].line, 1);
         assert_eq!(s.disagreements[0].expected, Verdict::NoMatch);
+    }
+
+    fn stop_rule_case(label: &str, name: &str) -> Vec<Case> {
+        parse(&format!("{label}\tStop {name}\n"))
+    }
+
+    fn fired(_rule: &str, _fixture: &str) -> Option<Result<bool, FixtureError>> {
+        Some(Ok(true))
+    }
+
+    fn malformed(_rule: &str, _fixture: &str) -> Option<Result<bool, FixtureError>> {
+        Some(Err(FixtureError::NotJson("eof".into())))
+    }
+
+    #[test]
+    fn a_stop_line_parses_its_name_or_is_malformed() {
+        assert_eq!(
+            StopCase::parse("Stop early-1").unwrap().unwrap().name,
+            "early-1"
+        );
+        assert!(StopCase::parse("git status").is_none());
+        assert!(StopCase::parse("Read full 1 main x").is_none());
+        for bad in ["Stop ", "Stop a b", "Stop a/b", "Stop a\\b", "Stop .."] {
+            assert!(StopCase::parse(bad).unwrap().is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_stop_case_with_no_judge_is_a_disagreement() {
+        let rule = &crate::rules::pipe_to_tail::RULE;
+        let score = score_cases_with(rule, &stop_rule_case("nomatch", "x"), None);
+        assert_eq!(score.disagreements.len(), 1);
+        assert_eq!(
+            score.disagreements[0].why,
+            DisagreementReason::NoStopJudge {
+                rule: "pipe-to-tail".to_string()
+            }
+        );
+        assert_eq!(
+            score.disagreements[0].why.to_string(),
+            "no Stop judge for pipe-to-tail in this build; remove the line or label it after the judge lands"
+        );
+    }
+
+    #[test]
+    fn a_stop_case_labelled_against_the_judge_names_why() {
+        let rule = &crate::rules::pipe_to_tail::RULE;
+        let fixtures = |_: &str| Some("{}".to_string());
+        let score = score_cases_in(
+            rule,
+            &stop_rule_case("nomatch", "x"),
+            Some(fired),
+            &fixtures,
+        );
+        assert_eq!(score.disagreements[0].why, DisagreementReason::FiredAtDeny);
+        assert_eq!(score.disagreements[0].why.to_string(), "rule fired at deny");
+        assert_eq!(
+            score.disagreements[0].fixture.as_deref(),
+            Some("stop/pipe-to-tail/x.json")
+        );
+        let agree = score_cases_in(rule, &stop_rule_case("match", "x"), Some(fired), &fixtures);
+        assert!(agree.agrees());
+        let bad = score_cases_in(
+            rule,
+            &stop_rule_case("match", "x"),
+            Some(malformed),
+            &fixtures,
+        );
+        assert_eq!(
+            bad.disagreements[0].why,
+            DisagreementReason::FixtureMalformed(FixtureError::NotJson("eof".into()))
+        );
+        assert_eq!(
+            bad.disagreements[0].why.to_string(),
+            "fixture malformed: fixture is not JSON: eof"
+        );
+    }
+
+    fn stop_fixtures_on_disk() -> Vec<String> {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("corpus")
+            .join("stop");
+        let mut found = Vec::new();
+        let Ok(rules) = std::fs::read_dir(&root) else {
+            return found;
+        };
+        for rule in rules.flatten() {
+            let Ok(files) = std::fs::read_dir(rule.path()) else {
+                continue;
+            };
+            for file in files.flatten() {
+                let name = file.file_name().to_string_lossy().into_owned();
+                if let Some(stem) = name.strip_suffix(".json") {
+                    found.push(format!("{}/{stem}", rule.file_name().to_string_lossy()));
+                }
+            }
+        }
+        found.sort();
+        found
+    }
+
+    #[test]
+    fn every_stop_fixture_on_disk_has_an_entry_and_every_entry_a_file() {
+        let mut table: Vec<String> = EMBEDDED_STOP
+            .iter()
+            .map(|(rule, name, _)| format!("{rule}/{name}"))
+            .collect();
+        table.sort();
+        assert_eq!(stop_fixtures_on_disk(), table);
+    }
+
+    #[test]
+    fn no_embedded_stop_fixture_exceeds_the_cap() {
+        for (rule, name, text) in EMBEDDED_STOP {
+            assert!(
+                text.len() <= MAX_STOP_FIXTURE_BYTES,
+                "stop/{rule}/{name}.json is {} bytes",
+                text.len()
+            );
+        }
     }
 }
