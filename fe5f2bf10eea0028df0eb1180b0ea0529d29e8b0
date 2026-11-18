@@ -1,0 +1,19 @@
+greengate-provenance-v1
+commit d4f561e1b1c23e00a9a8c4e9dcfa85873890e5c9
+tree fe5f2bf10eea0028df0eb1180b0ea0529d29e8b0
+canon 636b1f98ccf8a559075da394e569af14ceec0205
+patch f8ec804ea6fce443986d420fef47c8aae2812084
+plan docs/plans/2026-11-18-resolve-home-in-boundary-dirs.md e99655246399527e17fb5995e580c64b0b49ed0f498416d8ad00966f87c055f0
+review reviewed 62a200df04e5932687e76c22492ad623d60d89e2d6f15847e1305810004794b7
+code-review backend reviewed 62a200df04e5932687e76c22492ad623d60d89e2d6f15847e1305810004794b7
+code-review lang:rust reviewed 62a200df04e5932687e76c22492ad623d60d89e2d6f15847e1305810004794b7
+code-review unix carried 86c2c47f61ac59e5e2bbf005b35c44c0d15e38535d75e01ca34a9e53d3072a78
+preview not-required
+producer greenbelay 6.4.0
+
+-----BEGIN SSH SIGNATURE-----
+U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg7UOvJ8myo4dhW907VFty7T/bUV
+RFQerK+MWJ4bjChwcAAAAUZ3JlZW5nYXRlLXByb3ZlbmFuY2UAAAAAAAAABnNoYTUxMgAA
+AFMAAAALc3NoLWVkMjU1MTkAAABAzdvPD8eEUiy4RpUYtp+hPVKQNpyKChonhgOfb7ato6
+E5PyB8lkROuyG7qIfI8aeSwSidrsXmwIbdXB/QjswKAg==
+-----END SSH SIGNATURE-----
