@@ -197,7 +197,19 @@ Fixture scan (16 Stop cases) of boundary `-C` words:
 
 ## Verification record
 
-Phases 1 and 2 done (#293); Phase 3 done (#294, decisions t21 closure).
+Phases 1 and 2 done (#293); Phase 3 done (#294, and fredericrous/decisions#253).
+
+The decisions deliverables, all in fredericrous/decisions#253, under
+`docs/programmes/session-boundaries/`:
+
+- `t21-dirty-tree-beyond-the-boundary.md`: closed, with its Resolution.
+- `t10-advise-or-deny.md`: a line saying the `deny` is applied.
+- `map.md`: a Decisions-so-far line and the new Handoff.
+- `t23-cd-and-same-command-variables.md`: the follow-up for a `cd` or a
+  same-command variable.
+- `t22-home-holds-count.md`: the 7-day count, due 2026-11-25.
+- `../follow-ups/f11-greenbelay-reason-consts.md` and
+  `../follow-ups/f12-chezmoi-git-config-stances.md`.
 
 Phase 3 results:
 
@@ -221,8 +233,9 @@ Phase 3 results:
 - **The 7-day count of `~` holds** is the decisions ticket
   session-boundaries t22 (due 2026-11-25).
 
-- The branch binary in a scratch HOME at `deny` (the installed-binary
-  run follows the release). The boundary is
+Phases 1–2 results:
+
+- The branch binary in a scratch HOME at `deny`. The boundary is
   `git -C ~/.cache/cab-probe worktree remove x` at 250k tokens. The repo
   has an upstream, and 0 commits ahead.
   - Modified file → expected a hold, no Continue. Actual: silent, and the
@@ -260,6 +273,10 @@ Phase 3 results:
     `deny`.
 - `git_call` returns the positions of its `-C` words rather than their
   text, so `classify` can look up each word's quoting.
+- The 7-day count of `~` holds moved from "recorded in t21" to its own due
+  ticket, `session-boundaries/t22-home-holds-count.md` (`due =
+  "2026-11-25"`). t21 closed with this plan, and ADR-0062 keeps a dated
+  measure in a `due` ticket.
 - Implementation review round 1, fixed:
   - the `home_from` parameter is renamed `home_variable`;
   - the exporter's home goes through `home_from`, so there is one filter;
