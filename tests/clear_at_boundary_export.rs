@@ -20,8 +20,8 @@ impl World {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root); // a world left by a killed run, if any
-        let projects = root.join("claude/projects/-work");
-        let data = root.join("claude/greenbelay");
+        let projects = root.join("claude").join("projects").join("-work");
+        let data = root.join("claude").join("greenbelay");
         for dir in [&projects, &data, &root.join("state")] {
             std::fs::create_dir_all(dir).unwrap();
         }
@@ -75,7 +75,7 @@ impl World {
     }
 
     fn journal_dir(&self) -> PathBuf {
-        self.root.join("claude/greenbelay")
+        self.root.join("claude").join("greenbelay")
     }
 
     fn files(&self) -> Vec<String> {
@@ -178,8 +178,14 @@ fn a_stop_with_no_transcript_is_skipped_and_all_skipped_exits_1() {
     let stderr = text(&output.stderr);
     assert!(stderr.contains("no transcript"), "{stderr}");
     assert!(
-        stderr.contains(&world.root.join("claude/projects").display().to_string())
-            && stderr.contains("--transcripts <dir>"),
+        stderr.contains(
+            &world
+                .root
+                .join("claude")
+                .join("projects")
+                .display()
+                .to_string()
+        ) && stderr.contains("--transcripts <dir>"),
         "{stderr}"
     );
     assert!(text(&output.stderr).contains("1 skipped"));
@@ -202,6 +208,9 @@ fn a_journal_with_no_stop_exits_1() {
     assert_eq!(text(&output.stdout), "");
 }
 
+// Unix only: with `HOME` removed there is no home to find. Windows finds the
+// profile directory through the OS, whatever the environment says.
+#[cfg(unix)]
 #[test]
 fn a_missing_journal_directory_is_a_usage_error_naming_it() {
     let world = World::new("nodir", &[advised(1_794_960_484, "feedc0de")]);
@@ -212,7 +221,7 @@ fn a_missing_journal_directory_is_a_usage_error_naming_it() {
         .args(["explain", "clear-at-boundary", "--format", "cases", "--out"])
         .arg(world.out())
         .arg("--transcripts")
-        .arg(world.root.join("claude/projects"))
+        .arg(world.root.join("claude").join("projects"))
         .output()
         .expect("the binary runs");
     assert_eq!(output.status.code(), Some(2), "{}", text(&output.stderr));
