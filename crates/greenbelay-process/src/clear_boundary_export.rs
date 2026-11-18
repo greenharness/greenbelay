@@ -23,10 +23,10 @@ use greenbelay_guard::rules::clear_at_boundary::RULE;
 use serde_json::{json, Map, Value};
 
 use crate::clear_boundary::{
-    blocks, boundaries, entry_type, is_person_prompt, is_sidechain, judge_case, pending_from,
-    read_tail_until_at, relais_messages, replay_at_deny, turn_window, window_is_enough, word_after,
-    work_in, Pending, Repositories, State, StopView, Tail, SYMBOLIC_HOME, TAIL_CAP,
-    TAIL_FIRST_CHUNK,
+    blocks, boundaries, entry_type, home_from, is_person_prompt, is_sidechain, judge_case,
+    pending_from, read_tail_until_at, relais_messages, replay_at_deny, turn_window,
+    window_is_enough, word_after, work_in, Pending, Repositories, State, StopView, Tail,
+    SYMBOLIC_HOME, TAIL_CAP, TAIL_FIRST_CHUNK,
 };
 use crate::plan_phases::PhaseFact;
 
@@ -412,10 +412,7 @@ impl Scrub {
 
     /// The home the live hook resolved `~` against, when there is one.
     fn home_dir(&self) -> Option<PathBuf> {
-        self.home
-            .as_deref()
-            .map(PathBuf::from)
-            .filter(|home| home.is_absolute())
+        home_from(self.home.clone().map(Into::into))
     }
 
     /// A Bash command, through the backtest's redaction.

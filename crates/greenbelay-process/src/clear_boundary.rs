@@ -326,7 +326,7 @@ enum Quoting {
 /// A shell word with its quotes removed, and how each of its characters
 /// was written: a `~` or `$HOME` expands only when written bare (or, for
 /// `$HOME`, inside double quotes), which the text alone no longer shows.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct Word {
     text: String,
     /// One per `char` of `text`.
@@ -334,13 +334,6 @@ struct Word {
 }
 
 impl Word {
-    fn new() -> Self {
-        Self {
-            text: String::new(),
-            quoting: Vec::new(),
-        }
-    }
-
     fn push(&mut self, c: char, quoting: Quoting) {
         self.text.push(c);
         self.quoting.push(quoting);
@@ -360,7 +353,7 @@ fn segments(command: &str) -> Vec<Vec<String>> {
 fn shell_words(command: &str) -> Vec<Vec<Word>> {
     let mut all: Vec<Vec<Word>> = Vec::new();
     let mut words: Vec<Word> = Vec::new();
-    let mut word = Word::new();
+    let mut word = Word::default();
     let mut in_word = false;
     let mut chars = command.chars();
     while let Some(c) = chars.next() {
@@ -396,7 +389,7 @@ fn shell_words(command: &str) -> Vec<Vec<Word>> {
             }
             ';' | '&' | '|' | '\n' => {
                 if in_word {
-                    words.push(std::mem::replace(&mut word, Word::new()));
+                    words.push(std::mem::take(&mut word));
                     in_word = false;
                 }
                 if !words.is_empty() {
@@ -405,7 +398,7 @@ fn shell_words(command: &str) -> Vec<Vec<Word>> {
             }
             c if c.is_whitespace() => {
                 if in_word {
-                    words.push(std::mem::replace(&mut word, Word::new()));
+                    words.push(std::mem::take(&mut word));
                     in_word = false;
                 }
             }
@@ -459,8 +452,10 @@ fn home_suffix(word: &Word) -> Option<&str> {
 /// The home directory a live hook resolves `~` against: `$HOME` when it is
 /// an absolute path. Unset, empty or relative, there is none, and a `~` word
 /// keeps today's handling.
-fn home_from(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
-    value.map(PathBuf::from).filter(|home| home.is_absolute())
+pub(crate) fn home_from(home_variable: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    home_variable
+        .map(PathBuf::from)
+        .filter(|home| home.is_absolute())
 }
 
 fn base_name(word: &str) -> &str {
@@ -1614,7 +1609,59 @@ enum RepositoriesFixture {
 pub(crate) enum FrozenRepositories {
     /// One answer whatever the directories.
     All(Repositories),
-    PerDirectory(BTreeMap<PathBuf, String>),
+    PerDirectory(BTreeMap<PathBuf, DirectoryFact>),
+}
+
+/// The reasons [`check_one`] gives besides a git refusal; a fixture reason
+/// outside them (a typo) is refused rather than frozen as dirty.
+const NOT_CLEAN_REASONS: [&str; 3] = [
+    "uncommitted changes",
+    "no upstream or base to compare with",
+    "unpushed commits outside docs/plans/",
+];
+
+/// A reason [`refused`] gives: `git <command> failed`.
+fn is_git_refusal(reason: &str) -> bool {
+    reason
+        .strip_prefix("git ")
+        .and_then(|rest| rest.strip_suffix(" failed"))
+        .is_some_and(|command| !command.is_empty() && !command.contains(' '))
+}
+
+/// One directory's frozen git fact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DirectoryFact {
+    Clean,
+    TimedOut,
+    NotClean(String),
+}
+
+impl DirectoryFact {
+    /// A `per_directory` member: its key must be a path the rule can resolve
+    /// to (absolute, or rooted at the symbolic home), and its value `clean`,
+    /// `timed_out` or a reason the live check gives.
+    fn parse(directory: String, fact: String) -> Result<(PathBuf, Self), FixtureError> {
+        let path = PathBuf::from(&directory);
+        let rooted = path.is_absolute() || path.starts_with(SYMBOLIC_HOME);
+        if !rooted {
+            return Err(FixtureError::WrongType(format!(
+                "per_directory key {directory:?} is neither absolute nor under {SYMBOLIC_HOME}"
+            )));
+        }
+        let fact = match fact.as_str() {
+            "clean" => Self::Clean,
+            "timed_out" => Self::TimedOut,
+            reason if NOT_CLEAN_REASONS.contains(&reason) || is_git_refusal(reason) => {
+                Self::NotClean(fact)
+            }
+            _ => {
+                return Err(FixtureError::WrongType(format!(
+                    "per_directory {directory:?}: {fact:?} is not clean, timed_out or a reason the check gives"
+                )))
+            }
+        };
+        Ok((path, fact))
+    }
 }
 
 impl FrozenRepositories {
@@ -1630,13 +1677,13 @@ impl FrozenRepositories {
             .into_iter()
             .chain(directories.iter().map(PathBuf::as_path))
         {
-            match map.get(directory).map(String::as_str) {
-                None | Some("clean") => {}
-                Some("timed_out") => return Repositories::TimedOut,
-                Some(reason) => {
+            match map.get(directory) {
+                None | Some(DirectoryFact::Clean) => {}
+                Some(DirectoryFact::TimedOut) => return Repositories::TimedOut,
+                Some(DirectoryFact::NotClean(reason)) => {
                     return Repositories::NotClean {
                         directory: directory.to_path_buf(),
-                        reason: reason.to_string(),
+                        reason: reason.clone(),
                     }
                 }
             }
@@ -1706,8 +1753,8 @@ impl TryFrom<StopFixture> for StopInputs {
             }
             RepositoriesFixture::PerDirectory(map) => FrozenRepositories::PerDirectory(
                 map.into_iter()
-                    .map(|(directory, fact)| (PathBuf::from(directory), fact))
-                    .collect(),
+                    .map(|(directory, fact)| DirectoryFact::parse(directory, fact))
+                    .collect::<Result<_, _>>()?,
             ),
         };
         Ok(StopInputs {
@@ -1746,13 +1793,12 @@ pub fn judge_case(fixture_json: &str) -> Result<bool, FixtureError> {
     let fixture: StopFixture =
         serde_json::from_str(fixture_json).map_err(|error| fixture_error(&error))?;
     let inputs = StopInputs::try_from(fixture)?;
-    let cwd = inputs.view.cwd.clone();
     Ok(replay_at_deny(
         &inputs.view,
         &inputs.entries,
         inputs.prior,
         inputs.phase,
-        |dirs| inputs.repositories.answer(cwd.as_deref(), dirs),
+        |dirs| inputs.repositories.answer(inputs.view.cwd.as_deref(), dirs),
     )
     .fired)
 }
@@ -2644,8 +2690,41 @@ mod tests {
         case["facts"]["repositories"] =
             json!({"per_directory": {"/work/~/repo": "uncommitted changes"}});
         assert_eq!(replay(&case), Ok(true));
-        case["facts"]["repositories"] = json!({"per_directory": {"/work": "dirty"}});
+        case["facts"]["repositories"] = json!({"per_directory": {"/work": "uncommitted changes"}});
         assert_eq!(replay(&case), Ok(false), "the payload cwd is walked first");
+    }
+
+    #[test]
+    fn a_per_directory_fact_is_checked_as_it_loads() {
+        let mut case = fixture(&home_boundary_entries());
+        for (map, wrong) in [
+            (json!({"repo": "dirty"}), "neither absolute nor under ~"),
+            (json!({"~/repo": ""}), "is not clean, timed_out"),
+            (json!({"~/repo": "clena"}), "is not clean, timed_out"),
+        ] {
+            case["facts"]["repositories"] = json!({ "per_directory": map });
+            assert!(
+                matches!(replay(&case), Err(FixtureError::WrongType(ref why)) if why.contains(wrong)),
+                "{map}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_live_stop_view_reads_home_from_the_environment() {
+        let stop = Stop {
+            session: "home-session".to_string(),
+            cwd: Some(PathBuf::from("/work")),
+            permission_mode: None,
+            last_message: None,
+            background_busy: false,
+            stop_hook_active: false,
+            transcript: None,
+        };
+        assert_eq!(
+            StopView::of(&stop).home,
+            home_from(std::env::var_os("HOME"))
+        );
     }
 
     #[test]
