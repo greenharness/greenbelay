@@ -1,5 +1,19 @@
 # Changelog
 
+## v6.4.1
+
+greenbelay 6.4.1 fixes how `clear-at-boundary` resolves a boundary's
+`git -C ~/…` directory (session-boundaries t21, #293).
+
+- A `-C` word starting with an unquoted `~`, or with `$HOME`/`${HOME}`
+  outside single quotes, resolves against `$HOME` and replaces the `-C`
+  chain. Before, the rule joined it to the cwd, so it never checked that
+  checkout and counted it clean. Quoted, escaped and `~user` words keep the
+  old handling.
+- A Stop fixture can freeze the repositories fact per directory
+  (`{"per_directory": {…}}`), checked when it loads. Stop 8145b6c0 is now
+  a reviewed `nomatch`: 20 reviewed cases, none left unreviewed.
+
 ## v6.4.0
 
 greenbelay 6.4.0 adds reviewed corpus cases for rules answered at Stop
