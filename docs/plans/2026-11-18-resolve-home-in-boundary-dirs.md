@@ -265,6 +265,7 @@ Phases 1 and 2 done (d0eaba67, 196b51ef); Phase 3 is next: release 6.4.1, the in
   - deliberate: the text clone in `classify`, `$HOME` read in `StopView::of`, the reason consts (follow-up).
   - Round 1: 62k tokens, 33 s. Delta: 34k tokens, 24 s.
 - **unix: approve**, no findings. 58k tokens, 32 s.
+- **Delta 2:** windows-latest CI failed because drive-less fixture keys and `/h` are not absolute there. Fixed with `has_root` and `temp_dir()` (74f2f5fb). implementation-review, backend and lang:rust approve (26k / 29 s, 26k / 33 s, 24k / 20 s).
 - **Follow-up in the inbox:** name `check_one`'s reasons as consts shared with `NOT_CLEAN_REASONS`, and give the wiring test an oracle of its own.
 
 <!-- panel: repos=amont-agent,decisions reviewers=backend,lang:rust,tui,unix,codex body-sha=4b84852b29c0 -->
