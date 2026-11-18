@@ -205,7 +205,10 @@ Phases 1 and 2 done on d0eaba67; Phase 3 is next.
   has an upstream, and 0 commits ahead.
   - Modified file → expected a hold, no Continue. Actual: silent, and the
     journal reads `deny watched … pending uncommitted changes`.
-  - The file restored, not committed → expected a Continue. Actual:
+  - The file restored, not committed → expected a Continue. The plan's
+    line says "commit the file", but a commit leaves the branch one ahead
+    of its upstream, and the check holds that as unpushed (codex#3,
+    carried). The restore is the clean state the line means. Actual:
     `{"decision":"block",…clear-at-boundary…}`, and the journal reads
     `deny denied … worktree remove`.
   - Control: installed 6.4.0 with the file modified → it denied (the bug).
@@ -235,5 +238,17 @@ Phases 1 and 2 done on d0eaba67; Phase 3 is next.
     `deny`.
 - `git_call` returns the positions of its `-C` words rather than their
   text, so `classify` can look up each word's quoting.
+- Implementation review round 1, fixed:
+  - the `home_from` parameter is renamed `home_variable`;
+  - the exporter's home goes through `home_from`, so there is one filter;
+  - a `per_directory` fact is parsed into `DirectoryFact` when it loads,
+    and refused when its key is neither absolute nor under `~`, or its
+    reason is not one the check gives;
+  - a test covers how `StopView::of` reads `$HOME`.
+- Deliberate:
+  - `classify` still clones the word texts for `git_call`, so
+    `adds_worktree` keeps a text-only path;
+  - `StopView::of` reads `$HOME` as the plan says, since it is the
+    hook's input adapter.
 
 <!-- panel: repos=amont-agent,decisions reviewers=backend,lang:rust,tui,unix,codex body-sha=4b84852b29c0 -->
