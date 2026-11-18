@@ -927,13 +927,13 @@ fn flags(args: &[OsString]) -> Result<Flags, String> {
             "--rule" => f.only.push(value(&mut i, &a)?),
             "--sample" => {
                 let v = value(&mut i, &a)?;
-                let n: usize = v
+                let count: usize = v
                     .parse()
                     .map_err(|_| format!("--sample: `{v}` is not a number"))?;
-                if n == 0 {
+                if count == 0 {
                     return Err("--sample: takes 1 or more".to_string());
                 }
-                f.sample = Some(n);
+                f.sample = Some(count);
             }
             "--window" => {
                 let v = value(&mut i, &a)?;
