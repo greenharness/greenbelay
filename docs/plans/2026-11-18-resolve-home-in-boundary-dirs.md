@@ -195,4 +195,45 @@ Fixture scan (16 Stop cases) of boundary `-C` words:
   more: `greenbelay graduate clear-at-boundary --to advise` and reopen
   t21.
 
+## Verification record
+
+Phases 1 and 2 done on d0eaba67; Phase 3 is next.
+
+- The branch binary in a scratch HOME at `deny` (the installed-binary
+  run follows the release). The boundary is
+  `git -C ~/.cache/cab-probe worktree remove x` at 250k tokens. The repo
+  has an upstream, and 0 commits ahead.
+  - Modified file → expected a hold, no Continue. Actual: silent, and the
+    journal reads `deny watched … pending uncommitted changes`.
+  - The file restored, not committed → expected a Continue. Actual:
+    `{"decision":"block",…clear-at-boundary…}`, and the journal reads
+    `deny denied … worktree remove`.
+  - Control: installed 6.4.0 with the file modified → it denied (the bug).
+- Red first: with home ignored in `chain`, 5 of the new tests fail,
+  including `the_8145b6c0_boundary_names_the_chezmoi_source`. With the
+  fix, all 56 `clear_boundary` tests pass.
+- `cargo test -p greenbelay-process` passes 322 tests; `-p greenbelay-guard`
+  passes 867; `--test corpus_stop` passes 5. The commit gate's workspace
+  suite passed on d0eaba67.
+- `greenbelay corpus check` (branch binary): `clear-at-boundary 20
+  reviewed (11 negative), 0 unreviewed, precision 100%`.
+- The word table was checked against zsh 5.9 (`HO=x; print -rl -- …`).
+  Every case agrees except `${HOME}x`: zsh prints `/hx`, a sibling of
+  home. The rule keeps it as written, like any word it does not resolve.
+
+## Decision log
+
+- Carried review items, as implemented:
+  - `Word` keeps one `Quoting` per character, so `$HO"ME"/a`,
+    `"\$HOME/a"` and `\~/a` stay literal.
+  - `segments` stays a text-only wrapper over `shell_words`, so
+    `adds_worktree` and `commit_subject` are unchanged and only
+    `classify` reads quoting.
+  - An expanded word replaces the chained base.
+  - A `..` above the symbolic `~` folds to an empty path (pinned).
+  - The probe used a baseline with an upstream and a restore, run at
+    `deny`.
+- `git_call` returns the positions of its `-C` words rather than their
+  text, so `classify` can look up each word's quoting.
+
 <!-- panel: repos=amont-agent,decisions reviewers=backend,lang:rust,tui,unix,codex body-sha=4b84852b29c0 -->
