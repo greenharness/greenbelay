@@ -368,8 +368,10 @@ pub fn boundaries(window: &TurnWindow<'_>, cwd: &Path, home: Option<&Path>) -> V
 /// absolute path (in a replay, also a path under the symbolic home, which is
 /// relative), else the payload `cwd`.
 fn entry_start(entry_cwd: Option<&str>, payload_cwd: &Path, home: Option<&Path>) -> PathBuf {
+    // Rooted, not `is_absolute`: on Windows a `/w` path has no drive and is
+    // not absolute, yet it names no directory relative to the hook's own.
     let usable = |path: &Path| {
-        path.is_absolute()
+        path.has_root()
             || home.is_some_and(|home| {
                 !home.as_os_str().is_empty() && !home.is_absolute() && path.starts_with(home)
             })
