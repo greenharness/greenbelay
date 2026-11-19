@@ -215,8 +215,8 @@ fn session_of_fresh(line: &str, today: Day) -> Option<String> {
     }
 }
 
-/// Where an unfiled line goes, said after both the orphan and the fresh
-/// lines so either block stands alone.
+/// Where an unfiled line goes, written into the orphan block and the
+/// fresh block alike, so either block stands alone.
 const WHERE_TO_FILE: &str = "as a task ticket in the plan's programme map, \
      or else in docs/programmes/follow-ups/, then remove its line";
 
