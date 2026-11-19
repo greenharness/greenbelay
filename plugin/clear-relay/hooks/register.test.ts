@@ -84,7 +84,7 @@ function answer($: Engine, text: string, extra: object = {}) {
   } as never)
 }
 
-function logLines(world: World, id: string): { event: string; cause?: string; session: string; cwd: string; prompt?: string }[] {
+function logLines(world: World, id: string): { event: string; cause?: string; session: string; cwd: string; prompt?: string; named?: unknown }[] {
   const text = world.files.get(`${STATE_DIR}/clear-relay/${id}.jsonl`) ?? ''
   return text
     .split('\n')
@@ -107,6 +107,61 @@ test('the line arms; after 10 s the relay runs clear, then submits', OPTIONS, as
   expect(world.submitted).toEqual([PROMPT])
   expect(events(world, 's1')).toEqual(['arm', 'clear', 'submit'])
   expect(logLines(world, 's1')[0]?.cwd).toBe('/work/repo')
+  expect(logLines(world, 's1')[2]?.named).toBeNull()
+})
+
+test('the submit line records the ticket a resume prompt names', OPTIONS, async ($, on) => {
+  const world = stage($, on)
+  const prompt = 'resume sre-agent cve-lane t20: bump the shared pin'
+  await answer($, `Done.\n\nsafe to /clear; next: \`${prompt}\`\n`)
+  await world.clock.advance(COUNTDOWN_MS)
+  expect(world.submitted).toEqual([prompt])
+  expect(logLines(world, 's1')[2]).toMatchObject({
+    event: 'submit',
+    named: { repo: 'sre-agent', programme: 'cve-lane', ticket: 't20' },
+  })
+})
+
+test('a ticket id is the file stem relais prints, slug included', OPTIONS, async ($, on) => {
+  const world = stage($, on)
+  const prompt = 'resume decisions session-boundaries t26-sessions-claim-their-work: the week count'
+  await answer($, `Done.\n\nsafe to /clear; next: \`${prompt}\`\n`)
+  await world.clock.advance(COUNTDOWN_MS)
+  expect(logLines(world, 's1')[2]).toMatchObject({
+    event: 'submit',
+    named: { repo: 'decisions', programme: 'session-boundaries', ticket: 't26-sessions-claim-their-work' },
+  })
+})
+
+test('a prefixed ticket id is named too', OPTIONS, async ($, on) => {
+  const world = stage($, on)
+  const prompt = 'resume decisions agents-many-nodes an-t02-primary-node: pick the node'
+  await answer($, `Done.\n\nsafe to /clear; next: \`${prompt}\`\n`)
+  await world.clock.advance(COUNTDOWN_MS)
+  expect(logLines(world, 's1')[2]).toMatchObject({
+    event: 'submit',
+    named: { repo: 'decisions', programme: 'agents-many-nodes', ticket: 'an-t02-primary-node' },
+  })
+})
+
+test('a resume prompt whose third word is no ticket id names nothing', OPTIONS, async ($, on) => {
+  const world = stage($, on)
+  const prompt = 'resume homelab fix bug: the flapping link'
+  await answer($, `Done.\n\nsafe to /clear; next: \`${prompt}\`\n`)
+  await world.clock.advance(COUNTDOWN_MS)
+  expect(world.submitted).toEqual([prompt])
+  expect(logLines(world, 's1')[2]).toMatchObject({ event: 'submit', named: null })
+})
+
+// A regression guard, not this change's evidence: the park line of ADR-0078
+// keeps `safe to /clear` and must never match the relay's `next:` pattern.
+test('a handoff line with no next: prompt (a park) never arms', OPTIONS, async ($, on) => {
+  const world = stage($, on)
+  await answer($, 'Done.\n\nsafe to /clear; parked: next due 2026-11-24\n')
+  await world.clock.advance(COUNTDOWN_MS)
+  expect(world.commands).toEqual([])
+  expect(world.submitted).toEqual([])
+  expect(events(world, 's1')).toEqual([])
 })
 
 test('a keystroke disarms', OPTIONS, async ($, on) => {

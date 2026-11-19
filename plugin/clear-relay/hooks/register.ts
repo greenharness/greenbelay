@@ -39,9 +39,23 @@ type RelayFailure =
   | { kind: 'stay-unregistered'; detail: string }
   | { kind: 'threw'; detail: string }
 
+// A handoff prompt that names one programme ticket (ADR-0078):
+// `resume <repo> <programme> <ticket>: <gist>`. The ticket is its file's stem,
+// as relais prints it: an optional prefix, a letter and digits, an optional
+// letter, then slug words (`t26-sessions-claim-their-work`, `t08b`,
+// `an-t01-state-inventory`). Three other words before a colon name no ticket.
+// holds-until: every ticket stem matches this shape (321 of 321 on
+// 2026-11-19); a new id scheme in relais widens it
+const NAMED =
+  /^resume (?<repo>[^\s:]+) (?<programme>[^\s:]+) (?<ticket>(?:[a-z]+-)?[a-z]\d+[a-z]?(?:-[a-z0-9]+)*):/
+
+/** The ticket a submitted prompt names; `null` for any other prompt. */
+type Named = { repo: string; programme: string; ticket: string } | null
+
 /** One line of the relay's log. A failure carries the prompt, so it can be pasted from the log. */
 type LogEntry =
-  | { event: 'arm' | 'clear' | 'submit' }
+  | { event: 'arm' | 'clear' }
+  | { event: 'submit'; named: Named }
   | { event: 'disarm'; cause: DisarmCause }
   | { event: 'failure'; failure: RelayFailure; prompt: string }
 
@@ -72,6 +86,17 @@ function handoffPrompt(answer: string): string | undefined {
     prompt.length <= MAX_PROMPT_CHARS
     ? prompt
     : undefined
+}
+
+/**
+ * The ticket the prompt names, recorded so a count can tell a relay that named
+ * one ticket from an open-ended one. Recorded only: nothing is refused on it.
+ */
+function namedTicket(prompt: string): Named {
+  const groups = NAMED.exec(prompt)?.groups
+  return groups?.repo !== undefined && groups.programme !== undefined && groups.ticket !== undefined
+    ? { repo: groups.repo, programme: groups.programme, ticket: groups.ticket }
+    : null
 }
 
 function shown(prompt: string): string {
@@ -217,7 +242,7 @@ async function fire($: Engine, relayer: Relayer): Promise<void> {
     }
     relayer.state = { kind: 'idle' }
     $.ui.status(undefined)
-    await log($, relayer, relay, { event: 'submit' })
+    await log($, relayer, relay, { event: 'submit', named: namedTicket(relay.prompt) })
   } catch (error) {
     await fail($, relayer, relay, { kind: 'threw', detail: String(error) })
   }
