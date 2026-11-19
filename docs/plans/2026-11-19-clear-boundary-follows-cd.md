@@ -299,6 +299,7 @@ quote parser used to swallow.
 - backend (opus): round 1 4 fixed (idempotent row, own boundary, absolute entry cwd, `dir=` with a space); delta 2 lows to the inbox (row at the cap, `command -v`); 77k + 46k.
 - lang:rust (opus): round 1 5 fixed (`Shape` enum, dead branch, `NotCleanOf`, idioms); delta 5 lows to the inbox; 72k + 46k.
 - unix (opus): round 1 4 fixed (comments, pushd/builtin/eval, raw heredoc body, `|| exit`); delta `|| return` deliberate: zsh exits on a top-level `return` (checked), the Bash tool runs zsh; 72k + 46k.
+- CI fix (c2842ee4): windows-latest failed 2 entry-cwd tests (`/w` is not absolute there); `has_root()` instead. Delta: implementation-review, backend, unix, tui approve; lang:rust one low (the doc comment still says absolute) to t25; ~24k each.
 - tui (opus): `while`/`until` → keyword fixed; deliberate: the row counts as `watched` and `dir=` is the basename (both planned), `read` stays `loop-var`, the row keeps its machine form for the measure; 67k + 45k.
 
 ## Decision log
