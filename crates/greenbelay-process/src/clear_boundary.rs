@@ -697,8 +697,12 @@ struct Walk {
     /// Depth of `$(` opened in an earlier simple command and not yet closed.
     substitution_depth: usize,
     previous: Option<Operator>,
-    /// Names set after a `&&`/`||` in the current list.
-    conditional_names: Vec<String>,
+    /// Names set after a `&&`/`||` in the current list, each with whether
+    /// it keeps its value when the list ends: only a name with no earlier
+    /// binding, set after `&&` alone. Had it not run, the name holds what
+    /// the environment gave it, which the walk reads as `unassigned`, so
+    /// following it only adds a check.
+    conditional_names: Vec<(String, bool)>,
     conditional_cd: bool,
 }
 
@@ -820,8 +824,10 @@ impl Walk {
 
     /// A `&&`/`||` list ended: what its later commands set may not have run.
     fn end_list(&mut self) {
-        for name in std::mem::take(&mut self.conditional_names) {
-            self.vars.insert(name, Binding::Unknown("not-literal"));
+        for (name, keeps) in std::mem::take(&mut self.conditional_names) {
+            if !keeps {
+                self.vars.insert(name, Binding::Unknown("conditional"));
+            }
         }
         if std::mem::take(&mut self.conditional_cd) && self.here != Err("subshell") {
             self.here = Err("cd-or");
@@ -834,7 +840,19 @@ impl Walk {
 
     fn bind(&mut self, name: &str, binding: Binding, conditional: bool) {
         if conditional {
-            self.conditional_names.push(name.to_string());
+            // Read before the assignment writes `vars`.
+            let after_and = self.previous == Some(Operator::And);
+            match self
+                .conditional_names
+                .iter_mut()
+                .find(|(set, _)| set == name)
+            {
+                Some((_, keeps)) => *keeps &= after_and,
+                None => {
+                    let keeps = after_and && !self.vars.contains_key(name);
+                    self.conditional_names.push((name.to_string(), keeps));
+                }
+            }
         }
         self.vars.insert(name.to_string(), binding);
     }
@@ -3478,6 +3496,11 @@ mod tests {
                 "X=$(cd /h/a; pwd); git -C /h/b worktree remove x",
                 &["/h/b"],
             ),
+            // Delta 1: an unbound name set after `&&` keeps its value.
+            (
+                "gh x && LIVE=~/repo && git -C \"$LIVE\" fetch; git -C \"$LIVE\" worktree remove x",
+                &["/h/repo"],
+            ),
         ];
         for (command, dirs) in resolved {
             assert_eq!(
@@ -3511,6 +3534,16 @@ mod tests {
             ("cd /h/a | cat; git worktree remove x", &[], "cd-piped"),
             ("cd /h/a || git worktree remove x", &[], "cd-or"),
             ("cd ~- && git worktree remove x", &[], "not-literal"),
+            (
+                "R=/a; false && R=/b; git -C \"$R\" worktree remove x",
+                &["/w/$R"],
+                "conditional",
+            ),
+            (
+                "test -d /h/a || LIVE=/h/b; git -C \"$LIVE\" worktree remove x",
+                &["/w/$LIVE"],
+                "conditional",
+            ),
         ];
         for (command, dirs, shape) in unresolved {
             assert_eq!(

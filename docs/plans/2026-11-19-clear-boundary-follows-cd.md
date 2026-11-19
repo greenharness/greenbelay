@@ -11,15 +11,15 @@ plan-id: p-01M7RG48JK13S5NB12126MYKRH
 ## Review panel
 
 👉 **Decide:** none — approve if following a chained `cd` and literal `NAME=` assignments is worth one new journal row.
-📍 amont-agent, decisions · 2 phases · 1 release after 2026-11-25 · next: Phase 1. Panel: backend, lang:rust, tui, unix (opus), codex.
+📍 amont-agent, decisions · Phase 1 built, backtest 385/393 (98%) · next: corpus check, pilots, PR. Panel: backend, lang:rust, tui, unix (opus), codex.
 **Changed by review:** the walk starts at the call's own cwd; conditional and compound assignments go Unknown; redirects, unassigned names and `dir=` holds handled.
-**Verdicts:** 4 approve-with-changes; codex rework (3 high applied), then backend approve-with-changes; 6 carried; words 1428 → 2369 (×1.66, high findings exempt); remove 0, merge 0.
+**Verdicts:** 4 approve-with-changes; codex rework (3 high applied), then backend approve-with-changes; 6 carried; words 1428 → 2369 (×1.66, high findings exempt); remove 0, merge 0. Delta 1 (first backtest 93.9%, below the bar): backend approve-with-changes twice, 4 applied, 3 carried.
 📄 Full reviews: [2026-11-19-clear-boundary-follows-cd.reviews.md](2026-11-19-clear-boundary-follows-cd.reviews.md)
 
 ## Picture
 
 ```
- cwd       ~/Developer/Perso/amont-agent-wt-rel-641          (payload)
+ cwd       ~/Developer/Perso/amont-agent-wt-rel-641    (where the call began)
  command   LIVE=~/Developer/Perso/decisions; …;
            git -C "$LIVE" worktree remove ../decisions-wt-t21
 
@@ -68,7 +68,7 @@ whenever the command itself fixes it: a chained top-level
 it cannot read changes nothing in the decision; it adds one `watched
 unresolved <shape> <what>` journal row. `<shape>` is one of `subshell`,
 `command-subst`, `cd-dash`, `cd-piped`, `cd-or`, `keyword`, `loop-var`,
-`export`, `unassigned`, `not-literal`.
+`export`, `unassigned`, `not-literal`, `conditional`.
 
 ## Non-goals
 
@@ -120,14 +120,23 @@ In `crates/greenbelay-process/src/clear_boundary.rs`:
   - **cd.** `cd` with no word, or `cd ~`, goes to home. `cd <word>` takes
     the word's resolved directory (below) against `here`. `cd -`, a `cd`
     with two words, an `Unknown` word, or a `cd` ended by `|` or a lone
-    `&` (it runs in a subshell), next to `||` (it may not have run), or
+    `&` (it runs in a subshell), ended by `||` (what follows runs only
+    when it failed) or after `||` (it may not have run), or
     last in a pipeline (zsh runs it in the current shell) sets
     `here = None`. An assignment ended by `|` or `&`, or after a `|`,
     sets `Unknown`. An assignment or `cd` that follows a `&&` or `||` is
     conditional: it holds for the rest of that `&&`/`||` list, and when the
-    list ends (`;`, newline, `&`) the names it set become `Unknown` and a
-    conditional `cd` sets `here = None`. So `R=/a; false && R=/b; git -C
-    "$R" …` is unresolved, never `/b`. A first word that
+    list ends (`;`, newline, `&`) a conditional `cd` sets `here = None`.
+    A name the list set becomes `Unknown` (shape `conditional`) when it
+    had an earlier binding in the command (looked up before the assignment writes `vars`), so `R=/a; false && R=/b; git -C
+    "$R" …` is unresolved, never `/b`. A name with no earlier binding
+    set after a `&&` keeps its value (after a `||` it is `Unknown`,
+    `conditional`: it ran only when the left side failed): had the assignment not run, the name holds what the
+    environment gave it, which the walk reads as `unassigned` and checks
+    as today; so following it only adds a check, never drops one. An added check can add a hold: when the list's head failed (`gh pr merge` refused), the later `git -C "$LIVE"` ran with an empty `-C`, and the follow checks a repository the command never touched. So
+    `gh pr merge 1 && LIVE=~/repo && git -C "$LIVE" fetch; git -C "$LIVE"
+    worktree remove x` checks `~/repo` (19 of the backtest's 24 misses).
+    A first word that
     starts with `(` sets `here = None` for the rest of the command.
   - **A word's directory.** A word starts with home, or with `$NAME`,
     `${NAME}` or `"$NAME"`, optionally followed by `/rest`. The variable
@@ -142,7 +151,11 @@ In `crates/greenbelay-process/src/clear_boundary.rs`:
     `+N` (zsh directory stack), and a relative `cd` word when `CDPATH`
     is set. The result is folded with `resolve`/`fold` against `here`.
 - `classify` takes the `Walk`. `chain` starts from `here` instead of
-  `cwd`. With no `-C` and `here != cwd`, `dirs = [here]`. When `here` or
+  `cwd`. With no `-C`, `dirs = [here]` unless `here` is both where the
+  call began and the payload cwd. So a call with no `cd` that began
+  outside the Stop's cwd now checks where it began (9 of the backtest's
+  796 already-correct calls gain that check, each the repository the
+  call ran in). When `here` or
   a `-C` word is unknown, `dirs` is what it is today, and the `Boundary`
   carries `unresolved: true`. `pending_from` sets it when any boundary found is unresolved, as it already merges their dirs.
 - `judge` keeps `Repositories::NotClean.directory` (`:1402`, dropped
@@ -190,6 +203,12 @@ against `origin/main`:
 | `cd /h/a \|\| git worktree remove x` | today's | yes |
 | `cd ~- && git worktree remove x` | today's | yes |
 | `LIVE='$x'; git -C "$LIVE" worktree remove y` (single-quoted, literal) | `[/w/$x]` | no |
+| `cd repo && git worktree remove ../x` (relative, `CDPATH` unseen) | today's | yes |
+| `if c; then cd /h/a; fi; git worktree remove x` | today's | yes |
+| `R=/a; false && R=/b; git -C "$R" worktree remove x` | today's | yes (`conditional`) |
+| `gh x && LIVE=~/repo && git -C "$LIVE" fetch; git -C "$LIVE" worktree remove x` | `[/h/repo]` | no |
+| `test -d /h/a \|\| LIVE=/h/b; git -C "$LIVE" worktree remove x` | today's | yes (`conditional`) |
+| `cd /h/a && git worktree remove ../x`, the call began in `/h/a` | `[/h/a]` | no |
 
 - A unit test on `decide` with an unresolved boundary asserts one
   `watched unresolved subshell worktree remove` record, and the same decision as
@@ -221,12 +240,18 @@ against `origin/main`:
 
 - The Phase 1 table, red on `origin/main` for the rows marked "no" whose
   dirs differ from the cwd, and green after.
-- Backtest (ADR-0060): run the branch `boundaries()` over the 1,545
-  commands of decisions#258 before merging. Expected: at least 400 of
-  the 421 followable commands resolved to the directory the command acted
-  on, and each of the 994 calls today already checks correctly keeps that
-  directory; each disagreement is listed in t23 with the counts by shape.
-  Below that bar, hold the merge and return the plan to review.
+- Backtest (ADR-0060): run the branch `boundaries()` over the commands
+  of decisions#258 (to 2026-11-18) before merging. Of the 422 followable
+  calls the rerun counts (421 in t23), 29 are no boundary to the rule (closing plan commits,
+  keyword-prefixed calls), so the bar is a share of the 393 it sees.
+  Expected: at least 95% of them resolved to the directory the command
+  acted on, and each of the 796 calls today already checks correctly
+  keeps that directory; each disagreement is listed in t23 with the
+  counts by shape. Below that bar, hold the merge and return the plan to
+  review. First run (delta 1): 369/393 (93.9%), 796/796 kept; 19 of the
+  24 misses were the `&& NAME=` shape this delta follows. Rerun after
+  Delta 1, before merging: expected 388/393 and 796/796 kept; the 9
+  calls that gain a check and the 29 excluded rows listed by reason in t23.
 - `cargo test -p greenbelay-process` and `greenbelay corpus check` with
   the branch binary: every Stop case agrees, as before.
 - Piloted, on the branch binary in a scratch `HOME`/state dir: replay the
@@ -247,10 +272,16 @@ against `origin/main`:
   is written only for a Stop's last own boundary). Expected: at most 15%
   of own boundaries are unresolved (t23: 130/1,545 calls, 8%).
   Recorded in t23.
+- In the same 7 days, list every hold whose `dir=` is not the cwd's top, with the call's tool result. Expected: no hold from an `&& NAME=` follow whose list head failed; one returns unbound follows to `Unknown` (`conditional`).
 
 ## Decision log
 
 - Release after 2026-11-25, so that t22 counts the holds of one rule
   version (t23 Resolution, decisions#258).
+- Delta 1 (2026-11-19, after the first backtest): an `&& NAME=` with no
+  earlier binding keeps its value (it only adds a check); a new
+  `conditional` shape; with no `-C`, `here` is checked unless it is also
+  the payload cwd; the bar restated as a share of the boundaries the rule
+  sees.
 
 <!-- panel: repos=amont-agent,decisions adds= reviewers=backend,lang:rust,tui,unix body-sha=d6b672196a41 -->
