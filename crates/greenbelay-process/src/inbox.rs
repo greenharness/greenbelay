@@ -110,9 +110,12 @@ pub fn notice(inbox: &Path, stance: Stance, today: Day, now: SystemTime) -> Opti
     if scan.orphans.is_empty() && scan.fresh.is_empty() && scan.being_filed == 0 {
         return None;
     }
+    // A take being filed alone asks nothing of the reader: it is counted and
+    // journalled, never said.
+    let unfiled = !scan.orphans.is_empty() || !scan.fresh.is_empty();
     let text = match stance {
-        Stance::Observe => None,
-        Stance::Advise | Stance::Deny => Some(phrase(inbox, &scan)),
+        Stance::Advise | Stance::Deny if unfiled => Some(phrase(inbox, &scan)),
+        _ => None,
     };
     Some(Notice {
         text,
@@ -484,6 +487,28 @@ mod tests {
         let watched = notice(&scratch.inbox(), Stance::Observe, today(), now).unwrap();
         assert!(watched.text.is_none());
         assert_eq!(watched.orphans, 1);
+    }
+
+    #[test]
+    fn a_young_take_alone_is_counted_but_not_said() {
+        let scratch = Scratch::new("young-take");
+        std::fs::write(
+            scratch.0.join("inbox.abcd1234.1.filing"),
+            "2026-11-17 abcd1234 a\n2026-11-17 abcd1234 b\n",
+        )
+        .unwrap();
+        let found = notice(&scratch.inbox(), Stance::Advise, today(), SystemTime::now()).unwrap();
+        assert_eq!(found.text, None);
+        assert_eq!((found.orphans, found.fresh, found.being_filed), (0, 0, 2));
+        std::fs::write(scratch.inbox(), "2026-11-17 feed0001 c\n").unwrap();
+        let with_fresh =
+            notice(&scratch.inbox(), Stance::Advise, today(), SystemTime::now()).unwrap();
+        let text = with_fresh.text.unwrap();
+        assert!(text.contains("holds 1 line unfiled"), "{text}");
+        assert!(
+            text.contains("2 lines being filed by a live session"),
+            "{text}"
+        );
     }
 
     #[test]

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The inbox notice at session start stays quiet when its only lines are in a
+  take a live session is filing: it no longer prints `holds 0 lines unfiled`.
+  The journal line still counts them (session-boundaries t17).
+
 ## v6.5.0
 
 greenbelay 6.5.0 shows the inbox outside a repository (session-boundaries
