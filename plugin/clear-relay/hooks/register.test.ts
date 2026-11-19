@@ -133,6 +133,17 @@ test('a ticket id is the file stem relais prints, slug included', OPTIONS, async
   })
 })
 
+test('a prefixed ticket id is named too', OPTIONS, async ($, on) => {
+  const world = stage($, on)
+  const prompt = 'resume decisions agents-many-nodes an-t02-primary-node: pick the node'
+  await answer($, `Done.\n\nsafe to /clear; next: \`${prompt}\`\n`)
+  await world.clock.advance(COUNTDOWN_MS)
+  expect(logLines(world, 's1')[2]).toMatchObject({
+    event: 'submit',
+    named: { repo: 'decisions', programme: 'agents-many-nodes', ticket: 'an-t02-primary-node' },
+  })
+})
+
 test('a resume prompt whose third word is no ticket id names nothing', OPTIONS, async ($, on) => {
   const world = stage($, on)
   const prompt = 'resume homelab fix bug: the flapping link'
