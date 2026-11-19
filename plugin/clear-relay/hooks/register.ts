@@ -40,8 +40,9 @@ type RelayFailure =
   | { kind: 'threw'; detail: string }
 
 // A handoff prompt that names one programme ticket (ADR-0078):
-// `resume <repo> <programme> <ticket>: <gist>`.
-const NAMED = /^resume (\S+) (\S+) (\S+):/
+// `resume <repo> <programme> <ticket>: <gist>`, the ticket an id like `t20`,
+// `t08b` or `f12`. Three other words before a colon name no ticket.
+const NAMED = /^resume (?<repo>[^\s:]+) (?<programme>[^\s:]+) (?<ticket>[a-z]\d+[a-z]?):/
 
 /** The ticket a submitted prompt names; `null` for any other prompt. */
 type Named = { repo: string; programme: string; ticket: string } | null
@@ -87,10 +88,9 @@ function handoffPrompt(answer: string): string | undefined {
  * one ticket from an open-ended one. Recorded only: nothing is refused on it.
  */
 function namedTicket(prompt: string): Named {
-  const match = NAMED.exec(prompt)
-  const [repo, programme, ticket] = [match?.[1], match?.[2], match?.[3]]
-  return repo !== undefined && programme !== undefined && ticket !== undefined
-    ? { repo, programme, ticket }
+  const groups = NAMED.exec(prompt)?.groups
+  return groups?.repo !== undefined && groups.programme !== undefined && groups.ticket !== undefined
+    ? { repo: groups.repo, programme: groups.programme, ticket: groups.ticket }
     : null
 }
 

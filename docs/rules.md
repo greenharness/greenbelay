@@ -129,7 +129,12 @@ session. It relays at most once per 2 minutes and never retries: a refused
 step shows a toast with the prompt, for pasting. Each arm, disarm, clear,
 submit and failure goes as one JSON line to
 `<state dir>/greenbelay/clear-relay/<session>.jsonl`, the plugin's
-`stateDir` setting, which `install` sets. To turn the relay off, set the plugin's
+`stateDir` setting, which `install` sets. A `submit` line carries `named`:
+the ticket a `resume <repo> <programme> <ticket>: …` prompt names, as
+`{repo, programme, ticket}`, or `null` for any other prompt. Lines written
+before 2026-11-19 have no `named` key; a count leaves them out rather than
+reading them as `null`. A `safe to /clear; parked: …` line has no prompt and
+is never relayed. To turn the relay off, set the plugin's
 `enabled` setting to false; at stance `observe` no continuation asks for the
 line, so the relay has nothing to act on; at `advise` it acts only when the
 person asked for the handoff.

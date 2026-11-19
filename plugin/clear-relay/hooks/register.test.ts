@@ -122,7 +122,18 @@ test('the submit line records the ticket a resume prompt names', OPTIONS, async 
   })
 })
 
-test('a parked line keeps the marker but is never submitted', OPTIONS, async ($, on) => {
+test('a resume prompt whose third word is no ticket id names nothing', OPTIONS, async ($, on) => {
+  const world = stage($, on)
+  const prompt = 'resume homelab fix bug: the flapping link'
+  await answer($, `Done.\n\nsafe to /clear; next: \`${prompt}\`\n`)
+  await world.clock.advance(COUNTDOWN_MS)
+  expect(world.submitted).toEqual([prompt])
+  expect(logLines(world, 's1')[2]).toMatchObject({ event: 'submit', named: null })
+})
+
+// A regression guard, not this change's evidence: the park line of ADR-0078
+// keeps `safe to /clear` and must never match the relay's `next:` pattern.
+test('a handoff line with no next: prompt (a park) never arms', OPTIONS, async ($, on) => {
   const world = stage($, on)
   await answer($, 'Done.\n\nsafe to /clear; parked: next due 2026-11-24\n')
   await world.clock.advance(COUNTDOWN_MS)
