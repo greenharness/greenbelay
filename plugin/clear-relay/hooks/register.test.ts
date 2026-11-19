@@ -122,6 +122,17 @@ test('the submit line records the ticket a resume prompt names', OPTIONS, async 
   })
 })
 
+test('a ticket id is the file stem relais prints, slug included', OPTIONS, async ($, on) => {
+  const world = stage($, on)
+  const prompt = 'resume decisions session-boundaries t26-sessions-claim-their-work: the week count'
+  await answer($, `Done.\n\nsafe to /clear; next: \`${prompt}\`\n`)
+  await world.clock.advance(COUNTDOWN_MS)
+  expect(logLines(world, 's1')[2]).toMatchObject({
+    event: 'submit',
+    named: { repo: 'decisions', programme: 'session-boundaries', ticket: 't26-sessions-claim-their-work' },
+  })
+})
+
 test('a resume prompt whose third word is no ticket id names nothing', OPTIONS, async ($, on) => {
   const world = stage($, on)
   const prompt = 'resume homelab fix bug: the flapping link'

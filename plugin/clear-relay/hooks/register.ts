@@ -40,9 +40,12 @@ type RelayFailure =
   | { kind: 'threw'; detail: string }
 
 // A handoff prompt that names one programme ticket (ADR-0078):
-// `resume <repo> <programme> <ticket>: <gist>`, the ticket an id like `t20`,
-// `t08b` or `f12`. Three other words before a colon name no ticket.
-const NAMED = /^resume (?<repo>[^\s:]+) (?<programme>[^\s:]+) (?<ticket>[a-z]\d+[a-z]?):/
+// `resume <repo> <programme> <ticket>: <gist>`. The ticket is its file's stem,
+// as relais prints it: a letter and digits, an optional letter, then slug
+// words (`t26-sessions-claim-their-work`, `t08b`, `f12-chezmoi`). Three other
+// words before a colon name no ticket.
+const NAMED =
+  /^resume (?<repo>[^\s:]+) (?<programme>[^\s:]+) (?<ticket>[a-z]\d+[a-z]?(?:-[a-z0-9]+)*):/
 
 /** The ticket a submitted prompt names; `null` for any other prompt. */
 type Named = { repo: string; programme: string; ticket: string } | null
