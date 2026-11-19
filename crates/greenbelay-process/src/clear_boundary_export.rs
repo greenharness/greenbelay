@@ -25,8 +25,8 @@ use serde_json::{json, Map, Value};
 use crate::clear_boundary::{
     blocks, boundaries, entry_type, home_from, is_person_prompt, is_sidechain, judge_case,
     pending_from, read_tail_until_at, relais_messages, replay_at_deny, turn_window,
-    window_is_enough, word_after, work_in, Pending, Repositories, State, StopView, Tail,
-    SYMBOLIC_HOME, TAIL_CAP, TAIL_FIRST_CHUNK,
+    window_is_enough, word_after, work_in, NotCleanOf, Pending, Repositories, State, StopView,
+    Tail, SYMBOLIC_HOME, TAIL_CAP, TAIL_FIRST_CHUNK,
 };
 use crate::plan_phases::PhaseFact;
 
@@ -120,9 +120,19 @@ enum Kind {
     NotClean(String),
 }
 
+/// A not-clean reason without the ` dir=<name>` suffix a hold names its
+/// repository with when it is not the one the row's `repo` shows.
+fn without_directory(reason: &str) -> &str {
+    match reason.rsplit_once(" dir=") {
+        Some((head, _)) => head,
+        None => reason,
+    }
+}
+
 impl Kind {
     fn of(outcome: &str, body: &str) -> Option<Kind> {
         match (outcome, body) {
+            ("watched", _) if body.starts_with("unresolved ") => None,
             ("advised", _) => Some(Kind::Advised),
             ("denied", _) => Some(Kind::Denied),
             ("watched", "pending-work") => Some(Kind::PendingWork),
@@ -130,7 +140,7 @@ impl Kind {
             ("watched", _) if body.starts_with("pending relais") => Some(Kind::PendingRelais),
             ("watched", _) => body
                 .strip_prefix("pending ")
-                .map(|reason| Kind::NotClean(reason.to_string())),
+                .map(|reason| Kind::NotClean(without_directory(reason).to_string())),
             _ => None,
         }
     }
@@ -165,7 +175,7 @@ impl Kind {
             Kind::PendingWork => reason == "pending-work",
             Kind::PendingBackground => reason == "pending background",
             Kind::PendingRelais => reason.starts_with("pending relais"),
-            Kind::NotClean(why) => reason == format!("pending {why}"),
+            Kind::NotClean(why) => without_directory(reason) == format!("pending {why}"),
         }
     }
 }
@@ -678,6 +688,7 @@ impl Exporter<'_> {
                 Kind::NotClean(reason) => Repositories::NotClean {
                     directory: PathBuf::new(),
                     reason: reason.clone(),
+                    of: NotCleanOf::PayloadCwd,
                 },
                 Kind::Advised
                 | Kind::Denied
@@ -745,6 +756,7 @@ impl Exporter<'_> {
                     "uuid": pending.uuid,
                     "command": self.scrub.command(&pending.command),
                     "what": pending.what,
+                    "unresolved": pending.unresolved,
                     "dirs": pending
                         .dirs
                         .iter()
@@ -962,6 +974,9 @@ impl Exporter<'_> {
             if let Some(value) = entry[flag].as_bool() {
                 trimmed.insert(flag.to_string(), json!(value));
             }
+        }
+        if let Some(cwd) = entry["cwd"].as_str() {
+            trimmed.insert("cwd".to_string(), json!(self.scrub.text(cwd)));
         }
         let mut message = Map::new();
         if kind == "assistant" {
@@ -1907,6 +1922,43 @@ mod tests {
     }
 
     #[test]
+    fn the_exported_window_keeps_each_entrys_cwd_scrubbed_of_home() {
+        let world = World::new(
+            "entry-cwd",
+            &boundary_turn(),
+            &[line(1_794_960_484, "advised", "worktree remove uuid=b1")],
+        );
+        export(&world.options);
+        let fixture = world.fixture("abcd1234-1794960484");
+        let boundary_entry = fixture["entries"]
+            .as_array()
+            .and_then(|entries| entries.iter().find(|entry| entry["uuid"] == json!("b1")))
+            .expect("the Bash entry is kept");
+        assert_eq!(boundary_entry["cwd"], json!("~/work"));
+    }
+
+    #[test]
+    fn a_hold_naming_its_directory_matches_the_replay_reason() {
+        let kind = Kind::of("watched", "pending uncommitted changes dir=wt");
+        assert_eq!(
+            kind,
+            Some(Kind::NotClean("uncommitted changes".to_string()))
+        );
+        let kind = kind.expect("a hold");
+        assert!(kind.matches_reason("pending uncommitted changes"));
+        assert!(kind.matches_reason("pending uncommitted changes dir=wt"));
+        assert!(!kind.matches_reason("pending unpushed commits outside docs/plans/"));
+    }
+
+    #[test]
+    fn an_unresolved_row_is_no_kind_of_stop() {
+        assert_eq!(
+            Kind::of("watched", "unresolved subshell worktree remove"),
+            None
+        );
+    }
+
+    #[test]
     fn home_and_other_users_become_a_tilde() {
         let scrub = Scrub {
             home: Some("/home/me".to_string()),
@@ -1916,5 +1968,12 @@ mod tests {
             "cd ~/x && ls ~/y"
         );
         assert_eq!(scrub.text("-C '/Users/me'"), "-C '~'");
+    }
+
+    #[test]
+    fn a_directory_name_with_a_space_round_trips() {
+        let kind = Kind::of("watched", "pending uncommitted changes dir=my dir").expect("a hold");
+        assert_eq!(kind, Kind::NotClean("uncommitted changes".to_string()));
+        assert!(kind.matches_reason("pending uncommitted changes dir=my dir"));
     }
 }

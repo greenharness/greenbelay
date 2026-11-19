@@ -12,7 +12,7 @@
 //! what the transcript's own relais tool results already showed, through
 //! the phrases in [`relais_messages`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
@@ -266,6 +266,41 @@ pub fn turn_window(entries: &[Value]) -> Option<TurnWindow<'_>> {
     })
 }
 
+/// The shape that keeps the walk from reading the directory a command acted
+/// on. Its name goes to the journal row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shape {
+    Subshell,
+    CommandSubst,
+    CdDash,
+    CdPiped,
+    CdOr,
+    Keyword,
+    LoopVar,
+    Export,
+    Unassigned,
+    NotLiteral,
+    Conditional,
+}
+
+impl Shape {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Subshell => "subshell",
+            Self::CommandSubst => "command-subst",
+            Self::CdDash => "cd-dash",
+            Self::CdPiped => "cd-piped",
+            Self::CdOr => "cd-or",
+            Self::Keyword => "keyword",
+            Self::LoopVar => "loop-var",
+            Self::Export => "export",
+            Self::Unassigned => "unassigned",
+            Self::NotLiteral => "not-literal",
+            Self::Conditional => "conditional",
+        }
+    }
+}
+
 /// A boundary the turn reached.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Boundary {
@@ -279,10 +314,20 @@ pub struct Boundary {
     /// The `-C` chain of the git call, resolved against the payload cwd;
     /// empty when the call had none.
     pub dirs: Vec<PathBuf>,
+    /// The shape that kept the walk from reading the directory the command
+    /// acted on; `None` when it read it.
+    pub unresolved: Option<Shape>,
 }
 
+/// A boundary command's name, the directories it acted on, and the shape
+/// that kept the walk from reading them.
+type Reached = (&'static str, Vec<PathBuf>, Option<Shape>);
+
 /// The boundary commands among the Bash tool calls of the window. `home`
-/// resolves a `-C` directory written from `~` or `$HOME`.
+/// resolves a `-C` directory written from `~` or `$HOME`. A call's commands
+/// are walked in order from the `cwd` of the entry carrying it (the payload
+/// `cwd` when the entry has none), so a chained `cd` and a `NAME=` set in the
+/// same command choose the directory a boundary acted on.
 pub fn boundaries(window: &TurnWindow<'_>, cwd: &Path, home: Option<&Path>) -> Vec<Boundary> {
     let mut found = Vec::new();
     for entry in window
@@ -290,6 +335,7 @@ pub fn boundaries(window: &TurnWindow<'_>, cwd: &Path, home: Option<&Path>) -> V
         .iter()
         .filter(|entry| entry_type(entry) == "assistant" && !is_sidechain(entry))
     {
+        let start = entry_start(entry["cwd"].as_str(), cwd, home);
         for block in blocks(entry) {
             if block["type"].as_str() != Some("tool_use") || block["name"].as_str() != Some("Bash")
             {
@@ -298,19 +344,43 @@ pub fn boundaries(window: &TurnWindow<'_>, cwd: &Path, home: Option<&Path>) -> V
             let Some(command) = block.pointer("/input/command").and_then(Value::as_str) else {
                 continue;
             };
-            for segment in shell_words(command) {
-                if let Some((what, dirs)) = classify(&segment, cwd, home) {
+            let mut walk = Walk::new(start.clone());
+            let steps = walk_steps(command);
+            for (at, step) in steps.iter().enumerate() {
+                if let Some((what, dirs, unresolved)) =
+                    walk.step(step, steps.get(at + 1), cwd, home)
+                {
                     found.push(Boundary {
                         what: what.to_string(),
                         uuid: entry["uuid"].as_str().unwrap_or("").to_string(),
                         command: command.to_string(),
                         dirs,
+                        unresolved,
                     });
                 }
             }
         }
     }
     found
+}
+
+/// Where a Bash call began: the entry's own `cwd` when it is a non-empty
+/// absolute path (in a replay, also a path under the symbolic home, which is
+/// relative), else the payload `cwd`.
+fn entry_start(entry_cwd: Option<&str>, payload_cwd: &Path, home: Option<&Path>) -> PathBuf {
+    // Rooted, not `is_absolute`: on Windows a `/w` path has no drive and is
+    // not absolute, yet it names no directory relative to the hook's own.
+    let usable = |path: &Path| {
+        path.has_root()
+            || home.is_some_and(|home| {
+                !home.as_os_str().is_empty() && !home.is_absolute() && path.starts_with(home)
+            })
+    };
+    entry_cwd
+        .filter(|text| !text.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| usable(path))
+        .unwrap_or_else(|| payload_cwd.to_path_buf())
 }
 
 /// How one character of a shell word was written.
@@ -340,81 +410,204 @@ impl Word {
     }
 }
 
+/// What ended a simple command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Operator {
+    /// `;`, a newline or the end of the command.
+    Sequence,
+    And,
+    Or,
+    /// `|` and zsh's `|&`.
+    Pipe,
+    /// A lone `&`.
+    Background,
+}
+
+/// One simple command, the operator that ended it, and whether it is text
+/// that sets no shell state: a heredoc body line, which the shell reads as
+/// data.
+#[derive(Debug, Clone)]
+struct Step {
+    words: Vec<Word>,
+    end: Operator,
+    heredoc_body: bool,
+}
+
 /// Split a shell command into simple commands of words, honouring quotes:
 /// `;`, `&`, `|` and newlines end a command.
 fn segments(command: &str) -> Vec<Vec<String>> {
-    shell_words(command)
+    walk_steps(command)
         .into_iter()
-        .map(|words| words.into_iter().map(|word| word.text).collect())
+        .map(|step| step.words.into_iter().map(|word| word.text).collect())
         .collect()
 }
 
-/// [`segments`], each word keeping how its characters were quoted.
-fn shell_words(command: &str) -> Vec<Vec<Word>> {
-    let mut all: Vec<Vec<Word>> = Vec::new();
-    let mut words: Vec<Word> = Vec::new();
-    let mut word = Word::default();
-    let mut in_word = false;
-    let mut chars = command.chars();
-    while let Some(c) = chars.next() {
+/// The heredoc delimiters a simple command opens (`<<EOF`, `<<- 'EOF'`).
+fn heredoc_delimiters(words: &[Word]) -> Vec<String> {
+    let mut delimiters = Vec::new();
+    for (at, word) in words.iter().enumerate() {
+        if word.quoting.first() != Some(&Quoting::Bare)
+            || !word.text.starts_with("<<")
+            || word.text.starts_with("<<<")
+        {
+            continue;
+        }
+        let rest = word.text[2..].trim_start_matches('-');
+        let delimiter = if rest.is_empty() {
+            words.get(at + 1).map(|next| next.text.clone())
+        } else {
+            Some(rest.to_string())
+        };
+        delimiters.extend(delimiter);
+    }
+    delimiters
+}
+
+/// The words being read and the steps already read.
+#[derive(Default)]
+struct StepReader {
+    steps: Vec<Step>,
+    words: Vec<Word>,
+    word: Word,
+    in_word: bool,
+    delimiters_pending: VecDeque<String>,
+    heredoc_delimiter: Option<String>,
+}
+
+impl StepReader {
+    fn end_word(&mut self) {
+        if self.in_word {
+            self.words.push(std::mem::take(&mut self.word));
+            self.in_word = false;
+        }
+    }
+
+    fn end_step(&mut self, end: Operator) {
+        self.end_word();
+        if self.words.is_empty() {
+            return;
+        }
+        let heredoc_body = self.heredoc_delimiter.is_some();
+        let words = std::mem::take(&mut self.words);
+        if !heredoc_body {
+            self.delimiters_pending.extend(heredoc_delimiters(&words));
+        }
+        self.steps.push(Step {
+            words,
+            end,
+            heredoc_body,
+        });
+    }
+
+    /// At a newline ending `line`: the delimiter line closes a heredoc body,
+    /// and the next pending heredoc's body starts.
+    fn end_line(&mut self, line: &str) {
+        if self
+            .heredoc_delimiter
+            .as_deref()
+            .is_some_and(|delimiter| line.trim_start_matches('\t') == delimiter)
+        {
+            self.heredoc_delimiter = None;
+        }
+        if self.heredoc_delimiter.is_none() {
+            self.heredoc_delimiter = self.delimiters_pending.pop_front();
+        }
+    }
+}
+
+/// [`segments`], each word keeping how its characters were quoted, with the
+/// operator that ended it.
+fn walk_steps(command: &str) -> Vec<Step> {
+    let mut reader = StepReader::default();
+    let mut chars = command.char_indices().peekable();
+    while let Some((at, c)) = chars.next() {
+        let at_line_start = at == 0 || command.as_bytes()[at - 1] == b'\n';
+        if reader.heredoc_delimiter.is_some() && at_line_start && c != '\n' {
+            let line_end = command[at..].find('\n').map_or(command.len(), |n| at + n);
+            for text in command[at..line_end].split_whitespace() {
+                reader.in_word = true;
+                for raw in text.chars() {
+                    reader.word.push(raw, Quoting::Bare);
+                }
+                reader.end_word();
+            }
+            reader.end_step(Operator::Sequence);
+            while chars.next_if(|&(next_at, _)| next_at < line_end).is_some() {}
+            continue;
+        }
         match c {
+            '#' if !reader.in_word => while chars.next_if(|&(_, next)| next != '\n').is_some() {},
             '\'' => {
-                in_word = true;
-                for inner in chars.by_ref() {
+                reader.in_word = true;
+                for (_, inner) in chars.by_ref() {
                     if inner == '\'' {
                         break;
                     }
-                    word.push(inner, Quoting::Single);
+                    reader.word.push(inner, Quoting::Single);
                 }
             }
             '"' => {
-                in_word = true;
-                while let Some(inner) = chars.next() {
+                reader.in_word = true;
+                while let Some((_, inner)) = chars.next() {
                     match inner {
                         '"' => break,
                         '\\' => {
-                            if let Some(next) = chars.next() {
-                                word.push(next, Quoting::Escaped);
+                            if let Some((_, next)) = chars.next() {
+                                reader.word.push(next, Quoting::Escaped);
                             }
                         }
-                        other => word.push(other, Quoting::Double),
+                        other => reader.word.push(other, Quoting::Double),
                     }
                 }
             }
             '\\' => {
-                in_word = true;
-                if let Some(next) = chars.next() {
-                    word.push(next, Quoting::Escaped);
+                reader.in_word = true;
+                if let Some((_, next)) = chars.next() {
+                    reader.word.push(next, Quoting::Escaped);
                 }
             }
-            ';' | '&' | '|' | '\n' => {
-                if in_word {
-                    words.push(std::mem::take(&mut word));
-                    in_word = false;
-                }
-                if !words.is_empty() {
-                    all.push(std::mem::take(&mut words));
+            ';' => reader.end_step(Operator::Sequence),
+            '\n' => {
+                reader.end_step(Operator::Sequence);
+                let line_start = command[..at].rfind('\n').map_or(0, |newline| newline + 1);
+                reader.end_line(&command[line_start..at]);
+            }
+            '&' => {
+                let after_redirect = reader.in_word
+                    && reader.word.quoting.last() == Some(&Quoting::Bare)
+                    && (reader.word.text.ends_with('>') || reader.word.text.ends_with('<'));
+                match chars.peek().map(|&(_, next)| next) {
+                    Some('&') => {
+                        chars.next();
+                        reader.end_step(Operator::And);
+                    }
+                    next if after_redirect || next == Some('>') => {
+                        reader.in_word = true;
+                        reader.word.push('&', Quoting::Bare);
+                    }
+                    _ => reader.end_step(Operator::Background),
                 }
             }
-            c if c.is_whitespace() => {
-                if in_word {
-                    words.push(std::mem::take(&mut word));
-                    in_word = false;
+            '|' => match chars.peek().map(|&(_, next)| next) {
+                Some('|') => {
+                    chars.next();
+                    reader.end_step(Operator::Or);
                 }
-            }
+                Some('&') => {
+                    chars.next();
+                    reader.end_step(Operator::Pipe);
+                }
+                _ => reader.end_step(Operator::Pipe),
+            },
+            c if c.is_whitespace() => reader.end_word(),
             other => {
-                in_word = true;
-                word.push(other, Quoting::Bare);
+                reader.in_word = true;
+                reader.word.push(other, Quoting::Bare);
             }
         }
     }
-    if in_word {
-        words.push(word);
-    }
-    if !words.is_empty() {
-        all.push(words);
-    }
-    all
+    reader.end_step(Operator::Sequence);
+    reader.steps
 }
 
 /// What follows a leading home reference the shell expands: `~`, `$HOME` or
@@ -539,28 +732,536 @@ fn chain(cwd: &Path, home: Option<&Path>, directories: &[&Word]) -> Vec<PathBuf>
     })]
 }
 
-fn classify(
-    words: &[Word],
-    cwd: &Path,
-    home: Option<&Path>,
-) -> Option<(&'static str, Vec<PathBuf>)> {
+/// What a shell variable holds at a point of the command.
+#[derive(Debug, Clone)]
+enum Binding {
+    Known(Expanded),
+    /// Set to something the walk does not read; the shape says why.
+    Unknown(Shape),
+}
+
+/// A word with its variables replaced. `rooted` is whether it names an
+/// absolute location: it starts with `/`, or with home (which is `~` in a
+/// replay).
+#[derive(Debug, Clone)]
+struct Expanded {
+    text: String,
+    rooted: bool,
+}
+
+impl Expanded {
+    fn path(&self, base: Result<&Path, Shape>) -> Result<PathBuf, Shape> {
+        if self.rooted || self.text.starts_with('/') {
+            Ok(fold(Path::new(&self.text)))
+        } else {
+            Ok(resolve(base?, &self.text))
+        }
+    }
+}
+
+/// A step that is `exit` or `return`, optionally with a numeric status, and
+/// the whole of what follows a `||`.
+fn leaves_the_shell(step: &Step) -> bool {
+    let ends_alone = matches!(step.end, Operator::Sequence);
+    let words = without_redirects(&step.words);
+    let status_ok = |status: Option<&&Word>| {
+        status.is_none_or(|word| {
+            !word.text.is_empty() && word.text.chars().all(|c| c.is_ascii_digit())
+        })
+    };
+    ends_alone
+        && matches!(
+            words.first().and_then(|word| keyword(word)),
+            Some("exit" | "return")
+        )
+        && words.len() <= 2
+        && status_ok(words.get(1))
+}
+
+/// Whether a simple command certainly ran: after a `&&` or `||` it may not
+/// have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reach {
+    Certain,
+    Conditional,
+}
+
+/// Whether a simple command runs in its own process, as part of a pipeline or
+/// in the background.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Piping {
+    Alone,
+    Piped,
+}
+
+/// The shell state a Bash call's simple commands leave behind, in order:
+/// the directory it is in and the variables it set. A state the walk cannot
+/// read is `Err`/`Unknown` with the shape that says why.
+struct Walk {
+    start: PathBuf,
+    here: Result<PathBuf, Shape>,
+    vars: BTreeMap<String, Binding>,
+    /// The shape of each compound command (`if`, `for`, `{`…) still open.
+    compounds: Vec<Shape>,
+    /// Depth of `$(` opened in an earlier simple command and not yet closed.
+    substitution_depth: usize,
+    previous: Option<Operator>,
+    /// Names set after a `&&`/`||` in the current list, each with whether
+    /// it keeps its value when the list ends: only a name with no earlier
+    /// binding, set after `&&` alone. Had it not run, the name holds what
+    /// the environment gave it, which the walk reads as `unassigned`, so
+    /// following it only adds a check.
+    conditional_names: Vec<(String, bool)>,
+    conditional_cd: bool,
+}
+
+fn keyword(word: &Word) -> Option<&str> {
+    word.quoting
+        .iter()
+        .all(|quoting| *quoting == Quoting::Bare)
+        .then_some(word.text.as_str())
+}
+
+fn is_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// `NAME=value`, the name bare, with the value as a word.
+fn assignment(word: &Word) -> Option<(&str, Word)> {
+    let equals = word.text.find('=')?;
+    let name = &word.text[..equals];
+    (is_identifier(name) && word.quoting[..equals].iter().all(|q| *q == Quoting::Bare)).then(|| {
+        (
+            name,
+            Word {
+                text: word.text[equals + 1..].to_string(),
+                quoting: word.quoting[equals + 1..].to_vec(),
+            },
+        )
+    })
+}
+
+/// Whether the value holds a command substitution the shell would run.
+fn substitutes(assigned: &Word) -> bool {
+    let live = |at: usize| {
+        assigned
+            .quoting
+            .get(at)
+            .is_some_and(|q| *q != Quoting::Single)
+    };
+    assigned
+        .text
+        .char_indices()
+        .enumerate()
+        .any(|(at, (byte, c))| live(at) && (c == '`' || assigned.text[byte..].starts_with("$(")))
+}
+
+/// A redirect word: `Some(true)` when its target is the next word.
+fn redirect(word: &Word) -> Option<bool> {
+    if word.quoting.first() != Some(&Quoting::Bare) {
+        return None;
+    }
+    let operator = word.text.trim_start_matches(|c: char| c.is_ascii_digit());
+    if !(operator.starts_with('<') || operator.starts_with('>') || operator.starts_with("&>")) {
+        return None;
+    }
+    Some(operator.trim_start_matches(['<', '>', '&']).is_empty())
+}
+
+fn without_redirects(words: &[Word]) -> Vec<&Word> {
+    let mut kept = Vec::new();
+    let mut skip_target = false;
+    for word in words {
+        if skip_target {
+            skip_target = false;
+        } else if let Some(takes_next) = redirect(word) {
+            skip_target = takes_next;
+        } else {
+            kept.push(word);
+        }
+    }
+    kept
+}
+
+impl Walk {
+    fn new(start: PathBuf) -> Self {
+        Self {
+            here: Ok(start.clone()),
+            start,
+            vars: BTreeMap::new(),
+            compounds: Vec::new(),
+            substitution_depth: 0,
+            previous: None,
+            conditional_names: Vec::new(),
+            conditional_cd: false,
+        }
+    }
+
+    /// Classify `step` at the current state, then apply its effect.
+    fn step(
+        &mut self,
+        step: &Step,
+        next: Option<&Step>,
+        payload_cwd: &Path,
+        home: Option<&Path>,
+    ) -> Option<Reached> {
+        let boundary = classify(&step.words, self, payload_cwd, home);
+        if !step.heredoc_body && self.substitution_depth == 0 {
+            self.apply(step, next, home);
+        }
+        self.track_substitutions(&step.words);
+        if !matches!(step.end, Operator::And | Operator::Or) {
+            self.end_list();
+        }
+        self.previous = Some(step.end);
+        boundary
+    }
+
+    fn track_substitutions(&mut self, words: &[Word]) {
+        for word in words {
+            let chars: Vec<char> = word.text.chars().collect();
+            for (at, c) in chars.iter().enumerate() {
+                if word.quoting[at] == Quoting::Single {
+                    continue;
+                }
+                if *c == '$' && chars.get(at + 1) == Some(&'(') {
+                    self.substitution_depth += 1;
+                } else if *c == ')' {
+                    self.substitution_depth = self.substitution_depth.saturating_sub(1);
+                }
+            }
+        }
+    }
+
+    /// A `&&`/`||` list ended: what its later commands set may not have run.
+    fn end_list(&mut self) {
+        for (name, keeps) in std::mem::take(&mut self.conditional_names) {
+            if !keeps {
+                self.vars.insert(name, Binding::Unknown(Shape::Conditional));
+            }
+        }
+        if std::mem::take(&mut self.conditional_cd) && !matches!(self.here, Err(Shape::Subshell)) {
+            self.here = Err(Shape::CdOr);
+        }
+    }
+
+    fn compound_shape(&self) -> Option<Shape> {
+        self.compounds.last().copied()
+    }
+
+    fn bind(&mut self, name: &str, binding: Binding, reach: Reach) {
+        if reach == Reach::Conditional {
+            // Read before the assignment writes `vars`.
+            let after_and = self.previous == Some(Operator::And);
+            match self
+                .conditional_names
+                .iter_mut()
+                .find(|(set, _)| set == name)
+            {
+                Some((_, keeps)) => *keeps &= after_and,
+                None => {
+                    let keeps = after_and && !self.vars.contains_key(name);
+                    self.conditional_names.push((name.to_string(), keeps));
+                }
+            }
+        }
+        self.vars.insert(name.to_string(), binding);
+    }
+
+    fn apply(&mut self, step: &Step, next: Option<&Step>, home: Option<&Path>) {
+        let reach = if matches!(self.previous, Some(Operator::And | Operator::Or)) {
+            Reach::Conditional
+        } else {
+            Reach::Certain
+        };
+        let piping = if self.previous == Some(Operator::Pipe)
+            || matches!(step.end, Operator::Pipe | Operator::Background)
+        {
+            Piping::Piped
+        } else {
+            Piping::Alone
+        };
+        let mut words = step.words.as_slice();
+        while let Some(first) = words.first() {
+            match keyword(first) {
+                Some("then" | "do" | "else" | "elif") => {}
+                Some("{" | "if") => self.compounds.push(Shape::Keyword),
+                Some("while" | "until") => self.compounds.push(Shape::Keyword),
+                Some("for" | "select") => {
+                    self.compounds.push(Shape::LoopVar);
+                    if let Some(name) = words.get(1).filter(|word| is_identifier(&word.text)) {
+                        self.bind(&name.text, Binding::Unknown(Shape::LoopVar), Reach::Certain);
+                    }
+                    return;
+                }
+                Some("case") => {
+                    self.compounds.push(Shape::Keyword);
+                    return;
+                }
+                Some("done" | "fi" | "esac" | "}") => {
+                    self.compounds.pop();
+                }
+                _ => break,
+            }
+            words = &words[1..];
+        }
+        let Some(opening) = words.first() else { return };
+        if opening.quoting.first() == Some(&Quoting::Bare) && opening.text.starts_with('(') {
+            self.here = Err(Shape::Subshell);
+            return;
+        }
+        let words = without_redirects(words);
+        let leading = words
+            .iter()
+            .take_while(|word| assignment(word).is_some())
+            .count();
+        let only_assignments = leading == words.len();
+        for (name, value) in words[..leading].iter().filter_map(|word| assignment(word)) {
+            let binding = if substitutes(&value) {
+                Binding::Unknown(Shape::CommandSubst)
+            } else if !only_assignments {
+                continue;
+            } else if let Some(shape) = self.compound_shape() {
+                Binding::Unknown(shape)
+            } else if piping == Piping::Piped {
+                Binding::Unknown(Shape::NotLiteral)
+            } else {
+                match self.expand(&value, home) {
+                    Ok(expanded) => Binding::Known(expanded),
+                    Err(shape) => Binding::Unknown(shape),
+                }
+            };
+            self.bind(name, binding, reach);
+        }
+        let Some(first) = words.get(leading) else {
+            return;
+        };
+        let words = &words[leading..];
+        match keyword(first) {
+            Some("export" | "local" | "readonly" | "declare" | "typeset") => {
+                for word in &words[1..] {
+                    let name = word
+                        .text
+                        .split_once('=')
+                        .map_or(word.text.as_str(), |(name, _)| name);
+                    if is_identifier(name) {
+                        self.bind(name, Binding::Unknown(Shape::Export), reach);
+                    }
+                }
+            }
+            Some("read") => {
+                for word in words[1..].iter().filter(|word| is_identifier(&word.text)) {
+                    self.bind(&word.text, Binding::Unknown(Shape::LoopVar), reach);
+                }
+            }
+            Some("cd") => {
+                // `cd T || exit`: what follows runs only when the `cd` worked.
+                let end = if step.end == Operator::Or && next.is_some_and(leaves_the_shell) {
+                    Operator::Sequence
+                } else {
+                    step.end
+                };
+                self.change_directory(&words[1..], end, (reach, piping), home);
+            }
+            Some("pushd" | "popd" | "builtin" | "command" | "eval" | "source" | ".") => {
+                if !matches!(self.here, Err(Shape::Subshell)) {
+                    self.here = Err(Shape::NotLiteral);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn change_directory(
+        &mut self,
+        arguments: &[&Word],
+        end: Operator,
+        (reach, piping): (Reach, Piping),
+        home: Option<&Path>,
+    ) {
+        if matches!(self.here, Err(Shape::Subshell)) {
+            return;
+        }
+        let target = self.cd_target(arguments, home);
+        self.here = if let Some(shape) = self.compound_shape() {
+            Err(shape)
+        } else if piping == Piping::Piped {
+            Err(Shape::CdPiped)
+        } else if end == Operator::Or {
+            Err(Shape::CdOr)
+        } else {
+            target
+        };
+        if reach == Reach::Conditional {
+            self.conditional_cd = true;
+        }
+    }
+
+    fn cd_target(&self, arguments: &[&Word], home: Option<&Path>) -> Result<PathBuf, Shape> {
+        let word = match arguments {
+            [] => return home.map(fold).ok_or(Shape::NotLiteral),
+            [word] => word,
+            _ => return Err(Shape::NotLiteral),
+        };
+        if word.text == "-" {
+            return Err(Shape::CdDash);
+        }
+        if word.text.starts_with('-') || word.text.starts_with('+') {
+            return Err(Shape::NotLiteral);
+        }
+        let expanded = self.expand(word, home)?;
+        let relative_ok = expanded.text == "."
+            || expanded.text == ".."
+            || expanded.text.starts_with("./")
+            || expanded.text.starts_with("../");
+        if !(expanded.rooted || expanded.text.starts_with('/') || relative_ok) {
+            return Err(Shape::NotLiteral);
+        }
+        expanded.path(self.here.as_deref().map_err(|shape| *shape))
+    }
+
+    /// A word's text with its leading home or `$NAME` replaced, or the shape
+    /// that keeps it from being read. A `$` anywhere else, a backtick, an
+    /// unquoted glob character or a `~` that is not home is not read.
+    fn expand(&self, word: &Word, home: Option<&Path>) -> Result<Expanded, Shape> {
+        let live = |at: usize| word.quoting.get(at).is_some_and(|q| *q != Quoting::Single);
+        let bare = |at: usize| word.quoting.get(at) == Some(&Quoting::Bare);
+        let (prefix, rest_at) = if let Some(suffix) = home_suffix(word) {
+            let rest_at = word.text.len() - suffix.len();
+            match home {
+                Some(home) => (
+                    Some(Expanded {
+                        text: home.to_string_lossy().into_owned(),
+                        rooted: true,
+                    }),
+                    rest_at,
+                ),
+                None => (None, 0),
+            }
+        } else if live(0) && word.text.starts_with('$') && bare_or_double(word, 0) {
+            let (name, end) = variable_name(&word.text).ok_or(Shape::NotLiteral)?;
+            if !matches!(word.text[end..].chars().next(), None | Some('/')) {
+                return Err(Shape::NotLiteral);
+            }
+            match self.vars.get(name) {
+                Some(Binding::Known(value)) => (Some(value.clone()), end),
+                Some(Binding::Unknown(shape)) => return Err(*shape),
+                None => return Err(Shape::Unassigned),
+            }
+        } else {
+            (None, 0)
+        };
+        let mut text = prefix.as_ref().map_or_else(String::new, |p| p.text.clone());
+        for (char_at, (at, c)) in word.text.char_indices().enumerate() {
+            if at < rest_at {
+                continue;
+            }
+            if live(char_at) && c == '`' {
+                return Err(Shape::CommandSubst);
+            }
+            if live(char_at) && c == '$' {
+                let substitution = word.text[at..].starts_with("$(");
+                return Err(if substitution {
+                    Shape::CommandSubst
+                } else {
+                    Shape::NotLiteral
+                });
+            }
+            let globbing = matches!(c, '*' | '?' | '[' | '{');
+            if bare(char_at) && (globbing || (char_at == 0 && matches!(c, '~' | '='))) {
+                return Err(Shape::NotLiteral);
+            }
+            text.push(c);
+        }
+        let rooted = prefix.as_ref().is_some_and(|p| p.rooted);
+        Ok(Expanded { text, rooted })
+    }
+
+    /// The directories of a boundary's `-C` words, or, with none, of the
+    /// directory the walk reached; `unresolved` is the shape that kept it
+    /// from reading them, in which case the dirs are the payload `cwd`'s.
+    fn directories(
+        &self,
+        payload_cwd: &Path,
+        home: Option<&Path>,
+        words: &[&Word],
+    ) -> (Vec<PathBuf>, Option<Shape>) {
+        match self.resolve_directories(payload_cwd, home, words) {
+            Ok(dirs) => (dirs, None),
+            Err(shape) => (chain(payload_cwd, home, words), Some(shape)),
+        }
+    }
+
+    /// With no `-C`, `here` is checked unless it is where the call began
+    /// and also the payload cwd, which the check covers already.
+    fn resolve_directories(
+        &self,
+        payload_cwd: &Path,
+        home: Option<&Path>,
+        words: &[&Word],
+    ) -> Result<Vec<PathBuf>, Shape> {
+        if words.is_empty() {
+            let here = self.here.clone()?;
+            return Ok(if here == self.start && here == payload_cwd {
+                Vec::new()
+            } else {
+                vec![here]
+            });
+        }
+        let mut base = self.here.clone();
+        for word in words {
+            let expanded = self.expand(word, home)?;
+            base = Ok(expanded.path(base.as_deref().map_err(|shape| *shape))?);
+        }
+        Ok(vec![base?])
+    }
+}
+
+fn bare_or_double(word: &Word, at: usize) -> bool {
+    matches!(word.quoting.get(at), Some(Quoting::Bare | Quoting::Double))
+}
+
+/// The name in a leading `$NAME` or `${NAME}`, and where it ends.
+fn variable_name(text: &str) -> Option<(&str, usize)> {
+    if let Some(braced) = text.strip_prefix("${") {
+        let close = braced.find('}')?;
+        let name = &braced[..close];
+        return is_identifier(name).then_some((name, close + 3));
+    }
+    let after = &text[1..];
+    let length = after
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(after.len());
+    let name = &after[..length];
+    is_identifier(name).then_some((name, length + 1))
+}
+
+fn classify(words: &[Word], walk: &Walk, cwd: &Path, home: Option<&Path>) -> Option<Reached> {
     let texts: Vec<String> = words.iter().map(|word| word.text.clone()).collect();
     if texts.iter().any(|word| base_name(word) == "sweep.py")
         && texts.iter().any(|word| word == "--apply")
     {
-        return Some(("sweep.py --apply", Vec::new()));
+        return Some(("sweep.py --apply", Vec::new(), None));
     }
     let call = git_call(&texts)?;
     let directories: Vec<&Word> = call.directories.iter().map(|&at| &words[at]).collect();
+    let boundary = |what: &'static str| {
+        let (dirs, unresolved) = walk.directories(cwd, home, &directories);
+        (what, dirs, unresolved)
+    };
     match call.subcommand {
         "worktree" => {
             let verb = call.rest.iter().find(|word| !word.starts_with('-'))?;
-            (verb == "remove").then(|| ("worktree remove", chain(cwd, home, &directories)))
+            (verb == "remove").then(|| boundary("worktree remove"))
         }
         "commit" => {
             let subject = commit_subject(call.rest)?;
             (subject.starts_with("docs(plan): ") && !is_closing_plan_commit(&subject))
-                .then(|| ("plan commit", chain(cwd, home, &directories)))
+                .then(|| boundary("plan commit"))
         }
         _ => None,
     }
@@ -745,16 +1446,25 @@ pub fn relais_flight(entries: &[Value]) -> RelaisFlight {
     flight
 }
 
+/// Whose repository is not clean.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotCleanOf {
+    /// The payload `cwd`'s, which a journal row's `repo` already names.
+    PayloadCwd,
+    /// One a boundary's directory named.
+    NamedDirectory,
+}
+
 /// How the repositories a boundary touched stand.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Repositories {
     /// Every checked repository is clean, with its HEAD (empty when unborn).
-    Clean {
-        heads: Vec<(PathBuf, String)>,
-    },
+    Clean { heads: Vec<(PathBuf, String)> },
     NotClean {
         directory: PathBuf,
         reason: String,
+        /// Whose repository it is.
+        of: NotCleanOf,
     },
     /// The shared deadline passed.
     TimedOut,
@@ -787,9 +1497,11 @@ pub fn check_repositories(
     deadline: Instant,
 ) -> Repositories {
     let mut heads: Vec<(PathBuf, String)> = Vec::new();
-    for directory in cwd
+    let cwd_count = usize::from(cwd.is_some());
+    for (at, directory) in cwd
         .into_iter()
         .chain(directories.iter().map(PathBuf::as_path))
+        .enumerate()
     {
         if !directory.is_dir() {
             continue;
@@ -808,12 +1520,21 @@ pub fn check_repositories(
                 return Repositories::NotClean {
                     directory: top,
                     reason,
+                    of: not_clean_of(at, cwd_count),
                 }
             }
             RepoCheck::TimedOut => return Repositories::TimedOut,
         }
     }
     Repositories::Clean { heads }
+}
+
+fn not_clean_of(at: usize, cwd_count: usize) -> NotCleanOf {
+    if at < cwd_count {
+        NotCleanOf::PayloadCwd
+    } else {
+        NotCleanOf::NamedDirectory
+    }
 }
 
 /// A git refusal is a reason the repository cannot be called clean, named
@@ -915,6 +1636,8 @@ pub struct Pending {
     pub command: String,
     pub what: String,
     pub dirs: Vec<PathBuf>,
+    /// A boundary the turn reached whose directory the walk could not read.
+    pub unresolved: bool,
 }
 
 /// What a session's state file holds.
@@ -941,6 +1664,7 @@ pub(crate) fn parse_pending(pending_json: &Value) -> Option<Pending> {
             .iter()
             .filter_map(|dir| dir.as_str().map(PathBuf::from))
             .collect(),
+        unresolved: pending_json["unresolved"].as_bool().unwrap_or(false),
     })
 }
 
@@ -984,6 +1708,7 @@ pub(crate) fn render_state(state: &State) -> String {
             "command": pending.command,
             "what": pending.what,
             "dirs": pending.dirs.iter().map(|dir| dir.to_string_lossy()).collect::<Vec<_>>(),
+            "unresolved": pending.unresolved,
         })
     });
     serde_json::json!({
@@ -1382,6 +2107,18 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
                 Candidate::Resumed(pending)
             }
         };
+        // The row names the Stop's own, last boundary, and goes again only
+        // when the boundary is a new one: see the key check below.
+        let mut unresolved_row = None;
+        if let Some(Boundary {
+            unresolved: Some(shape),
+            what,
+            ..
+        }) = own
+        {
+            unresolved_row = Some(self.records.len());
+            self.record("watched", &format!("unresolved {} {what}", shape.as_str()));
+        }
         if view.background_busy {
             return self.hold(&candidate, state, "background");
         }
@@ -1399,12 +2136,28 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
         let boundary = candidate.boundary();
         let heads = match repos(&boundary.dirs) {
             Repositories::Clean { heads } => heads,
-            Repositories::NotClean { reason, .. } => return self.hold(&candidate, state, &reason),
+            Repositories::NotClean {
+                reason,
+                directory,
+                of,
+            } => {
+                let named = (of == NotCleanOf::NamedDirectory)
+                    .then(|| directory.file_name())
+                    .flatten();
+                let reason = match named {
+                    Some(name) => format!("{reason} dir={}", name.to_string_lossy()),
+                    None => reason,
+                };
+                return self.hold(&candidate, state, &reason);
+            }
             Repositories::TimedOut => return self.watched("timeout"),
         };
         let key = boundary_key(&boundary.command, &heads);
         let advices = state.advices;
         if state.key == key {
+            if let Some(at) = unresolved_row {
+                self.records.remove(at);
+            }
             if state.pending.is_some() {
                 state.pending = None;
                 self.save(&state);
@@ -1527,6 +2280,7 @@ pub(crate) fn pending_from(found: &[Boundary], boundary: &Boundary) -> Pending {
         command: boundary.command.clone(),
         what: boundary.what.clone(),
         dirs,
+        unresolved: found.iter().any(|boundary| boundary.unresolved.is_some()),
     }
 }
 
@@ -1573,6 +2327,8 @@ struct PendingFixture {
     command: String,
     what: String,
     dirs: Vec<String>,
+    #[serde(default)]
+    unresolved: bool,
 }
 
 #[derive(Deserialize)]
@@ -1675,9 +2431,11 @@ impl FrozenRepositories {
             Self::All(repositories) => return repositories.clone(),
             Self::PerDirectory(map) => map,
         };
-        for directory in cwd
+        let cwd_count = usize::from(cwd.is_some());
+        for (at, directory) in cwd
             .into_iter()
             .chain(directories.iter().map(PathBuf::as_path))
+            .enumerate()
         {
             match map.get(directory) {
                 None | Some(DirectoryFact::Clean) => {}
@@ -1686,6 +2444,7 @@ impl FrozenRepositories {
                     return Repositories::NotClean {
                         directory: directory.to_path_buf(),
                         reason: reason.clone(),
+                        of: not_clean_of(at, cwd_count),
                     }
                 }
             }
@@ -1734,6 +2493,7 @@ impl TryFrom<StopFixture> for StopInputs {
                 command: pending.command,
                 what: pending.what,
                 dirs: pending.dirs.into_iter().map(PathBuf::from).collect(),
+                unresolved: pending.unresolved,
             }),
         };
         let phase = match fixture.facts.phase {
@@ -1751,6 +2511,7 @@ impl TryFrom<StopFixture> for StopInputs {
                 FrozenRepositories::All(Repositories::NotClean {
                     directory: PathBuf::new(),
                     reason,
+                    of: NotCleanOf::PayloadCwd,
                 })
             }
             RepositoriesFixture::PerDirectory(map) => FrozenRepositories::PerDirectory(
@@ -2339,6 +3100,7 @@ mod tests {
                 command: "git worktree remove x".into(),
                 what: "worktree remove".into(),
                 dirs: vec![PathBuf::from("/r")],
+                unresolved: true,
             }),
         };
         assert_eq!(parse_state(&render_state(&state)), Some(state));
@@ -2739,6 +3501,7 @@ mod tests {
                 command: "git -C ~/repo worktree remove x".to_string(),
                 what: "worktree remove".to_string(),
                 dirs: vec![PathBuf::from("/work/~/repo")],
+                unresolved: false,
             }),
             ..State::default()
         };
@@ -2763,5 +3526,474 @@ mod tests {
         // One resume with the old joined path; the next person prompt clears
         // the pending (see `judge`), so no migration is needed.
         assert_eq!(*asked.borrow(), [PathBuf::from("/work/~/repo")]);
+    }
+
+    #[test]
+    fn a_state_file_without_the_unresolved_key_reads_as_resolved() {
+        let text = r#"{"turn":"t","advices":1,"key":"k","pending":{"uuid":"u","command":"git worktree remove x","what":"worktree remove","dirs":["/r"]}}"#;
+        let state = parse_state(text).expect("a state");
+        let pending = state.pending.expect("a pending boundary");
+        assert!(!pending.unresolved);
+        assert_eq!(pending.dirs, [PathBuf::from("/r")]);
+    }
+
+    #[test]
+    fn a_not_clean_hold_names_a_repository_other_than_the_cwds() {
+        let entries = vec![
+            prompt("p1"),
+            with_uuid(
+                assistant(
+                    Some((250_000, 0, 0)),
+                    false,
+                    json!([{"type": "tool_use", "id": "b1", "name": "Bash",
+                            "input": {"command": "git -C /h/wt worktree remove x"}}]),
+                ),
+                "boundary-entry",
+            ),
+        ];
+        let view = StopView {
+            cwd: Some(PathBuf::from("/work")),
+            home: Some(PathBuf::from("/h")),
+            ..StopView::default()
+        };
+        let verdict_of = |of: NotCleanOf| {
+            super::decide(
+                &view,
+                &entries,
+                State::default(),
+                || PhaseFact::NoOpenPhase,
+                || Stance::Deny,
+                |_| Repositories::NotClean {
+                    directory: PathBuf::from("/h/wt"),
+                    reason: "uncommitted changes".to_string(),
+                    of,
+                },
+                |_| true,
+            )
+        };
+        assert_eq!(
+            verdict_of(NotCleanOf::NamedDirectory).records,
+            [(
+                "watched".to_string(),
+                "pending uncommitted changes dir=wt".to_string()
+            )]
+        );
+        assert_eq!(
+            verdict_of(NotCleanOf::PayloadCwd).records,
+            [(
+                "watched".to_string(),
+                "pending uncommitted changes".to_string()
+            )]
+        );
+    }
+
+    /// The 4526105a boundary command (session-boundaries t23): `LIVE` is set
+    /// at the top, and the `if … fi` between never assigns it.
+    const LIVE_4526105A: &str = r#"LIVE=~/Developer/Perso/decisions; git -C "$LIVE" fetch origin -q; DEF=$(git -C "$LIVE" symbolic-ref --short refs/remotes/origin/HEAD | sed 's#^origin/##'); GD=$(git -C "$LIVE" rev-parse --absolute-git-dir); if [ "$(git -C "$LIVE" branch --show-current)" != "$DEF" ]; then echo "live: on $(git -C "$LIVE" branch --show-current), not $DEF; left alone"; elif [ -n "$(git -C "$LIVE" status --porcelain --untracked-files=no)" ]; then echo "live: uncommitted changes; left alone"; elif [ -e "$GD/MERGE_HEAD" ] || [ -d "$GD/rebase-merge" ] || [ -d "$GD/rebase-apply" ]; then echo "live: merge/rebase in progress; left alone"; else git -C "$LIVE" merge --ff-only -q "origin/$DEF" && echo "live: fast-forwarded to $(git -C "$LIVE" rev-parse --short HEAD)" || echo "live: cannot fast-forward; left alone"; fi; git -C "$LIVE" worktree remove ../decisions-wt-t21 && echo "removed decisions-wt-t21" && git -C "$LIVE" branch -D docs/session-boundaries-t21"#;
+
+    /// The dirs and the unresolved shape of each boundary in `command`, with
+    /// the payload cwd `cwd`, home `/h`, and the Bash call's entry carrying
+    /// `entry_cwd` (none when `None`).
+    fn walked(
+        command: &str,
+        cwd: &str,
+        entry_cwd: Option<&str>,
+    ) -> Vec<(Vec<PathBuf>, Option<&'static str>)> {
+        let mut call = bash("b0", command);
+        if let Some(entry_cwd) = entry_cwd {
+            call["cwd"] = json!(entry_cwd);
+        }
+        let entries = vec![prompt("p1"), call];
+        let window = turn_window(&entries).expect("a window");
+        boundaries(&window, Path::new(cwd), Some(Path::new("/h")))
+            .into_iter()
+            .map(|boundary| (boundary.dirs, boundary.unresolved.map(Shape::as_str)))
+            .collect()
+    }
+
+    fn paths(dirs: &[&str]) -> Vec<PathBuf> {
+        dirs.iter().map(PathBuf::from).collect()
+    }
+
+    /// The plan's Phase 1 table (cwd `/w`, home `/h`): a command that fixes
+    /// its directory is read, one that does not keeps today's dirs and is
+    /// unresolved.
+    #[test]
+    fn the_walk_follows_a_chained_cd_and_same_command_assignments() {
+        let resolved: &[(&str, &[&str])] = &[
+            ("cd /h/repo && git worktree remove ../x", &["/h/repo"]),
+            ("cd ~/repo; git commit -m \"docs(plan): p\"", &["/h/repo"]),
+            (
+                "LIVE=~/repo; git -C \"$LIVE\" worktree remove x",
+                &["/h/repo"],
+            ),
+            (LIVE_4526105A, &["/h/Developer/Perso/decisions"]),
+            ("W=/h/a; cd \"$W\" && git worktree remove ../b", &["/h/a"]),
+            (
+                "R=/h; git -C \"$R/relais\" worktree remove x",
+                &["/h/relais"],
+            ),
+            ("cd /h/a && git -C ~/b worktree remove x", &["/h/b"]),
+            ("cd /h/a 2>&1 && git worktree remove ../b", &["/h/a"]),
+            ("cd /h/a >/dev/null && git worktree remove ../b", &["/h/a"]),
+            ("LIVE='$x'; git -C \"$LIVE\" worktree remove y", &["/w/$x"]),
+            ("cd ./child && git worktree remove ../x", &["/w/child"]),
+            (
+                "cd /h/a; R=/h/b; git -C \"$R\" worktree remove x",
+                &["/h/b"],
+            ),
+            (
+                "X=$(cd /h/a; pwd); git -C /h/b worktree remove x",
+                &["/h/b"],
+            ),
+            // Delta 1: an unbound name set after `&&` keeps its value.
+            (
+                "gh x && LIVE=~/repo && git -C \"$LIVE\" fetch; git -C \"$LIVE\" worktree remove x",
+                &["/h/repo"],
+            ),
+        ];
+        for (command, dirs) in resolved {
+            assert_eq!(
+                walked(command, "/w", Some("/w")),
+                vec![(paths(dirs), None)],
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_shape_the_walk_cannot_read_keeps_todays_dirs_and_is_unresolved() {
+        let unresolved: &[(&str, &[&str], &str)] = &[
+            (
+                "git -C \"$LIVE\" worktree remove x",
+                &["/w/$LIVE"],
+                "unassigned",
+            ),
+            ("(cd /h/a && git worktree remove ../b)", &[], "subshell"),
+            (
+                "LIVE=$(git rev-parse --show-toplevel); git -C \"$LIVE\" worktree remove x",
+                &["/w/$LIVE"],
+                "command-subst",
+            ),
+            (
+                "for r in a b; do LIVE=/h/$r; git -C \"$LIVE\" worktree remove x; done",
+                &["/w/$LIVE"],
+                "loop-var",
+            ),
+            ("cd - && git worktree remove x", &[], "cd-dash"),
+            ("cd /h/a | cat; git worktree remove x", &[], "cd-piped"),
+            ("cd /h/a || git worktree remove x", &[], "cd-or"),
+            ("cd ~- && git worktree remove x", &[], "not-literal"),
+            (
+                "R=/a; false && R=/b; git -C \"$R\" worktree remove x",
+                &["/w/$R"],
+                "conditional",
+            ),
+            (
+                "test -d /h/a || LIVE=/h/b; git -C \"$LIVE\" worktree remove x",
+                &["/w/$LIVE"],
+                "conditional",
+            ),
+        ];
+        for (command, dirs, shape) in unresolved {
+            assert_eq!(
+                walked(command, "/w", Some("/w")),
+                vec![(paths(dirs), Some(*shape))],
+                "{command}"
+            );
+        }
+        // Carried from review: CDPATH is invisible to the hook, so a relative
+        // `cd` word without `./` or `../` is not read (unix B); a leading
+        // `then`/`do`/`else`/`elif`/`{` inside a compound is stripped before
+        // the walk reads the command, so its `cd` or assignment still counts
+        // as made inside the compound (backend 7).
+        let unread: &[(&str, &[&str])] = &[
+            ("cd repo && git worktree remove ../x", &[]),
+            ("if c; then cd /h/a; fi; git worktree remove x", &[]),
+            (
+                "if c; then LIVE=/h/b; fi; git -C \"$LIVE\" worktree remove x",
+                &["/w/$LIVE"],
+            ),
+            (
+                "R=/a; false && R=/b; git -C \"$R\" worktree remove x",
+                &["/w/$R"],
+            ),
+        ];
+        for (command, dirs) in unread {
+            let found = walked(command, "/w", Some("/w"));
+            assert_eq!(found.len(), 1, "{command}");
+            assert_eq!(found[0].0, paths(dirs), "{command}");
+            assert!(found[0].1.is_some(), "{command} is unresolved");
+        }
+    }
+
+    /// The walk starts where the call began, the entry's cwd: the payload cwd
+    /// can already be past the call's own `cd`. Without an entry cwd it
+    /// starts at the payload cwd.
+    #[test]
+    fn the_walk_starts_at_the_entry_cwd_then_the_payload_cwd() {
+        let command = "cd ./child && git worktree remove ../x";
+        assert_eq!(
+            walked(command, "/w/child", Some("/w")),
+            vec![(paths(&["/w/child"]), None)]
+        );
+        assert_eq!(
+            walked(command, "/w", None),
+            vec![(paths(&["/w/child"]), None)]
+        );
+        // The call began in the `cd` target, but the Stop's cwd is elsewhere:
+        // the target is still checked.
+        assert_eq!(
+            walked("cd /h/a && git worktree remove ../x", "/w", Some("/h/a")),
+            vec![(paths(&["/h/a"]), None)]
+        );
+    }
+
+    /// An unresolved own boundary adds one `watched unresolved <shape>
+    /// <what>` record, first, and the decision is the one without it.
+    #[test]
+    fn an_unresolved_boundary_is_journalled_and_decides_the_same() {
+        let entries_for = |command: &str| {
+            vec![
+                prompt("p1"),
+                with_uuid(
+                    assistant(
+                        Some((250_000, 0, 0)),
+                        false,
+                        json!([{"type": "tool_use", "id": "b1", "name": "Bash",
+                                "input": {"command": command}}]),
+                    ),
+                    "boundary-entry",
+                ),
+            ]
+        };
+        let view = StopView {
+            cwd: Some(PathBuf::from("/work")),
+            home: Some(PathBuf::from("/h")),
+            ..StopView::default()
+        };
+        let verdict_for = |command: &str| {
+            super::decide(
+                &view,
+                &entries_for(command),
+                State::default(),
+                || PhaseFact::NoOpenPhase,
+                || Stance::Deny,
+                |_| Repositories::Clean { heads: Vec::new() },
+                |_| true,
+            )
+        };
+        let unresolved = verdict_for("(cd /h/a && git worktree remove ../b)");
+        let plain = verdict_for("git worktree remove ../b");
+        assert_eq!(
+            unresolved.records.first(),
+            Some(&(
+                "watched".to_string(),
+                "unresolved subshell worktree remove".to_string()
+            ))
+        );
+        assert_eq!(
+            unresolved
+                .records
+                .iter()
+                .filter(|(_, what)| what.starts_with("unresolved "))
+                .count(),
+            1
+        );
+        assert_eq!(unresolved.records[1..], plain.records[..]);
+        assert!(matches!(unresolved.decision, Decision::Continue(_)));
+        assert!(matches!(plain.decision, Decision::Continue(_)));
+    }
+
+    fn turn_of(commands: &[&str]) -> Vec<Value> {
+        let mut entries = vec![prompt("p1")];
+        for (at, command) in commands.iter().enumerate() {
+            entries.push(with_uuid(
+                assistant(
+                    Some((250_000, 0, 0)),
+                    false,
+                    json!([{"type": "tool_use", "id": format!("b{at}"), "name": "Bash",
+                            "input": {"command": command}}]),
+                ),
+                &format!("entry-{at}"),
+            ));
+        }
+        entries
+    }
+
+    fn deny_view() -> StopView {
+        StopView {
+            cwd: Some(PathBuf::from("/work")),
+            home: Some(PathBuf::from("/h")),
+            ..StopView::default()
+        }
+    }
+
+    fn unresolved_rows(verdict: &Verdict) -> Vec<String> {
+        verdict
+            .records
+            .iter()
+            .filter(|(_, what)| what.starts_with("unresolved "))
+            .map(|(_, what)| what.clone())
+            .collect()
+    }
+
+    #[test]
+    fn a_boundary_judged_again_adds_no_second_unresolved_row() {
+        let entries = turn_of(&["(cd /h/a && git worktree remove ../b)"]);
+        let view = deny_view();
+        let saved = std::cell::RefCell::new(None);
+        let decide_with = |prior: State| {
+            super::decide(
+                &view,
+                &entries,
+                prior,
+                || PhaseFact::NoOpenPhase,
+                || Stance::Deny,
+                |_| Repositories::Clean { heads: Vec::new() },
+                |state| {
+                    *saved.borrow_mut() = Some(state.clone());
+                    true
+                },
+            )
+        };
+        let first = decide_with(State::default());
+        let prior = saved
+            .borrow()
+            .clone()
+            .expect("the first Stop saved its key");
+        let second = decide_with(prior);
+        assert_eq!(unresolved_rows(&first).len(), 1);
+        assert_eq!(unresolved_rows(&second).len(), 0);
+    }
+
+    #[test]
+    fn the_unresolved_row_names_the_last_boundary_only() {
+        let unresolved_then_plain = turn_of(&[
+            "(cd /h/a && git worktree remove ../b)",
+            "git worktree remove ../c",
+        ]);
+        let plain_then_unresolved = turn_of(&[
+            "git worktree remove ../c",
+            "(cd /h/a && git worktree remove ../b)",
+        ]);
+        let verdict_for = |entries: &[Value]| {
+            super::decide(
+                &deny_view(),
+                entries,
+                State::default(),
+                || PhaseFact::NoOpenPhase,
+                || Stance::Deny,
+                |_| Repositories::Clean { heads: Vec::new() },
+                |_| true,
+            )
+        };
+        assert!(unresolved_rows(&verdict_for(&unresolved_then_plain)).is_empty());
+        assert_eq!(
+            unresolved_rows(&verdict_for(&plain_then_unresolved)),
+            ["unresolved subshell worktree remove"]
+        );
+    }
+
+    #[test]
+    fn the_walk_starts_at_a_usable_entry_cwd_only() {
+        let command = "git worktree remove x";
+        let dirs_with = |entry_cwd: &str, home: &str| {
+            let mut call = bash("b0", command);
+            call["cwd"] = json!(entry_cwd);
+            let entries = vec![prompt("p1"), call];
+            let window = turn_window(&entries).expect("a window");
+            boundaries(&window, Path::new("/w"), Some(Path::new(home)))
+                .into_iter()
+                .map(|boundary| boundary.dirs)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(dirs_with("/other", "/h"), vec![paths(&["/other"])]);
+        assert_eq!(dirs_with("", "/h"), vec![Vec::<PathBuf>::new()]);
+        assert_eq!(dirs_with("relative/dir", "/h"), vec![Vec::<PathBuf>::new()]);
+        assert_eq!(dirs_with("~/work", "~"), vec![paths(&["~/work"])]);
+        assert_eq!(dirs_with("~/work", "/h"), vec![Vec::<PathBuf>::new()]);
+    }
+
+    #[test]
+    fn a_shell_comment_is_not_a_command() {
+        assert_eq!(
+            walked("# cd /h/a\ngit worktree remove ../b", "/w", Some("/w")),
+            vec![(Vec::new(), None)]
+        );
+        assert_eq!(
+            walked("# git worktree remove ../b", "/w", Some("/w")),
+            Vec::new()
+        );
+    }
+
+    #[test]
+    fn a_command_that_moves_the_shell_unseen_leaves_a_later_boundary_unresolved() {
+        for word in [
+            "pushd /h/a",
+            "popd",
+            "builtin cd /h/a",
+            "command cd /h/a",
+            "eval 'cd /h/a'",
+            "source ./env",
+            ". ./env",
+        ] {
+            assert_eq!(
+                walked(
+                    &format!("{word} && git worktree remove ../b"),
+                    "/w",
+                    Some("/w")
+                ),
+                vec![(Vec::new(), Some("not-literal"))],
+                "{word}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_heredoc_body_is_read_raw() {
+        let command = "cat > f <<EOF\ndon't\nEOF\ncd /h/a && git worktree remove ../b";
+        assert_eq!(
+            walked(command, "/w", Some("/w")),
+            vec![(paths(&["/h/a"]), None)]
+        );
+    }
+
+    #[test]
+    fn a_cd_followed_by_exit_keeps_its_target() {
+        for tail in ["exit", "exit 1", "return", "return 2"] {
+            assert_eq!(
+                walked(
+                    &format!("cd /h/a || {tail}; git worktree remove ../b"),
+                    "/w",
+                    Some("/w")
+                ),
+                vec![(paths(&["/h/a"]), None)],
+                "{tail}"
+            );
+        }
+        assert_eq!(
+            walked("cd /h/a || git worktree remove x", "/w", Some("/w")),
+            vec![(Vec::new(), Some("cd-or"))]
+        );
+        assert_eq!(
+            walked("cd /h/a || exit && git worktree remove x", "/w", Some("/w")),
+            vec![(Vec::new(), Some("cd-or"))]
+        );
+    }
+
+    #[test]
+    fn a_while_or_until_compound_is_a_keyword_shape() {
+        for head in ["while", "until"] {
+            assert_eq!(
+                walked(
+                    &format!("{head} c; do LIVE=/h/a; git -C \"$LIVE\" worktree remove x; done"),
+                    "/w",
+                    Some("/w")
+                ),
+                vec![(paths(&["/w/$LIVE"]), Some("keyword"))],
+                "{head}"
+            );
+        }
     }
 }
