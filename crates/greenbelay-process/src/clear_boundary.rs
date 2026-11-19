@@ -1043,20 +1043,23 @@ impl Walk {
         home: Option<&Path>,
         words: &[&Word],
     ) -> (Vec<PathBuf>, Option<&'static str>) {
-        match self.resolve_directories(home, words) {
+        match self.resolve_directories(payload_cwd, home, words) {
             Ok(dirs) => (dirs, None),
             Err(shape) => (chain(payload_cwd, home, words), Some(shape)),
         }
     }
 
+    /// With no `-C`, `here` is checked unless it is where the call began
+    /// and also the payload cwd, which the check covers already.
     fn resolve_directories(
         &self,
+        payload_cwd: &Path,
         home: Option<&Path>,
         words: &[&Word],
     ) -> Result<Vec<PathBuf>, &'static str> {
         if words.is_empty() {
             let here = self.here.clone()?;
-            return Ok(if here == self.start {
+            return Ok(if here == self.start && here == payload_cwd {
                 Vec::new()
             } else {
                 vec![here]
@@ -3554,6 +3557,12 @@ mod tests {
         assert_eq!(
             walked(command, "/w", None),
             vec![(paths(&["/w/child"]), None)]
+        );
+        // The call began in the `cd` target, but the Stop's cwd is elsewhere:
+        // the target is still checked.
+        assert_eq!(
+            walked("cd /h/a && git worktree remove ../x", "/w", Some("/h/a")),
+            vec![(paths(&["/h/a"]), None)]
         );
     }
 
