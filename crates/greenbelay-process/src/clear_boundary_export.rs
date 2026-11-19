@@ -25,8 +25,8 @@ use serde_json::{json, Map, Value};
 use crate::clear_boundary::{
     blocks, boundaries, entry_type, home_from, is_person_prompt, is_sidechain, judge_case,
     pending_from, read_tail_until_at, relais_messages, replay_at_deny, turn_window,
-    window_is_enough, word_after, work_in, Pending, Repositories, State, StopView, Tail,
-    SYMBOLIC_HOME, TAIL_CAP, TAIL_FIRST_CHUNK,
+    window_is_enough, word_after, work_in, NotCleanOf, Pending, Repositories, State, StopView,
+    Tail, SYMBOLIC_HOME, TAIL_CAP, TAIL_FIRST_CHUNK,
 };
 use crate::plan_phases::PhaseFact;
 
@@ -124,8 +124,8 @@ enum Kind {
 /// repository with when it is not the one the row's `repo` shows.
 fn without_directory(reason: &str) -> &str {
     match reason.rsplit_once(" dir=") {
-        Some((head, name)) if !name.contains(' ') => head,
-        _ => reason,
+        Some((head, _)) => head,
+        None => reason,
     }
 }
 
@@ -688,7 +688,7 @@ impl Exporter<'_> {
                 Kind::NotClean(reason) => Repositories::NotClean {
                     directory: PathBuf::new(),
                     reason: reason.clone(),
-                    from_cwd: true,
+                    of: NotCleanOf::PayloadCwd,
                 },
                 Kind::Advised
                 | Kind::Denied
@@ -1968,5 +1968,12 @@ mod tests {
             "cd ~/x && ls ~/y"
         );
         assert_eq!(scrub.text("-C '/Users/me'"), "-C '~'");
+    }
+
+    #[test]
+    fn a_directory_name_with_a_space_round_trips() {
+        let kind = Kind::of("watched", "pending uncommitted changes dir=my dir").expect("a hold");
+        assert_eq!(kind, Kind::NotClean("uncommitted changes".to_string()));
+        assert!(kind.matches_reason("pending uncommitted changes dir=my dir"));
     }
 }
