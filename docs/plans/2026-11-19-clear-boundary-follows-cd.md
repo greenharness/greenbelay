@@ -11,7 +11,7 @@ plan-id: p-01M7RG48JK13S5NB12126MYKRH
 ## Review panel
 
 👉 **Decide:** none — approve if following a chained `cd` and literal `NAME=` assignments is worth one new journal row.
-📍 amont-agent, decisions · Phase 1 built, backtest 385/393 (98%) · next: corpus check, pilots, PR. Panel: backend, lang:rust, tui, unix (opus), codex.
+📍 amont-agent, decisions · Phase 1 done, backtest 394/404 (97.5%) · next: merge, then Phase 2 on or after 2026-11-25. Panel: backend, lang:rust, tui, unix (opus), codex.
 **Changed by review:** the walk starts at the call's own cwd; conditional and compound assignments go Unknown; redirects, unassigned names and `dir=` holds handled.
 **Verdicts:** 4 approve-with-changes; codex rework (3 high applied), then backend approve-with-changes; 6 carried; words 1428 → 2369 (×1.66, high findings exempt); remove 0, merge 0. Delta 1 (first backtest 93.9%, below the bar): backend approve-with-changes twice, 4 applied, 3 carried.
 📄 Full reviews: [2026-11-19-clear-boundary-follows-cd.reviews.md](2026-11-19-clear-boundary-follows-cd.reviews.md)
@@ -84,7 +84,7 @@ unresolved <shape> <what>` journal row. `<shape>` is one of `subshell`,
 
 ## Phases
 
-### Phase 1: walk the command in order
+### Phase 1: walk the command in order (done 2026-11-19)
 
 In `crates/greenbelay-process/src/clear_boundary.rs`:
 
@@ -274,14 +274,45 @@ against `origin/main`:
   Recorded in t23.
 - In the same 7 days, list every hold whose `dir=` is not the cwd's top, with the call's tool result. Expected: no hold from an `&& NAME=` follow whose list head failed; one returns unbound follows to `Unknown` (`conditional`).
 
+## Verification record (Phase 1, 2026-11-19)
+
+| Check | Input | Expected | Observed |
+|---|---|---|---|
+| Phase 1 table | `cargo test -p greenbelay-process` | red on the stub, green after | red 4/4 at 5469f4e0 (`#[ignore]`d to commit), green at 899addac with every row unchanged |
+| Backtest (ADR-0060) | boundary-shapes.py rows to 2026-11-18, branch `boundaries()` with entry cwd and the cwd after the call | ≥95% of the followable boundaries the rule sees, today's dirs kept | before Delta 1: 369/393 (93.9%), held; after Delta 1: 385/393; final tree: 394/404 (97.5%), 846/846 kept. The 8–10 misses: exporter ground-truth errors where the branch checks the right repository (`cd ~/Perso && L=amont-agent`, `LIVE=../decisions`, a commit inside a heredoc written to a script) and `cd-or` rows, journalled |
+| Corpus | `greenbelay corpus check`, branch binary | every Stop case agrees | `clear-at-boundary 20 reviewed (11 negative), precision 100%`, on 01964700 and on 899addac |
+| Replay 4526105a | its exported Stop, branch `boundaries()`, home `~` | `~/Developer/Perso/decisions`, no `$LIVE` | `dirs=["~/Developer/Perso/decisions"]`, resolved |
+| Pilot, dirty | scratch HOME at deny, `cd <probe> && git worktree remove ../x`, cwd elsewhere, probe modified | held, no Continue | no output; journal `pending uncommitted changes dir=probe`; pending dirs `[…/probe]` |
+| Pilot, clean | same, probe committed and pushed | Continue | `{"decision":"block",…}`, journal `denied worktree remove` |
+| Pilot, subshell | `(cd <probe> && git worktree remove ../z)` | one `unresolved subshell` row | `watched … unresolved subshell worktree remove`, then the decision as without it |
+| Control | installed 6.5.0, dirty pilot | the bug: a Continue | `{"decision":"block",…}` |
+
+The fix to `here` (08ba504b) and the review fixes also widen what is
+checked: 9 already-correct calls gain their entry cwd (a call with no `cd`
+that began outside the Stop's cwd), and reading a heredoc body raw finds
+67 real `docs(plan)` commits after an apostrophe-bearing heredoc that the
+quote parser used to swallow.
+
+## Implementation review
+
+- implementation-review (opus): round 1 approve-with-changes, 3 flag arguments, a weak name, a test (fixed); delta approve; 49k + 50k, 26 s + 40 s.
+- backend (opus): round 1 4 fixed (idempotent row, own boundary, absolute entry cwd, `dir=` with a space); delta 2 lows to the inbox (row at the cap, `command -v`); 77k + 46k.
+- lang:rust (opus): round 1 5 fixed (`Shape` enum, dead branch, `NotCleanOf`, idioms); delta 5 lows to the inbox; 72k + 46k.
+- unix (opus): round 1 4 fixed (comments, pushd/builtin/eval, raw heredoc body, `|| exit`); delta `|| return` deliberate: zsh exits on a top-level `return` (checked), the Bash tool runs zsh; 72k + 46k.
+- tui (opus): `while`/`until` → keyword fixed; deliberate: the row counts as `watched` and `dir=` is the basename (both planned), `read` stays `loop-var`, the row keeps its machine form for the measure; 67k + 45k.
+
 ## Decision log
 
 - Release after 2026-11-25, so that t22 counts the holds of one rule
   version (t23 Resolution, decisions#258).
+- 2026-11-19, implementation: a heredoc body is read raw, so `classify`
+  no longer sees a `docs(plan)` line written into a file by a heredoc (1
+  backtest call), and sees the boundaries after an apostrophe-bearing body
+  (67 calls). Both are more correct than "as today".
 - Delta 1 (2026-11-19, after the first backtest): an `&& NAME=` with no
   earlier binding keeps its value (it only adds a check); a new
   `conditional` shape; with no `-C`, `here` is checked unless it is also
   the payload cwd; the bar restated as a share of the boundaries the rule
   sees.
 
-<!-- panel: repos=amont-agent,decisions adds= reviewers=backend,lang:rust,tui,unix body-sha=d6b672196a41 -->
+<!-- panel: repos=amont-agent,decisions adds= reviewers=backend,lang:rust,tui,unix body-sha=c77bf067a21d -->
