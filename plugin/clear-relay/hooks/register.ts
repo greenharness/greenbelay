@@ -39,9 +39,17 @@ type RelayFailure =
   | { kind: 'stay-unregistered'; detail: string }
   | { kind: 'threw'; detail: string }
 
+// A handoff prompt that names one programme ticket (ADR-0078):
+// `resume <repo> <programme> <ticket>: <gist>`.
+const NAMED = /^resume (\S+) (\S+) (\S+):/
+
+/** The ticket a submitted prompt names; `null` for any other prompt. */
+type Named = { repo: string; programme: string; ticket: string } | null
+
 /** One line of the relay's log. A failure carries the prompt, so it can be pasted from the log. */
 type LogEntry =
-  | { event: 'arm' | 'clear' | 'submit' }
+  | { event: 'arm' | 'clear' }
+  | { event: 'submit'; named: Named }
   | { event: 'disarm'; cause: DisarmCause }
   | { event: 'failure'; failure: RelayFailure; prompt: string }
 
@@ -72,6 +80,18 @@ function handoffPrompt(answer: string): string | undefined {
     prompt.length <= MAX_PROMPT_CHARS
     ? prompt
     : undefined
+}
+
+/**
+ * The ticket the prompt names, recorded so a count can tell a relay that named
+ * one ticket from an open-ended one. Recorded only: nothing is refused on it.
+ */
+function namedTicket(prompt: string): Named {
+  const match = NAMED.exec(prompt)
+  const [repo, programme, ticket] = [match?.[1], match?.[2], match?.[3]]
+  return repo !== undefined && programme !== undefined && ticket !== undefined
+    ? { repo, programme, ticket }
+    : null
 }
 
 function shown(prompt: string): string {
@@ -217,7 +237,7 @@ async function fire($: Engine, relayer: Relayer): Promise<void> {
     }
     relayer.state = { kind: 'idle' }
     $.ui.status(undefined)
-    await log($, relayer, relay, { event: 'submit' })
+    await log($, relayer, relay, { event: 'submit', named: namedTicket(relay.prompt) })
   } catch (error) {
     await fail($, relayer, relay, { kind: 'threw', detail: String(error) })
   }
