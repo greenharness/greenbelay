@@ -120,9 +120,19 @@ enum Kind {
     NotClean(String),
 }
 
+/// A not-clean reason without the ` dir=<name>` suffix a hold names its
+/// repository with when it is not the one the row's `repo` shows.
+fn without_directory(reason: &str) -> &str {
+    match reason.rsplit_once(" dir=") {
+        Some((head, name)) if !name.contains(' ') => head,
+        _ => reason,
+    }
+}
+
 impl Kind {
     fn of(outcome: &str, body: &str) -> Option<Kind> {
         match (outcome, body) {
+            ("watched", _) if body.starts_with("unresolved ") => None,
             ("advised", _) => Some(Kind::Advised),
             ("denied", _) => Some(Kind::Denied),
             ("watched", "pending-work") => Some(Kind::PendingWork),
@@ -130,7 +140,7 @@ impl Kind {
             ("watched", _) if body.starts_with("pending relais") => Some(Kind::PendingRelais),
             ("watched", _) => body
                 .strip_prefix("pending ")
-                .map(|reason| Kind::NotClean(reason.to_string())),
+                .map(|reason| Kind::NotClean(without_directory(reason).to_string())),
             _ => None,
         }
     }
@@ -165,7 +175,7 @@ impl Kind {
             Kind::PendingWork => reason == "pending-work",
             Kind::PendingBackground => reason == "pending background",
             Kind::PendingRelais => reason.starts_with("pending relais"),
-            Kind::NotClean(why) => reason == format!("pending {why}"),
+            Kind::NotClean(why) => without_directory(reason) == format!("pending {why}"),
         }
     }
 }
@@ -678,6 +688,7 @@ impl Exporter<'_> {
                 Kind::NotClean(reason) => Repositories::NotClean {
                     directory: PathBuf::new(),
                     reason: reason.clone(),
+                    from_cwd: true,
                 },
                 Kind::Advised
                 | Kind::Denied
@@ -745,6 +756,7 @@ impl Exporter<'_> {
                     "uuid": pending.uuid,
                     "command": self.scrub.command(&pending.command),
                     "what": pending.what,
+                    "unresolved": pending.unresolved,
                     "dirs": pending
                         .dirs
                         .iter()
@@ -962,6 +974,9 @@ impl Exporter<'_> {
             if let Some(value) = entry[flag].as_bool() {
                 trimmed.insert(flag.to_string(), json!(value));
             }
+        }
+        if let Some(cwd) = entry["cwd"].as_str() {
+            trimmed.insert("cwd".to_string(), json!(self.scrub.text(cwd)));
         }
         let mut message = Map::new();
         if kind == "assistant" {
@@ -1904,6 +1919,43 @@ mod tests {
         let report = export(&options);
         assert_eq!(report.written, 1);
         assert!(world.options.out.join("abcd1234-1794960490.json").exists());
+    }
+
+    #[test]
+    fn the_exported_window_keeps_each_entrys_cwd_scrubbed_of_home() {
+        let world = World::new(
+            "entry-cwd",
+            &boundary_turn(),
+            &[line(1_794_960_484, "advised", "worktree remove uuid=b1")],
+        );
+        export(&world.options);
+        let fixture = world.fixture("abcd1234-1794960484");
+        let boundary_entry = fixture["entries"]
+            .as_array()
+            .and_then(|entries| entries.iter().find(|entry| entry["uuid"] == json!("b1")))
+            .expect("the Bash entry is kept");
+        assert_eq!(boundary_entry["cwd"], json!("~/work"));
+    }
+
+    #[test]
+    fn a_hold_naming_its_directory_matches_the_replay_reason() {
+        let kind = Kind::of("watched", "pending uncommitted changes dir=wt");
+        assert_eq!(
+            kind,
+            Some(Kind::NotClean("uncommitted changes".to_string()))
+        );
+        let kind = kind.expect("a hold");
+        assert!(kind.matches_reason("pending uncommitted changes"));
+        assert!(kind.matches_reason("pending uncommitted changes dir=wt"));
+        assert!(!kind.matches_reason("pending unpushed commits outside docs/plans/"));
+    }
+
+    #[test]
+    fn an_unresolved_row_is_no_kind_of_stop() {
+        assert_eq!(
+            Kind::of("watched", "unresolved subshell worktree remove"),
+            None
+        );
     }
 
     #[test]

@@ -285,7 +285,10 @@ pub struct Boundary {
 }
 
 /// The boundary commands among the Bash tool calls of the window. `home`
-/// resolves a `-C` directory written from `~` or `$HOME`.
+/// resolves a `-C` directory written from `~` or `$HOME`. A call's commands
+/// are walked in order from the `cwd` of the entry carrying it (the payload
+/// `cwd` when the entry has none), so a chained `cd` and a `NAME=` set in the
+/// same command choose the directory a boundary acted on.
 pub fn boundaries(window: &TurnWindow<'_>, cwd: &Path, home: Option<&Path>) -> Vec<Boundary> {
     let mut found = Vec::new();
     for entry in window
@@ -293,6 +296,9 @@ pub fn boundaries(window: &TurnWindow<'_>, cwd: &Path, home: Option<&Path>) -> V
         .iter()
         .filter(|entry| entry_type(entry) == "assistant" && !is_sidechain(entry))
     {
+        let start = entry["cwd"]
+            .as_str()
+            .map_or_else(|| cwd.to_path_buf(), PathBuf::from);
         for block in blocks(entry) {
             if block["type"].as_str() != Some("tool_use") || block["name"].as_str() != Some("Bash")
             {
@@ -301,14 +307,15 @@ pub fn boundaries(window: &TurnWindow<'_>, cwd: &Path, home: Option<&Path>) -> V
             let Some(command) = block.pointer("/input/command").and_then(Value::as_str) else {
                 continue;
             };
-            for segment in shell_words(command) {
-                if let Some((what, dirs)) = classify(&segment, cwd, home) {
+            let mut walk = Walk::new(start.clone());
+            for step in walk_steps(command) {
+                if let Some((what, dirs, unresolved)) = walk.step(&step, cwd, home) {
                     found.push(Boundary {
                         what: what.to_string(),
                         uuid: entry["uuid"].as_str().unwrap_or("").to_string(),
                         command: command.to_string(),
                         dirs,
-                        unresolved: None,
+                        unresolved,
                     });
                 }
             }
@@ -344,81 +351,189 @@ impl Word {
     }
 }
 
+/// What ended a simple command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Operator {
+    /// `;`, a newline or the end of the command.
+    Sequence,
+    And,
+    Or,
+    /// `|` and zsh's `|&`.
+    Pipe,
+    /// A lone `&`.
+    Background,
+}
+
+/// One simple command, the operator that ended it, and whether it is text
+/// that sets no shell state: a heredoc body line, which the shell reads as
+/// data.
+#[derive(Debug, Clone)]
+struct Step {
+    words: Vec<Word>,
+    end: Operator,
+    heredoc_body: bool,
+}
+
 /// Split a shell command into simple commands of words, honouring quotes:
 /// `;`, `&`, `|` and newlines end a command.
 fn segments(command: &str) -> Vec<Vec<String>> {
-    shell_words(command)
+    walk_steps(command)
         .into_iter()
-        .map(|words| words.into_iter().map(|word| word.text).collect())
+        .map(|step| step.words.into_iter().map(|word| word.text).collect())
         .collect()
 }
 
-/// [`segments`], each word keeping how its characters were quoted.
-fn shell_words(command: &str) -> Vec<Vec<Word>> {
-    let mut all: Vec<Vec<Word>> = Vec::new();
-    let mut words: Vec<Word> = Vec::new();
-    let mut word = Word::default();
-    let mut in_word = false;
-    let mut chars = command.chars();
-    while let Some(c) = chars.next() {
+/// The heredoc delimiters a simple command opens (`<<EOF`, `<<- 'EOF'`).
+fn heredoc_delimiters(words: &[Word]) -> Vec<String> {
+    let mut delimiters = Vec::new();
+    for (at, word) in words.iter().enumerate() {
+        if word.quoting.first() != Some(&Quoting::Bare)
+            || !word.text.starts_with("<<")
+            || word.text.starts_with("<<<")
+        {
+            continue;
+        }
+        let rest = word.text[2..].trim_start_matches('-');
+        let delimiter = if rest.is_empty() {
+            words.get(at + 1).map(|next| next.text.clone())
+        } else {
+            Some(rest.to_string())
+        };
+        delimiters.extend(delimiter);
+    }
+    delimiters
+}
+
+/// The words being read and the steps already read.
+#[derive(Default)]
+struct StepReader {
+    steps: Vec<Step>,
+    words: Vec<Word>,
+    word: Word,
+    in_word: bool,
+    delimiters_pending: std::collections::VecDeque<String>,
+    heredoc_delimiter: Option<String>,
+}
+
+impl StepReader {
+    fn end_word(&mut self) {
+        if self.in_word {
+            self.words.push(std::mem::take(&mut self.word));
+            self.in_word = false;
+        }
+    }
+
+    fn end_step(&mut self, end: Operator) {
+        self.end_word();
+        if self.words.is_empty() {
+            return;
+        }
+        let heredoc_body = self.heredoc_delimiter.is_some();
+        let words = std::mem::take(&mut self.words);
+        if !heredoc_body {
+            self.delimiters_pending.extend(heredoc_delimiters(&words));
+        }
+        self.steps.push(Step {
+            words,
+            end,
+            heredoc_body,
+        });
+    }
+
+    /// At a newline ending `line`: the delimiter line closes a heredoc body,
+    /// and the next pending heredoc's body starts.
+    fn end_line(&mut self, line: &str) {
+        if self
+            .heredoc_delimiter
+            .as_deref()
+            .is_some_and(|delimiter| line.trim_start_matches('\t') == delimiter)
+        {
+            self.heredoc_delimiter = None;
+        }
+        if self.heredoc_delimiter.is_none() {
+            self.heredoc_delimiter = self.delimiters_pending.pop_front();
+        }
+    }
+}
+
+/// [`segments`], each word keeping how its characters were quoted, with the
+/// operator that ended it.
+fn walk_steps(command: &str) -> Vec<Step> {
+    let mut reader = StepReader::default();
+    let mut chars = command.char_indices().peekable();
+    while let Some((at, c)) = chars.next() {
         match c {
             '\'' => {
-                in_word = true;
-                for inner in chars.by_ref() {
+                reader.in_word = true;
+                for (_, inner) in chars.by_ref() {
                     if inner == '\'' {
                         break;
                     }
-                    word.push(inner, Quoting::Single);
+                    reader.word.push(inner, Quoting::Single);
                 }
             }
             '"' => {
-                in_word = true;
-                while let Some(inner) = chars.next() {
+                reader.in_word = true;
+                while let Some((_, inner)) = chars.next() {
                     match inner {
                         '"' => break,
                         '\\' => {
-                            if let Some(next) = chars.next() {
-                                word.push(next, Quoting::Escaped);
+                            if let Some((_, next)) = chars.next() {
+                                reader.word.push(next, Quoting::Escaped);
                             }
                         }
-                        other => word.push(other, Quoting::Double),
+                        other => reader.word.push(other, Quoting::Double),
                     }
                 }
             }
             '\\' => {
-                in_word = true;
-                if let Some(next) = chars.next() {
-                    word.push(next, Quoting::Escaped);
+                reader.in_word = true;
+                if let Some((_, next)) = chars.next() {
+                    reader.word.push(next, Quoting::Escaped);
                 }
             }
-            ';' | '&' | '|' | '\n' => {
-                if in_word {
-                    words.push(std::mem::take(&mut word));
-                    in_word = false;
-                }
-                if !words.is_empty() {
-                    all.push(std::mem::take(&mut words));
+            ';' => reader.end_step(Operator::Sequence),
+            '\n' => {
+                reader.end_step(Operator::Sequence);
+                let line_start = command[..at].rfind('\n').map_or(0, |newline| newline + 1);
+                reader.end_line(&command[line_start..at]);
+            }
+            '&' => {
+                let after_redirect = reader.in_word
+                    && reader.word.quoting.last() == Some(&Quoting::Bare)
+                    && (reader.word.text.ends_with('>') || reader.word.text.ends_with('<'));
+                match chars.peek().map(|&(_, next)| next) {
+                    Some('&') => {
+                        chars.next();
+                        reader.end_step(Operator::And);
+                    }
+                    next if after_redirect || next == Some('>') => {
+                        reader.in_word = true;
+                        reader.word.push('&', Quoting::Bare);
+                    }
+                    _ => reader.end_step(Operator::Background),
                 }
             }
-            c if c.is_whitespace() => {
-                if in_word {
-                    words.push(std::mem::take(&mut word));
-                    in_word = false;
+            '|' => match chars.peek().map(|&(_, next)| next) {
+                Some('|') => {
+                    chars.next();
+                    reader.end_step(Operator::Or);
                 }
-            }
+                Some('&') => {
+                    chars.next();
+                    reader.end_step(Operator::Pipe);
+                }
+                _ => reader.end_step(Operator::Pipe),
+            },
+            c if c.is_whitespace() => reader.end_word(),
             other => {
-                in_word = true;
-                word.push(other, Quoting::Bare);
+                reader.in_word = true;
+                reader.word.push(other, Quoting::Bare);
             }
         }
     }
-    if in_word {
-        words.push(word);
-    }
-    if !words.is_empty() {
-        all.push(words);
-    }
-    all
+    reader.end_step(Operator::Sequence);
+    reader.steps
 }
 
 /// What follows a leading home reference the shell expands: `~`, `$HOME` or
@@ -543,28 +658,465 @@ fn chain(cwd: &Path, home: Option<&Path>, directories: &[&Word]) -> Vec<PathBuf>
     })]
 }
 
+/// What a shell variable holds at a point of the command.
+#[derive(Debug, Clone)]
+enum Binding {
+    Known(Expanded),
+    /// Set to something the walk does not read; the shape says why.
+    Unknown(&'static str),
+}
+
+/// A word with its variables replaced. `rooted` is whether it names an
+/// absolute location: it starts with `/`, or with home (which is `~` in a
+/// replay).
+#[derive(Debug, Clone)]
+struct Expanded {
+    text: String,
+    rooted: bool,
+}
+
+impl Expanded {
+    fn path(&self, base: Result<&Path, &'static str>) -> Result<PathBuf, &'static str> {
+        if self.rooted || self.text.starts_with('/') {
+            Ok(fold(Path::new(&self.text)))
+        } else {
+            Ok(resolve(base?, &self.text))
+        }
+    }
+}
+
+/// The shell state a Bash call's simple commands leave behind, in order:
+/// the directory it is in and the variables it set. A state the walk cannot
+/// read is `Err`/`Unknown` with the shape that says why.
+struct Walk {
+    start: PathBuf,
+    here: Result<PathBuf, &'static str>,
+    vars: BTreeMap<String, Binding>,
+    /// The shape of each compound command (`if`, `for`, `{`…) still open.
+    compounds: Vec<&'static str>,
+    /// Depth of `$(` opened in an earlier simple command and not yet closed.
+    substitution_depth: usize,
+    previous: Option<Operator>,
+    /// Names set after a `&&`/`||` in the current list.
+    conditional_names: Vec<String>,
+    conditional_cd: bool,
+}
+
+fn keyword(word: &Word) -> Option<&str> {
+    word.quoting
+        .iter()
+        .all(|quoting| *quoting == Quoting::Bare)
+        .then_some(word.text.as_str())
+}
+
+fn is_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// `NAME=value`, the name bare, with the value as a word.
+fn assignment(word: &Word) -> Option<(&str, Word)> {
+    let equals = word.text.find('=')?;
+    let name = &word.text[..equals];
+    (is_identifier(name) && word.quoting[..equals].iter().all(|q| *q == Quoting::Bare)).then(|| {
+        (
+            name,
+            Word {
+                text: word.text[equals + 1..].to_string(),
+                quoting: word.quoting[equals + 1..].to_vec(),
+            },
+        )
+    })
+}
+
+/// Whether the value holds a command substitution the shell would run.
+fn substitutes(value: &Word) -> bool {
+    let live = |at: usize| value.quoting.get(at).is_some_and(|q| *q != Quoting::Single);
+    value
+        .text
+        .char_indices()
+        .enumerate()
+        .any(|(at, (byte, c))| live(at) && (c == '`' || value.text[byte..].starts_with("$(")))
+}
+
+/// A redirect word: `Some(true)` when its target is the next word.
+fn redirect(word: &Word) -> Option<bool> {
+    if word.quoting.first() != Some(&Quoting::Bare) {
+        return None;
+    }
+    let operator = word.text.trim_start_matches(|c: char| c.is_ascii_digit());
+    if !(operator.starts_with('<') || operator.starts_with('>') || operator.starts_with("&>")) {
+        return None;
+    }
+    Some(operator.trim_start_matches(['<', '>', '&']).is_empty())
+}
+
+fn without_redirects(words: &[Word]) -> Vec<&Word> {
+    let mut kept = Vec::new();
+    let mut skip_target = false;
+    for word in words {
+        if skip_target {
+            skip_target = false;
+        } else if let Some(takes_next) = redirect(word) {
+            skip_target = takes_next;
+        } else {
+            kept.push(word);
+        }
+    }
+    kept
+}
+
+impl Walk {
+    fn new(start: PathBuf) -> Self {
+        Self {
+            here: Ok(start.clone()),
+            start,
+            vars: BTreeMap::new(),
+            compounds: Vec::new(),
+            substitution_depth: 0,
+            previous: None,
+            conditional_names: Vec::new(),
+            conditional_cd: false,
+        }
+    }
+
+    /// Classify `step` at the current state, then apply its effect.
+    fn step(
+        &mut self,
+        step: &Step,
+        payload_cwd: &Path,
+        home: Option<&Path>,
+    ) -> Option<(&'static str, Vec<PathBuf>, Option<&'static str>)> {
+        let boundary = classify(&step.words, self, payload_cwd, home);
+        if !step.heredoc_body && self.substitution_depth == 0 {
+            self.apply(step, home);
+        }
+        self.track_substitutions(&step.words);
+        if !matches!(step.end, Operator::And | Operator::Or) {
+            self.end_list();
+        }
+        self.previous = Some(step.end);
+        boundary
+    }
+
+    fn track_substitutions(&mut self, words: &[Word]) {
+        for word in words {
+            let chars: Vec<char> = word.text.chars().collect();
+            for (at, c) in chars.iter().enumerate() {
+                if word.quoting[at] == Quoting::Single {
+                    continue;
+                }
+                if *c == '$' && chars.get(at + 1) == Some(&'(') {
+                    self.substitution_depth += 1;
+                } else if *c == ')' {
+                    self.substitution_depth = self.substitution_depth.saturating_sub(1);
+                }
+            }
+        }
+    }
+
+    /// A `&&`/`||` list ended: what its later commands set may not have run.
+    fn end_list(&mut self) {
+        for name in std::mem::take(&mut self.conditional_names) {
+            self.vars.insert(name, Binding::Unknown("not-literal"));
+        }
+        if std::mem::take(&mut self.conditional_cd) && self.here != Err("subshell") {
+            self.here = Err("cd-or");
+        }
+    }
+
+    fn compound_shape(&self) -> Option<&'static str> {
+        self.compounds.last().copied()
+    }
+
+    fn bind(&mut self, name: &str, binding: Binding, conditional: bool) {
+        if conditional {
+            self.conditional_names.push(name.to_string());
+        }
+        self.vars.insert(name.to_string(), binding);
+    }
+
+    fn apply(&mut self, step: &Step, home: Option<&Path>) {
+        let conditional = matches!(self.previous, Some(Operator::And | Operator::Or));
+        let in_pipeline = self.previous == Some(Operator::Pipe)
+            || matches!(step.end, Operator::Pipe | Operator::Background);
+        let mut words = step.words.as_slice();
+        while let Some(first) = words.first() {
+            match keyword(first) {
+                Some("then" | "do" | "else" | "elif") => {}
+                Some("{" | "if") => self.compounds.push("keyword"),
+                Some("while" | "until") => self.compounds.push("loop-var"),
+                Some("for" | "select") => {
+                    self.compounds.push("loop-var");
+                    if let Some(name) = words.get(1).filter(|word| is_identifier(&word.text)) {
+                        self.bind(&name.text, Binding::Unknown("loop-var"), false);
+                    }
+                    return;
+                }
+                Some("case") => {
+                    self.compounds.push("keyword");
+                    return;
+                }
+                Some("done" | "fi" | "esac" | "}") => {
+                    self.compounds.pop();
+                }
+                _ => break,
+            }
+            words = &words[1..];
+        }
+        let Some(opening) = words.first() else { return };
+        if opening.quoting.first() == Some(&Quoting::Bare) && opening.text.starts_with('(') {
+            self.here = Err("subshell");
+            return;
+        }
+        let words = without_redirects(words);
+        let leading = words
+            .iter()
+            .take_while(|word| assignment(word).is_some())
+            .count();
+        let only_assignments = leading == words.len();
+        for (name, value) in words[..leading].iter().filter_map(|word| assignment(word)) {
+            let binding = if substitutes(&value) {
+                Binding::Unknown("command-subst")
+            } else if !only_assignments {
+                continue;
+            } else if let Some(shape) = self.compound_shape() {
+                Binding::Unknown(shape)
+            } else if in_pipeline {
+                Binding::Unknown("not-literal")
+            } else {
+                match self.expand(&value, home) {
+                    Ok(expanded) => Binding::Known(expanded),
+                    Err(shape) => Binding::Unknown(shape),
+                }
+            };
+            self.bind(name, binding, conditional);
+        }
+        let Some(first) = words.get(leading) else {
+            return;
+        };
+        let words = &words[leading..];
+        match keyword(first) {
+            Some("export" | "local" | "readonly" | "declare" | "typeset") => {
+                for word in &words[1..] {
+                    let name = word.text.split('=').next().unwrap_or("");
+                    if is_identifier(name) {
+                        self.bind(name, Binding::Unknown("export"), conditional);
+                    }
+                }
+            }
+            Some("read") => {
+                for word in words[1..].iter().filter(|word| is_identifier(&word.text)) {
+                    self.bind(&word.text, Binding::Unknown("loop-var"), conditional);
+                }
+            }
+            Some("cd") => {
+                self.change_directory(&words[1..], step.end, in_pipeline, conditional, home)
+            }
+            _ => {}
+        }
+    }
+
+    fn change_directory(
+        &mut self,
+        arguments: &[&Word],
+        end: Operator,
+        in_pipeline: bool,
+        conditional: bool,
+        home: Option<&Path>,
+    ) {
+        if self.here == Err("subshell") {
+            return;
+        }
+        let target = self.cd_target(arguments, home);
+        self.here = if let Some(shape) = self.compound_shape() {
+            Err(shape)
+        } else if in_pipeline {
+            Err("cd-piped")
+        } else if end == Operator::Or {
+            Err("cd-or")
+        } else {
+            target
+        };
+        if conditional {
+            self.conditional_cd = true;
+        }
+    }
+
+    fn cd_target(&self, arguments: &[&Word], home: Option<&Path>) -> Result<PathBuf, &'static str> {
+        let word = match arguments {
+            [] => return home.map(fold).ok_or("not-literal"),
+            [word] => word,
+            _ => return Err("not-literal"),
+        };
+        if word.text == "-" {
+            return Err("cd-dash");
+        }
+        if word.text.starts_with('-') || word.text.starts_with('+') {
+            return Err("not-literal");
+        }
+        let expanded = self.expand(word, home)?;
+        let relative_ok = expanded.text == "."
+            || expanded.text == ".."
+            || expanded.text.starts_with("./")
+            || expanded.text.starts_with("../");
+        if !(expanded.rooted || expanded.text.starts_with('/') || relative_ok) {
+            return Err("not-literal");
+        }
+        expanded.path(self.here.as_deref().map_err(|shape| *shape))
+    }
+
+    /// A word's text with its leading home or `$NAME` replaced, or the shape
+    /// that keeps it from being read. A `$` anywhere else, a backtick, an
+    /// unquoted glob character or a `~` that is not home is not read.
+    fn expand(&self, word: &Word, home: Option<&Path>) -> Result<Expanded, &'static str> {
+        let live = |at: usize| word.quoting.get(at).is_some_and(|q| *q != Quoting::Single);
+        let bare = |at: usize| word.quoting.get(at) == Some(&Quoting::Bare);
+        let (prefix, rest_at) = if let Some(suffix) = home_suffix(word) {
+            let rest_at = word.text.len() - suffix.len();
+            match home {
+                Some(home) => (
+                    Some(Expanded {
+                        text: home.to_string_lossy().into_owned(),
+                        rooted: true,
+                    }),
+                    rest_at,
+                ),
+                None => (None, 0),
+            }
+        } else if live(0) && word.text.starts_with('$') && bare_or_double(word, 0) {
+            let (name, end) = variable_name(&word.text).ok_or("not-literal")?;
+            if !matches!(word.text[end..].chars().next(), None | Some('/')) {
+                return Err("not-literal");
+            }
+            match self.vars.get(name) {
+                Some(Binding::Known(value)) => (Some(value.clone()), end),
+                Some(Binding::Unknown(shape)) => return Err(shape),
+                None => return Err("unassigned"),
+            }
+        } else {
+            (None, 0)
+        };
+        let mut text = prefix.as_ref().map_or_else(String::new, |p| p.text.clone());
+        for (at, c) in word
+            .text
+            .char_indices()
+            .skip_while(|(byte, _)| *byte < rest_at)
+        {
+            let char_at = word.text[..at].chars().count();
+            if live(char_at) && c == '`' {
+                return Err("command-subst");
+            }
+            if live(char_at) && c == '$' {
+                let substitution = word.text[at..].starts_with("$(");
+                return Err(if substitution {
+                    "command-subst"
+                } else {
+                    "not-literal"
+                });
+            }
+            let globbing = matches!(c, '*' | '?' | '[' | '{');
+            if bare(char_at) && (globbing || (char_at == 0 && matches!(c, '~' | '='))) {
+                return Err("not-literal");
+            }
+            text.push(c);
+        }
+        let rooted = prefix.as_ref().is_some_and(|p| p.rooted);
+        if home_suffix(word).is_some() && home.is_none() {
+            return Ok(Expanded {
+                text: word.text.clone(),
+                rooted: false,
+            });
+        }
+        Ok(Expanded { text, rooted })
+    }
+
+    /// The directories of a boundary's `-C` words, or, with none, of the
+    /// directory the walk reached; `unresolved` is the shape that kept it
+    /// from reading them, in which case the dirs are the payload `cwd`'s.
+    fn directories(
+        &self,
+        payload_cwd: &Path,
+        home: Option<&Path>,
+        words: &[&Word],
+    ) -> (Vec<PathBuf>, Option<&'static str>) {
+        match self.resolve_directories(home, words) {
+            Ok(dirs) => (dirs, None),
+            Err(shape) => (chain(payload_cwd, home, words), Some(shape)),
+        }
+    }
+
+    fn resolve_directories(
+        &self,
+        home: Option<&Path>,
+        words: &[&Word],
+    ) -> Result<Vec<PathBuf>, &'static str> {
+        if words.is_empty() {
+            let here = self.here.clone()?;
+            return Ok(if here == self.start {
+                Vec::new()
+            } else {
+                vec![here]
+            });
+        }
+        let mut base = self.here.clone();
+        for word in words {
+            let expanded = self.expand(word, home)?;
+            base = Ok(expanded.path(base.as_deref().map_err(|shape| *shape))?);
+        }
+        Ok(vec![base?])
+    }
+}
+
+fn bare_or_double(word: &Word, at: usize) -> bool {
+    matches!(word.quoting.get(at), Some(Quoting::Bare | Quoting::Double))
+}
+
+/// The name in a leading `$NAME` or `${NAME}`, and where it ends.
+fn variable_name(text: &str) -> Option<(&str, usize)> {
+    if let Some(braced) = text.strip_prefix("${") {
+        let close = braced.find('}')?;
+        let name = &braced[..close];
+        return is_identifier(name).then_some((name, close + 3));
+    }
+    let after = &text[1..];
+    let length = after
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(after.len());
+    let name = &after[..length];
+    is_identifier(name).then_some((name, length + 1))
+}
+
 fn classify(
     words: &[Word],
+    walk: &Walk,
     cwd: &Path,
     home: Option<&Path>,
-) -> Option<(&'static str, Vec<PathBuf>)> {
+) -> Option<(&'static str, Vec<PathBuf>, Option<&'static str>)> {
     let texts: Vec<String> = words.iter().map(|word| word.text.clone()).collect();
     if texts.iter().any(|word| base_name(word) == "sweep.py")
         && texts.iter().any(|word| word == "--apply")
     {
-        return Some(("sweep.py --apply", Vec::new()));
+        return Some(("sweep.py --apply", Vec::new(), None));
     }
     let call = git_call(&texts)?;
     let directories: Vec<&Word> = call.directories.iter().map(|&at| &words[at]).collect();
+    let boundary = |what: &'static str| {
+        let (dirs, unresolved) = walk.directories(cwd, home, &directories);
+        (what, dirs, unresolved)
+    };
     match call.subcommand {
         "worktree" => {
             let verb = call.rest.iter().find(|word| !word.starts_with('-'))?;
-            (verb == "remove").then(|| ("worktree remove", chain(cwd, home, &directories)))
+            (verb == "remove").then(|| boundary("worktree remove"))
         }
         "commit" => {
             let subject = commit_subject(call.rest)?;
             (subject.starts_with("docs(plan): ") && !is_closing_plan_commit(&subject))
-                .then(|| ("plan commit", chain(cwd, home, &directories)))
+                .then(|| boundary("plan commit"))
         }
         _ => None,
     }
@@ -753,12 +1305,13 @@ pub fn relais_flight(entries: &[Value]) -> RelaisFlight {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Repositories {
     /// Every checked repository is clean, with its HEAD (empty when unborn).
-    Clean {
-        heads: Vec<(PathBuf, String)>,
-    },
+    Clean { heads: Vec<(PathBuf, String)> },
     NotClean {
         directory: PathBuf,
         reason: String,
+        /// The directory is the payload `cwd`'s repository, which a journal
+        /// row's `repo` already names.
+        from_cwd: bool,
     },
     /// The shared deadline passed.
     TimedOut,
@@ -791,9 +1344,11 @@ pub fn check_repositories(
     deadline: Instant,
 ) -> Repositories {
     let mut heads: Vec<(PathBuf, String)> = Vec::new();
-    for directory in cwd
+    let from_cwd_count = usize::from(cwd.is_some());
+    for (at, directory) in cwd
         .into_iter()
         .chain(directories.iter().map(PathBuf::as_path))
+        .enumerate()
     {
         if !directory.is_dir() {
             continue;
@@ -812,6 +1367,7 @@ pub fn check_repositories(
                 return Repositories::NotClean {
                     directory: top,
                     reason,
+                    from_cwd: at < from_cwd_count,
                 }
             }
             RepoCheck::TimedOut => return Repositories::TimedOut,
@@ -919,6 +1475,8 @@ pub struct Pending {
     pub command: String,
     pub what: String,
     pub dirs: Vec<PathBuf>,
+    /// A boundary the turn reached whose directory the walk could not read.
+    pub unresolved: bool,
 }
 
 /// What a session's state file holds.
@@ -945,6 +1503,7 @@ pub(crate) fn parse_pending(pending_json: &Value) -> Option<Pending> {
             .iter()
             .filter_map(|dir| dir.as_str().map(PathBuf::from))
             .collect(),
+        unresolved: pending_json["unresolved"].as_bool().unwrap_or(false),
     })
 }
 
@@ -988,6 +1547,7 @@ pub(crate) fn render_state(state: &State) -> String {
             "command": pending.command,
             "what": pending.what,
             "dirs": pending.dirs.iter().map(|dir| dir.to_string_lossy()).collect::<Vec<_>>(),
+            "unresolved": pending.unresolved,
         })
     });
     serde_json::json!({
@@ -1386,6 +1946,14 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
                 Candidate::Resumed(pending)
             }
         };
+        if matches!(candidate, Candidate::Own(_)) {
+            let first_unresolved = found
+                .iter()
+                .find_map(|boundary| boundary.unresolved.map(|shape| (shape, &boundary.what)));
+            if let Some((shape, what)) = first_unresolved {
+                self.record("watched", &format!("unresolved {shape} {what}"));
+            }
+        }
         if view.background_busy {
             return self.hold(&candidate, state, "background");
         }
@@ -1403,7 +1971,17 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
         let boundary = candidate.boundary();
         let heads = match repos(&boundary.dirs) {
             Repositories::Clean { heads } => heads,
-            Repositories::NotClean { reason, .. } => return self.hold(&candidate, state, &reason),
+            Repositories::NotClean {
+                reason,
+                directory,
+                from_cwd,
+            } => {
+                let reason = match directory.file_name().filter(|_| !from_cwd) {
+                    Some(name) => format!("{reason} dir={}", name.to_string_lossy()),
+                    None => reason,
+                };
+                return self.hold(&candidate, state, &reason);
+            }
             Repositories::TimedOut => return self.watched("timeout"),
         };
         let key = boundary_key(&boundary.command, &heads);
@@ -1531,6 +2109,7 @@ pub(crate) fn pending_from(found: &[Boundary], boundary: &Boundary) -> Pending {
         command: boundary.command.clone(),
         what: boundary.what.clone(),
         dirs,
+        unresolved: found.iter().any(|boundary| boundary.unresolved.is_some()),
     }
 }
 
@@ -1577,6 +2156,8 @@ struct PendingFixture {
     command: String,
     what: String,
     dirs: Vec<String>,
+    #[serde(default)]
+    unresolved: bool,
 }
 
 #[derive(Deserialize)]
@@ -1679,9 +2260,11 @@ impl FrozenRepositories {
             Self::All(repositories) => return repositories.clone(),
             Self::PerDirectory(map) => map,
         };
-        for directory in cwd
+        let from_cwd_count = usize::from(cwd.is_some());
+        for (at, directory) in cwd
             .into_iter()
             .chain(directories.iter().map(PathBuf::as_path))
+            .enumerate()
         {
             match map.get(directory) {
                 None | Some(DirectoryFact::Clean) => {}
@@ -1690,6 +2273,7 @@ impl FrozenRepositories {
                     return Repositories::NotClean {
                         directory: directory.to_path_buf(),
                         reason: reason.clone(),
+                        from_cwd: at < from_cwd_count,
                     }
                 }
             }
@@ -1738,6 +2322,7 @@ impl TryFrom<StopFixture> for StopInputs {
                 command: pending.command,
                 what: pending.what,
                 dirs: pending.dirs.into_iter().map(PathBuf::from).collect(),
+                unresolved: pending.unresolved,
             }),
         };
         let phase = match fixture.facts.phase {
@@ -1755,6 +2340,7 @@ impl TryFrom<StopFixture> for StopInputs {
                 FrozenRepositories::All(Repositories::NotClean {
                     directory: PathBuf::new(),
                     reason,
+                    from_cwd: true,
                 })
             }
             RepositoriesFixture::PerDirectory(map) => FrozenRepositories::PerDirectory(
@@ -2343,6 +2929,7 @@ mod tests {
                 command: "git worktree remove x".into(),
                 what: "worktree remove".into(),
                 dirs: vec![PathBuf::from("/r")],
+                unresolved: true,
             }),
         };
         assert_eq!(parse_state(&render_state(&state)), Some(state));
@@ -2743,6 +3330,7 @@ mod tests {
                 command: "git -C ~/repo worktree remove x".to_string(),
                 what: "worktree remove".to_string(),
                 dirs: vec![PathBuf::from("/work/~/repo")],
+                unresolved: false,
             }),
             ..State::default()
         };
@@ -2767,6 +3355,65 @@ mod tests {
         // One resume with the old joined path; the next person prompt clears
         // the pending (see `judge`), so no migration is needed.
         assert_eq!(*asked.borrow(), [PathBuf::from("/work/~/repo")]);
+    }
+
+    #[test]
+    fn a_state_file_without_the_unresolved_key_reads_as_resolved() {
+        let text = r#"{"turn":"t","advices":1,"key":"k","pending":{"uuid":"u","command":"git worktree remove x","what":"worktree remove","dirs":["/r"]}}"#;
+        let state = parse_state(text).expect("a state");
+        let pending = state.pending.expect("a pending boundary");
+        assert!(!pending.unresolved);
+        assert_eq!(pending.dirs, [PathBuf::from("/r")]);
+    }
+
+    #[test]
+    fn a_not_clean_hold_names_a_repository_other_than_the_cwds() {
+        let entries = vec![
+            prompt("p1"),
+            with_uuid(
+                assistant(
+                    Some((250_000, 0, 0)),
+                    false,
+                    json!([{"type": "tool_use", "id": "b1", "name": "Bash",
+                            "input": {"command": "git -C /h/wt worktree remove x"}}]),
+                ),
+                "boundary-entry",
+            ),
+        ];
+        let view = StopView {
+            cwd: Some(PathBuf::from("/work")),
+            home: Some(PathBuf::from("/h")),
+            ..StopView::default()
+        };
+        let verdict_for = |from_cwd: bool| {
+            super::decide(
+                &view,
+                &entries,
+                State::default(),
+                || PhaseFact::NoOpenPhase,
+                || Stance::Deny,
+                |_| Repositories::NotClean {
+                    directory: PathBuf::from("/h/wt"),
+                    reason: "uncommitted changes".to_string(),
+                    from_cwd,
+                },
+                |_| true,
+            )
+        };
+        assert_eq!(
+            verdict_for(false).records,
+            [(
+                "watched".to_string(),
+                "pending uncommitted changes dir=wt".to_string()
+            )]
+        );
+        assert_eq!(
+            verdict_for(true).records,
+            [(
+                "watched".to_string(),
+                "pending uncommitted changes".to_string()
+            )]
+        );
     }
 
     /// The 4526105a boundary command (session-boundaries t23): `LIVE` is set
@@ -2801,7 +3448,6 @@ mod tests {
     /// its directory is read, one that does not keeps today's dirs and is
     /// unresolved.
     #[test]
-    #[ignore = "t23: red until the walk lands"]
     fn the_walk_follows_a_chained_cd_and_same_command_assignments() {
         let resolved: &[(&str, &[&str])] = &[
             ("cd /h/repo && git worktree remove ../x", &["/h/repo"]),
@@ -2840,7 +3486,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "t23: red until the walk lands"]
     fn a_shape_the_walk_cannot_read_keeps_todays_dirs_and_is_unresolved() {
         let unresolved: &[(&str, &[&str], &str)] = &[
             (
@@ -2900,7 +3545,6 @@ mod tests {
     /// can already be past the call's own `cd`. Without an entry cwd it
     /// starts at the payload cwd.
     #[test]
-    #[ignore = "t23: red until the walk lands"]
     fn the_walk_starts_at_the_entry_cwd_then_the_payload_cwd() {
         let command = "cd ./child && git worktree remove ../x";
         assert_eq!(
@@ -2916,7 +3560,6 @@ mod tests {
     /// An unresolved own boundary adds one `watched unresolved <shape>
     /// <what>` record, first, and the decision is the one without it.
     #[test]
-    #[ignore = "t23: red until the walk lands"]
     fn an_unresolved_boundary_is_journalled_and_decides_the_same() {
         let entries_for = |command: &str| {
             vec![

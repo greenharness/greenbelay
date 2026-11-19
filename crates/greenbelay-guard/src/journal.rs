@@ -797,6 +797,29 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// An `unresolved <shape> <what>` row of clear-at-boundary is read by its
+    /// outcome field alone, so it counts as one `watched` row, beside the
+    /// Stop's own row.
+    #[test]
+    fn an_unresolved_row_counts_as_one_watched_row() {
+        let dir =
+            std::env::temp_dir().join(format!("greenbelay-unresolved-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir); // a missing scratch dir is the normal case
+        fs::create_dir_all(&dir).expect("scratch dir");
+        let path = dir.join("journal.log");
+        let now = 2_000_000u64;
+        let text = format!(
+            "{FORMAT}\n\
+             F {} clear-at-boundary deny watched sess repo default arm=live unresolved subshell worktree remove\n",
+            now - 1
+        );
+        fs::write(&path, text).expect("write journal");
+        let seen = tally_at(&path, 100_000, now);
+        let rule = &seen["clear-at-boundary"];
+        assert_eq!((rule.watched, rule.total()), (1, 1), "{rule:?}");
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup; a leftover temp dir is harmless
+    }
+
     /// A journal written before the rename keeps its old header and is read
     /// as well as one with the new header.
     #[test]
