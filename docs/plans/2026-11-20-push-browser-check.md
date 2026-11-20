@@ -82,6 +82,12 @@ Today nothing enforces the rule:
 
 The hook fills in the block, the path and the rev it already computed, so a push run with `git -C` or of another branch gets the right tree.
 
+**Corrections at implementation (2026-11-20).** Four things the body above states too loosely, as built:
+- The `browser:` line is matched on its first word: the agent writes `browser: playwright   profile: isolated` on one line, so a whole-line compare would have failed every real report.
+- A `url:` whose page starts with `chrome-error:` or `about:blank` is a navigation that failed, not a page; such a report is not a check.
+- The missing-agent Gap is said at every stance (never held), as the Stance section says; the first build kept it silent under `advise` because five push-preview record tests in `tests/implementation_review.rs` push UI repos with no `browser-check` installed. Those five tests now set this rule to `observe`.
+- An unreadable push shape or unlisted files, under `deny`, are held with "push one branch by name"; an unreadable transcript is held with the `tree-sha --block` line alone. The "missing" advice says "no browser check in this session carried this tree's TREE line", since the transcript cannot tell no check from a check whose brief had no block.
+
 ## Changes
 
 ### Repo 1 — greenbelay (one branch, one PR)
@@ -121,6 +127,25 @@ The hook fills in the block, the path and the rev it already computed, so a push
   - run browser-check with the `--block` line, push again → silent;
   - edit a file, commit, push → advise again (stale tree).
 - implementation-review and the declared code-review profiles at F4b, as for any greenbelay change.
+
+**Observed before the push (2026-11-20, greenbelay):**
+- Baseline, before building: transcripts of the last 30 days (`~/.claude/projects/*/*.jsonl` and their `subagents/`), branch pushes (`git push` / `greengate|amont land`, not to main, not deletes) from a cwd whose repository has a `dev` script → 573 pushes in 73 sessions; 246 pushes in 34 sessions launched no `browser-check` at all. The proxy counts UI repositories, not UI-changing files (fleet sweeps are in it), so the true figure is lower, and far from 0: built.
+- `cargo test --locked --features test-hooks --test push_browser_check --test implementation_review --test corpus` → every case of item 5 asserts its outcome, the five push-preview record tests pass with this rule at `observe`, the corpus replays 17 labelled cases (9 `nomatch`, above the 12/4 graduate floor) → ok, 148 s and 243 s on the two final trees; `cargo test -p greenbelay-process --lib` (unit: `side_transcripts` lists only this session's directory; `report_reached_a_page` fixtures with the `profile:` suffix, `chrome-error://`, `about:blank`; push-preview's `evidence:` journal line byte-identical) → ok; `cargo clippy --workspace --all-targets --features test-hooks -- -D warnings` → clean; each commit's greengate pre-commit gate → 26–28 checks passed.
+- The relais worker's candidate (run-660b6591545d8-491a, accepted after three admission waits on a jammed host) had two defects the hand pass caught: the whole-line `browser:` compare and the silent gap; recorded with `relais feedback corrected 0.15`.
+- Not observed yet: the live hook run on a UI repository (needs the released binary installed), the 7-day journal figure, the day-7 graduate/demote.
+
+## Decision log
+- 2026-11-20 — Gap said at every stance, not only under `deny`, because ADR-0073 reports a missing reviewer rather than hiding it; the five push-preview tests that push UI repositories with no agent set this rule to `observe`.
+- 2026-11-20 — No by-patch carry-over, per the panel: a rebase onto a moved base can change the render.
+- 2026-11-20 — `HookOnlyStore` as an enum (rust reviewer, low) left as a follow-up: the string-keyed `guard_of` is the two older stores' shape and a third variant touches implementation-review's guard paths in `hook.rs`.
+- 2026-11-20 — A test for the `remember-failed` journal path left out (backend, low): a read-only-directory test is platform-dependent; the live check after install watches the journal instead.
+
+## Implementation review
+- implementation-review: approve on tree 70bcd6ff (round 1 approve-with-changes, 6 blocking code-rule findings fixed: module doc, banner, swallowed pass write, `_` arm, let-discard reasons, names; Delta approve-with-changes, names on added lines fixed; Delta 2 approve). 116k/56k/40k tokens, 118/82/43 s.
+- backend: approve (lost pass write journalled as `remember-failed`; `unknown` split per cause; deliberate: no read-only-dir test for `remember-failed`, `session: "-"` as the rule's other entries). 70k/40k/32k, 80/23/39 s.
+- lang:rust: approve on a393af32, carried (exhaustive `Standing`, typed `Pass`, `context.cwd`; deliberate: `HookOnlyStore` enum as a follow-up). 66k/41k, 73/41 s.
+- unix: approve on a393af32, carried (`shell_word` quotes `~`/`=`). 68k/40k, 83/19 s.
+- tui: approve-with-changes (per-case text, `unknown` remedy, gap sentence, block on its own line fixed); deliberate: under `deny` the `unknown` hold for an unreadable transcript prints the placeholder `tree-sha -C <repo> <rev>` rather than the real values, and a content-id failure points at `tree-sha` too; both are `deny`-only error paths, to be tightened at the day-7 graduation step before deny. 63k/40k/32k, 66/27/33 s.
 
 ## Non-goals
 - Judging the content of a browser-check report (console errors, unanswered questions).
