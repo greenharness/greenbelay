@@ -6,14 +6,14 @@
   take a live session is filing: it no longer prints `holds 0 lines unfiled`.
   The journal line still counts them (session-boundaries t17).
 - `clear-at-boundary` now sees a boundary whose step starts with a reserved
-  word (`then`, `do`, `else`, `elif`, `{`, `if`, `while`, `until`), such as
+  word (`if`, `then`, `else`, `elif`, `while`, `until`, `do`, `{`), such as
   `for w in …; do git -C "$H" worktree remove "$w"; done`. Before, such a
   call was never a boundary. Its `-C` words resolve as anywhere else, and a
   loop variable is journalled `unresolved loop-var` (session-boundaries t25).
-- A `command` or `builtin` call leaves the walk's directory unread only when
-  the command it runs can move the shell (`cd`, `pushd`, `popd`, `eval`,
-  `source`, `.`). `command -v jq` and `builtin echo` no longer make a later
-  boundary `unresolved not-literal`.
+- `command -v jq` and `builtin echo` no longer stop `clear-at-boundary` from
+  resolving a later boundary's directory (`unresolved not-literal`).
+  `command cd …`, `builtin source …` and a wrapped command it cannot read
+  still do.
 - Past the session's advice cap, a repeated Stop on the same boundary writes
   no second `cap` or `unresolved` journal row.
 

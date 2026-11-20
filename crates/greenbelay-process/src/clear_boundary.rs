@@ -1114,11 +1114,13 @@ impl Walk {
             Some(name @ ("pushd" | "popd" | "builtin" | "command" | "eval" | "source" | ".")) => {
                 // `command -v jq` or `builtin echo` leave the directory;
                 // only a wrapped command that can move it is unread.
+                // A wrapped word the walk cannot read (`command "$c" x`)
+                // may be `cd`, so it is unread too.
                 let moves = match name {
-                    "builtin" | "command" => matches!(
-                        wrapped_command(&words[1..]),
-                        Some("cd" | "pushd" | "popd" | "eval" | "source" | ".")
-                    ),
+                    "builtin" | "command" => wrapped_command(&words[1..]).is_some_and(|wrapped| {
+                        matches!(wrapped, "cd" | "pushd" | "popd" | "eval" | "source" | ".")
+                            || wrapped.contains(['$', '`', '*', '?', '['])
+                    }),
                     _ => true,
                 };
                 if moves && !matches!(self.here, Err(Shape::Subshell)) {
@@ -2221,9 +2223,10 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
         if advices >= MAX_ADVICES_PER_SESSION {
             // The key, saved alone, sends a repeat Stop on this boundary
             // through the key check above: no second `cap` or `unresolved`
-            // row.
+            // row. A failed save journals `state-unwritable`, and the next
+            // Stop writes the rows again, as before.
             state.key = key;
-            self.save(&state);
+            let _saved = self.save(&state);
             return self.watched("cap");
         }
         // At `advise` a note cannot carry the plan on, and a lone plan commit's
@@ -4056,7 +4059,8 @@ mod tests {
         }
     }
 
-    /// The plan's Behaviour table (t25), cwd `/w`, home `/h`: a boundary led
+    /// The plan's Behaviour table (t25), payload and entry cwd `/w`, home
+    /// `/h` (as [`walked`] sets it): a boundary led
     /// by a reserved word is judged like any other.
     #[test]
     fn a_boundary_led_by_a_keyword_is_a_boundary() {
@@ -4105,13 +4109,24 @@ mod tests {
                 vec![(paths(&["/h/a"]), None)],
                 "{command}"
             );
-            // The walk reads the `cd` after the word: had it not stripped
-            // the word, `here` would stay `/w` and the dirs be empty.
-            let cd_after = format!("{word} cd /h/b; git worktree remove x");
-            assert_ne!(
-                walked(&cd_after, "/w", Some("/w")),
-                vec![(Vec::new(), None)],
-                "{cd_after}"
+        }
+        // The walk reads the `cd` after the word: after a continuing word it
+        // moves the shell, inside a compound a word opens it is `keyword`.
+        let cd_after = |word: &str| {
+            walked(
+                &format!("{word} cd /h/b; git worktree remove x"),
+                "/w",
+                Some("/w"),
+            )
+        };
+        for word in CONTINUING_KEYWORDS {
+            assert_eq!(cd_after(word), vec![(paths(&["/h/b"]), None)], "{word}");
+        }
+        for word in OPENING_KEYWORDS {
+            assert_eq!(
+                cd_after(word),
+                vec![(Vec::new(), Some("keyword"))],
+                "{word}"
             );
         }
     }
@@ -4153,6 +4168,7 @@ mod tests {
             "command -p builtin cd /h/b && git worktree remove x",
             "builtin source env.sh; git worktree remove x",
             "command eval 'cd /h/b'; git worktree remove x",
+            "command \"$c\" /h/b && git worktree remove x",
             "builtin . ./env; git worktree remove x",
         ];
         for command in unread {
