@@ -167,13 +167,15 @@ mod tests {
         }
     }
 
-    /// The table holds every rule, in its place: 56 rules, which are the 45
+    /// The table holds every rule, in its place: 57 rules, which are the 46
     /// left after the workspace split and the observe-rule retirements, plus
-    /// `relais-run-forks`, `screenshot-in-main-session`, `work-overlap`, `ask-unopened-page`,
-    /// `suppressions-override`, `plan-names-no-paths`, `chain-with-and`,
-    /// `block-reinstate`, `land-detached`, `secret-read` and `push-browser-check`, with `push-preview` between
-    /// `push-preflight` and `plan-review-panel`, and `implementation-review` after
-    /// `plan-phases-open`, and `push-browser-check` after that. A rule a crate stopped listing would vanish here.
+    /// `relais-run-forks`, `screenshot-in-main-session`, `work-overlap`,
+    /// `ask-unopened-page`, `suppressions-override`, `plan-names-no-paths`,
+    /// `chain-with-and`, `block-reinstate`, `land-detached`, `secret-read` and
+    /// `push-browser-check`, with `push-preview` between `push-preflight` and
+    /// `plan-review-panel`, `implementation-review` after `plan-phases-open`,
+    /// and `push-browser-check` after that. A rule a crate stopped listing
+    /// would vanish here.
     #[test]
     fn the_table_holds_every_rule_in_its_place() {
         let ids: Vec<&str> = RULES.iter().map(|r| r.id).collect();
