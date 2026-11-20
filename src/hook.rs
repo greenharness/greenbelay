@@ -796,9 +796,11 @@ fn on_bash(bash: &Bash) -> Decision {
         // Grep, but only once the whole command is known to run: a refusal
         // drops the advice, and the path must not be marked told for advice
         // nobody saw. An observing rule marks nothing either.
+        // holds-until: a second rule needing a per-path telling; then this id
+        // test becomes a field of `Rule`.
         if rule.id == rules::secret_read::RULE.id && stance != Stance::Observe {
             let resolved = rules::secret_read::resolved(&context(bash, &parsed), finding);
-            let Some((path, _, _)) = resolved else {
+            let Some(read) = resolved else {
                 note(
                     rule,
                     "unconfirmed",
@@ -809,7 +811,7 @@ fn on_bash(bash: &Bash) -> Decision {
                 continue;
             };
             secret_pending.push(SecretPending {
-                key: secret_key(&path, bash.agent_id.as_deref()),
+                key: secret_key(&read.path, bash.agent_id.as_deref()),
                 text,
                 excerpt: excerpt.map(str::to_string),
                 finding: finding.clone(),
@@ -1627,14 +1629,14 @@ fn on_file(op: &crate::payload::FileOp) -> Decision {
     } else {
         None
     };
-    if let Some(label) = secret {
+    if let Some(kind) = secret {
         let rule = &rules::secret_read::RULE;
         let stance = crate::stance::resolve(rule).min(Stance::Advise);
-        let excerpt = rules::secret_read::excerpt(label, &shown);
+        let excerpt = rules::secret_read::excerpt(kind, &shown);
         let key = secret_key(&op.path, op.agent_id.as_deref());
         let mut first =
             |key: &str| first_telling(rule, &op.session, key, &op.cwd, &op.permission_mode);
-        if let Some(text) = secret_advice(stance, &shown, label, &key, &mut first) {
+        if let Some(text) = secret_advice(stance, &shown, kind, &key, &mut first) {
             note_file(rule, stance, op, &excerpt);
             advise.push(text);
         } else if stance == Stance::Observe {
@@ -1666,14 +1668,15 @@ fn secret_key(path: &std::path::Path, agent_id: Option<&str>) -> String {
 fn secret_advice(
     stance: Stance,
     shown: &str,
-    label: &str,
+    kind: rules::secret_read::SecretKind,
     key: &str,
     first: &mut dyn FnMut(&str) -> bool,
 ) -> Option<String> {
     if stance == Stance::Observe || !first(key) {
         return None;
     }
-    let (reason, remedy) = rules::secret_read::phrase(shown, label, false);
+    let (reason, remedy) =
+        rules::secret_read::phrase(shown, kind, rules::secret_read::Access::Show);
     Some(decision::phrase(
         rules::secret_read::RULE.id,
         &reason,
@@ -1689,7 +1692,7 @@ fn secret_grep(op: &crate::payload::GrepOp) -> Decision {
     let Some(path) = &op.path else {
         return Decision::Silent;
     };
-    let Some(label) = rules::secret_read::secret_file(path) else {
+    let Some(kind) = rules::secret_read::secret_file(path) else {
         return Decision::Silent;
     };
     let rule = &rules::secret_read::RULE;
@@ -1697,17 +1700,9 @@ fn secret_grep(op: &crate::payload::GrepOp) -> Decision {
     let shown = path.to_string_lossy().into_owned();
     let key = secret_key(path, op.agent_id.as_deref());
     let mut first = |key: &str| first_telling(rule, &op.session, key, &op.cwd, &op.permission_mode);
-    let advice = secret_advice(stance, &shown, label, &key, &mut first);
+    let advice = secret_advice(stance, &shown, kind, &key, &mut first);
     if advice.is_some() || stance == Stance::Observe {
-        journal::record(&journal::Entry {
-            rule: rule.id,
-            stance: stance.as_str(),
-            outcome: outcome_of(stance),
-            session: &op.session,
-            repo: &repo_name(&op.cwd),
-            mode: &op.permission_mode,
-            excerpt: &rules::secret_read::excerpt(label, &shown),
-        });
+        note_grep(rule, stance, op, &rules::secret_read::excerpt(kind, &shown));
     }
     advice.map_or(Decision::Silent, Decision::Advise)
 }
@@ -2242,9 +2237,20 @@ fn grep_telling(
 }
 
 /// A Grep tool call about to run: `secret-read`'s half and
-/// `symbol-grep-not-lsp`'s, each advising on its own.
+/// `symbol-grep-not-lsp`'s, each advising on its own. The symbol half is
+/// decided first: when it refuses the call, the secret path is left unmarked,
+/// so the retry that runs is still advised.
 fn on_grep(op: &crate::payload::GrepOp) -> Decision {
-    combine([secret_grep(op), symbol_grep(op)])
+    grep_decision(symbol_grep(op), || secret_grep(op))
+}
+
+/// The two Grep verdicts as one. `secret` runs, and so marks its path told,
+/// only when `symbol` does not refuse the call.
+fn grep_decision(symbol: Decision, secret: impl FnOnce() -> Decision) -> Decision {
+    if matches!(symbol, Decision::Deny(_)) {
+        return symbol;
+    }
+    combine([secret(), symbol])
 }
 
 /// The tool's half of `symbol-grep-not-lsp`.
@@ -2856,6 +2862,18 @@ fn reread_verdict(
     }
 }
 
+fn note_grep(rule: &Rule, stance: Stance, op: &crate::payload::GrepOp, excerpt: &str) {
+    journal::record(&journal::Entry {
+        rule: rule.id,
+        stance: stance.as_str(),
+        outcome: outcome_of(stance),
+        session: &op.session,
+        repo: &repo_name(&op.cwd),
+        mode: &op.permission_mode,
+        excerpt,
+    });
+}
+
 fn note_file(rule: &Rule, stance: Stance, op: &crate::payload::FileOp, shown: &str) {
     journal::record(&journal::Entry {
         rule: rule.id,
@@ -3381,6 +3399,208 @@ mod child_checkout_tests {
 #[cfg(test)]
 mod secret_read_tests {
     use super::*;
+    use rules::secret_read::SecretKind;
+
+    static ENV_TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// A scratch config dir and git config for one test, process-wide env
+    /// restored on drop; tests that set it take a turn.
+    struct Isolated {
+        _turn: std::sync::MutexGuard<'static, ()>,
+        root: std::path::PathBuf,
+        saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
+
+    impl Isolated {
+        fn new(name: &str, git_config: &str) -> Isolated {
+            let turn = ENV_TURN.lock().unwrap_or_else(|e| e.into_inner());
+            let root = std::env::temp_dir().join(format!("gb-sr-{}-{name}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root); // best-effort scratch cleanup; a leftover temp dir is harmless
+            std::fs::create_dir_all(root.join("config")).expect("config dir");
+            std::fs::write(root.join("gitconfig"), git_config).expect("git config");
+            std::fs::write(root.join(".env"), "TOKEN=abc\n").expect("scratch .env");
+            let mut saved = Vec::new();
+            for (key, value) in [
+                ("CLAUDE_CONFIG_DIR", root.join("config").into_os_string()),
+                ("GIT_CONFIG_GLOBAL", root.join("gitconfig").into_os_string()),
+                ("GIT_CONFIG_NOSYSTEM", "1".into()),
+            ] {
+                saved.push((key, std::env::var_os(key)));
+                std::env::set_var(key, value);
+            }
+            Isolated {
+                _turn: turn,
+                root,
+                saved,
+            }
+        }
+
+        fn env_file(&self) -> std::path::PathBuf {
+            self.root.join(".env")
+        }
+
+        fn told(&self, session: &str) -> bool {
+            crate::lsp::was_told(session, &secret_key(&self.env_file(), None))
+        }
+
+        fn journal(&self) -> String {
+            let dir = crate::journal::dir().expect("journal dir");
+            std::fs::read_to_string(dir.join("journal.log")).unwrap_or_default()
+        }
+
+        fn bash(&self, session: &str, command: &str) -> Decision {
+            on_bash(&Bash {
+                command: command.to_string(),
+                cwd: self.root.clone(),
+                session: session.to_string(),
+                permission_mode: "default".to_string(),
+                background: false,
+                timeout_ms: None,
+                tool_use_id: "t1".to_string(),
+                prompt_id: String::new(),
+                stdout: None,
+                stderr: None,
+                error: None,
+                has_response: false,
+                errored: false,
+                agent_id: None,
+                transcript: None,
+                agent_transcript: None,
+                agent: crate::lsp::Agent::Main,
+            })
+        }
+
+        fn read(&self, session: &str) -> Decision {
+            on_file(&crate::payload::FileOp {
+                path: self.env_file(),
+                writes: false,
+                window: "full".to_string(),
+                cwd: self.root.clone(),
+                session: session.to_string(),
+                permission_mode: "default".to_string(),
+                change: None,
+                agent: crate::lsp::Agent::Main,
+                agent_id: None,
+                persisted_result: false,
+            })
+        }
+
+        fn grep(&self, session: &str, output_mode: &str) -> Decision {
+            on_grep(&crate::payload::GrepOp {
+                pattern: "TOKEN=".to_string(),
+                path: Some(self.env_file()),
+                glob: None,
+                kind: None,
+                output_mode: Some(output_mode.to_string()),
+                cwd: self.root.clone(),
+                session: session.to_string(),
+                permission_mode: "default".to_string(),
+                agent: crate::lsp::Agent::Main,
+                agent_id: None,
+            })
+        }
+    }
+
+    impl Drop for Isolated {
+        fn drop(&mut self) {
+            for (key, value) in self.saved.drain(..) {
+                match value {
+                    Some(v) => std::env::set_var(key, v),
+                    None => std::env::remove_var(key),
+                }
+            }
+            let _ = std::fs::remove_dir_all(&self.root); // best-effort scratch cleanup; a leftover temp dir is harmless
+        }
+    }
+
+    fn advice(decision: &Decision) -> Option<&str> {
+        match decision {
+            Decision::Advise(text) => Some(text),
+            _ => None,
+        }
+    }
+
+    fn is_silent(decision: &Decision) -> bool {
+        matches!(decision, Decision::Silent)
+    }
+
+    #[test]
+    fn a_bash_read_refused_by_another_rule_leaves_the_path_unmarked() {
+        let world = Isolated::new("bash", "");
+        let file = world.env_file().display().to_string();
+        let refused = world.bash(
+            "sr-bash",
+            &format!("cat {file}; git push origin main 2>&1 | tail -5"),
+        );
+        assert!(
+            matches!(refused, Decision::Deny(_)),
+            "the tail pipe is refused"
+        );
+        assert!(!world.told("sr-bash"), "a refused command marks nothing");
+        let retry = world.bash("sr-bash", &format!("cat {file}"));
+        let text = advice(&retry).expect("the retry is still advised");
+        assert!(text.contains("secret-read"), "{text}");
+        assert!(world.told("sr-bash"));
+        assert!(
+            is_silent(&world.bash("sr-bash", &format!("cat {file}"))),
+            "the second plain call is silent"
+        );
+    }
+
+    #[test]
+    fn a_read_of_a_secret_is_advised_once_and_never_refused() {
+        let world = Isolated::new("read", "[greenbelay \"secret-read\"]\n\tstance = deny\n");
+        let first = world.read("sr-read");
+        let text = advice(&first).expect("advised, even with the stance set to deny");
+        assert!(
+            text.contains("secret-read") && text.contains("will still run"),
+            "{text}"
+        );
+        assert!(is_silent(&world.read("sr-read")), "once per path");
+        let journal = world.journal();
+        assert!(
+            journal
+                .lines()
+                .any(|l| l.contains("secret-read") && l.contains("advised")),
+            "{journal}"
+        );
+    }
+
+    #[test]
+    fn a_grep_in_content_mode_is_advised_and_a_listing_is_silent() {
+        let world = Isolated::new("grep", "");
+        assert!(is_silent(&world.grep("sr-grep", "files_with_matches")));
+        assert!(!world.told("sr-grep"), "a listing marks nothing");
+        let content = world.grep("sr-grep", "content");
+        assert!(
+            advice(&content).is_some_and(|t| t.contains("secret-read")),
+            "content mode advises"
+        );
+        assert!(
+            is_silent(&world.grep("sr-grep", "content")),
+            "once per path"
+        );
+    }
+
+    #[test]
+    fn a_refused_symbol_grep_never_runs_the_secret_half() {
+        let ran = std::cell::Cell::new(false);
+        let refused = grep_decision(Decision::Deny("symbol".into()), || {
+            ran.set(true);
+            Decision::Advise("secret".into())
+        });
+        assert!(matches!(refused, Decision::Deny(ref t) if t == "symbol"));
+        assert!(
+            !ran.get(),
+            "the secret path must stay unmarked, so the retry still advises"
+        );
+        let advised = grep_decision(Decision::Advise("symbol".into()), || {
+            ran.set(true);
+            Decision::Advise("secret".into())
+        });
+        assert!(ran.get());
+        assert!(advice(&advised).is_some_and(|t| t == "secret\n\nsymbol"));
+    }
 
     #[test]
     fn the_same_secret_path_twice_gives_one_advise_and_never_a_deny() {
@@ -3389,12 +3609,12 @@ mod secret_read_tests {
         let key = secret_key(std::path::Path::new("/h/.netrc"), None);
         for stance in [Stance::Advise, Stance::Deny] {
             seen.borrow_mut().clear();
-            let told = secret_advice(stance, "~/.netrc", "netrc", &key, &mut first);
+            let told = secret_advice(stance, "~/.netrc", SecretKind::Netrc, &key, &mut first);
             let text = told.expect("the first read is advised, even at a stance above advise");
             assert!(text.contains("secret-read"), "{text}");
             assert!(text.contains("will still run"), "{text}");
             assert_eq!(
-                secret_advice(stance, "~/.netrc", "netrc", &key, &mut first),
+                secret_advice(stance, "~/.netrc", SecretKind::Netrc, &key, &mut first),
                 None,
                 "the second read of the same path is silent"
             );
@@ -3421,7 +3641,13 @@ mod secret_read_tests {
             true
         };
         assert_eq!(
-            secret_advice(Stance::Observe, "~/.netrc", "netrc", "k", &mut first),
+            secret_advice(
+                Stance::Observe,
+                "~/.netrc",
+                SecretKind::Netrc,
+                "k",
+                &mut first
+            ),
             None
         );
         assert!(!marked, "an observing rule must not use up the one telling");

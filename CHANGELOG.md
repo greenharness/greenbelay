@@ -8,6 +8,9 @@
   Grep that prints its lines, is advised once per path and agent, and still
   runs. `curl -n`, `ssh`, `ls`, quiet greps and public keys stay silent. The
   journal keeps the kind and the path, never the command.
+  A flag's value is never read as the pattern or the path, a reader whose
+  stdout goes to `/dev/null` is silent, and one redirected to a file is
+  advised as a copy.
 - The inbox notice at session start stays quiet when its only lines are in a
   take a live session is filing: it no longer prints `holds 0 lines unfiled`.
   The journal line still counts them (session-boundaries t17).
