@@ -34,10 +34,10 @@
 //!
 //! No question goes to a person: the only push-time way through is the check
 //! itself, or the plan's declaration. Where the `browser-check` agent is not
-//! installed the rule says so as advice under `deny` and never holds the push
-//! (ADR-0073); under `advise` it stays quiet and `doctor` lists the gap.
-//! An unreadable push shape is journalled and passes, except under `deny`,
-//! where it is held so that `--all` is not the way around the gate.
+//! installed the rule says so as advice at every stance and never holds the
+//! push (ADR-0073); `doctor` lists the gap too. An unreadable push shape is
+//! journalled and passes, except under `deny`, where it is held so that
+//! `--all` is not the way around the gate.
 
 use crate::agents::{self, Need};
 use crate::implementation_review::{self as review, Judged};
@@ -115,12 +115,12 @@ fn to_default_branch(refspec: &str) -> bool {
     matches!(dst, "main" | "master")
 }
 
-fn confirm(ctx: &Context, _finding: &Finding) -> Confirmed {
-    let Some(cmd) = push_target::find(ctx.parsed) else {
+fn confirm(context: &Context, _finding: &Finding) -> Confirmed {
+    let Some(cmd) = push_target::find(context.parsed) else {
         return Confirmed::No("the push could not be read a second time");
     };
     let stance = greenbelay_guard::stance::resolve(&RULE);
-    match judge_push(ctx, cmd, stance) {
+    match judge_push(context, cmd, stance) {
         Judged::Decline(why) => Confirmed::No(why),
         // Every case carries its own text: the finding's remedy is replaced.
         Judged::Say { reason, excerpt } | Judged::Profiles { reason, excerpt } => {
@@ -157,8 +157,8 @@ enum Standing {
 }
 
 /// Judge the push in `cmd`.
-pub fn judge_push(ctx: &Context, cmd: &Simple, stance: Stance) -> Judged {
-    let (repo, targets) = match push_target::resolve_for(ctx, cmd) {
+pub fn judge_push(context: &Context, cmd: &Simple, stance: Stance) -> Judged {
+    let (repo, targets) = match push_target::resolve_for(context, cmd) {
         Push::Resolved { repo, targets } => (repo, targets),
         Push::DryRun => return Judged::Decline("dry-run"),
         Push::DeleteOnly => return Judged::Decline("delete-only"),
@@ -184,7 +184,7 @@ pub fn judge_push(ctx: &Context, cmd: &Simple, stance: Stance) -> Judged {
                 judged = Judged::Decline("files-unlisted");
             }
             Some(false) => {}
-            Some(true) => match judge_target(ctx, &repo, target) {
+            Some(true) => match judge_target(context, &repo, target) {
                 Judged::Say { reason, excerpt } => return Judged::Say { reason, excerpt },
                 Judged::Gap { reason, excerpt } => return Judged::Gap { reason, excerpt },
                 other => judged = other,
@@ -195,7 +195,7 @@ pub fn judge_push(ctx: &Context, cmd: &Simple, stance: Stance) -> Judged {
 }
 
 /// One branch target that carries an interface change.
-fn judge_target(ctx: &Context, repo: &Path, target: &push_target::Target) -> Judged {
+fn judge_target(context: &Context, repo: &Path, target: &push_target::Target) -> Judged {
     let pushed = target.src.as_str();
     let tree = match crate::content_id::content_id(repo, pushed) {
         Ok(tree) => tree,
@@ -219,41 +219,58 @@ fn judge_target(ctx: &Context, repo: &Path, target: &push_target::Target) -> Jud
         });
         return Judged::Decline("declared");
     }
-    let standing = match ctx.transcript {
+    let standing = match context.transcript {
         Some(transcript) => standing_in(transcript, &name, &tree),
         None => Err("the payload carried no transcript_path".to_string()),
     };
     let standing = match standing {
-        Ok(Standing::Bound) => {
-            remember(&name, &tree);
-            return Judged::Decline("bound");
-        }
         Ok(standing) => standing,
         Err(why) => {
-            if !installed(repo) {
+            if !installed(context, repo) {
                 return gap(&tree);
             }
             return unknown(Some(&tree), &why);
         }
     };
-    if !installed(repo) {
+    // A bound check proves the agent ran; any other standing needs it here.
+    if standing != Standing::Bound && !installed(context, repo) {
         return gap(&tree);
     }
-    let (cause, check) = match &standing {
+    let (cause, check) = match standing {
+        Standing::Bound => {
+            // The pass stands on the transcript either way; a store that
+            // cannot be written is journalled so that the next session's
+            // repeat check has a cause on record.
+            if let Err(why) = remember(&name, &tree) {
+                journal::record(&journal::Entry {
+                    rule: RULE_ID,
+                    stance: "-",
+                    outcome: "remember-failed",
+                    session: "-",
+                    repo: &name,
+                    mode: "-",
+                    excerpt: &format!("tree={} {why}", short(&tree)),
+                });
+            }
+            return Judged::Decline("bound");
+        }
         Standing::Unreachable => (
             format!("the browser check of {} reached no page", short(&tree)),
             "unreachable",
         ),
         Standing::Older(old) => (
             format!(
-                "the last browser check read tree {}, not {}",
-                short(old),
+                "a browser check of this session read tree {}, not {}",
+                short(&old),
                 short(&tree)
             ),
             "stale",
         ),
-        _ => (
-            "no browser check ran in this session".to_string(),
+        // No check at all, or one whose brief carried no TREE line of this
+        // tree: the transcript cannot tell them apart, so the text says what
+        // it can.
+        Standing::Missing => (
+            "no browser check in this session carried this tree's TREE line".to_string(),
             "missing",
         ),
     };
@@ -269,7 +286,7 @@ fn say(cause: &str, repo: &Path, name: &str, pushed: &str, tree: &str) -> String
     format!(
         concat!(
             "This push changes the interface and {cause}. Launch `browser-check` on the dev \
-             server serving this commit, with this line alone on its own line in its brief:\n",
+             server serving this commit, with this line, on a line of its own, in its brief:\n",
             "{block}\n",
             "then push again. (`",
             greenbelay_guard::bin!(),
@@ -284,11 +301,14 @@ fn say(cause: &str, repo: &Path, name: &str, pushed: &str, tree: &str) -> String
     )
 }
 
+/// A word the agent's zsh reads back as written: `~` and a leading `=` are
+/// expansions there (a branch may start with `=`), so a word holding either
+/// is quoted.
 fn shell_word(word: &str) -> String {
     let plain = !word.is_empty()
         && word
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "/._-~+@:=".contains(c));
+            .all(|c| c.is_ascii_alphanumeric() || "/._-+@:".contains(c));
     if plain {
         word.to_string()
     } else {
@@ -298,7 +318,15 @@ fn shell_word(word: &str) -> String {
 
 fn unknown(tree: Option<&str>, why: &str) -> Judged {
     Judged::Say {
-        reason: format!("whether this push was browser-checked cannot be told: {why}"),
+        reason: format!(
+            concat!(
+                "whether this push was browser-checked cannot be told: {why}. Push one branch \
+                 by name (`git push origin <branch>`), or launch `browser-check` with the line `",
+                greenbelay_guard::bin!(),
+                " tree-sha --block -C <repo> <rev>` prints in its brief, then push again."
+            ),
+            why = why
+        ),
         excerpt: format!("tree={} check=unknown", tree.map(short).unwrap_or("-")),
     }
 }
@@ -309,16 +337,19 @@ fn unknown(tree: Option<&str>, why: &str) -> Judged {
 /// for a check nobody can run (ADR-0073). `greenbelay doctor` lists it too.
 fn gap(tree: &str) -> Judged {
     Judged::Gap {
-        reason: agents::gap_line(Need::BrowserCheck),
+        reason: format!(
+            "{} So this push goes out without a browser check.",
+            agents::gap_line(Need::BrowserCheck)
+        ),
         excerpt: format!("tree={} check=gap", short(tree)),
     }
 }
 
 /// Whether a source carries the `browser-check` agent, looked up from the
-/// repository and from the working directory.
-fn installed(repo: &Path) -> bool {
-    agents::carried(Need::BrowserCheck, repo)
-        || std::env::current_dir().is_ok_and(|cwd| agents::carried(Need::BrowserCheck, &cwd))
+/// repository and from the clause's working directory (a fork's worktree
+/// may carry it in its own `.claude/agents/`).
+fn installed(context: &Context, repo: &Path) -> bool {
+    agents::carried(Need::BrowserCheck, repo) || agents::carried(Need::BrowserCheck, context.cwd)
 }
 
 fn short(sha: &str) -> &str {
@@ -392,10 +423,10 @@ fn checks_in(transcript: &Path, name: &str) -> std::io::Result<Vec<Check>> {
 /// `unreachable: <url>` alone, a browser named with no page, or a `url:`
 /// that ends on `chrome-error:` or `about:blank` (a navigation that failed)
 /// is not.
-fn report_reached_a_page(result: &str) -> bool {
+fn report_reached_a_page(report: &str) -> bool {
     let mut browser = false;
     let mut url = false;
-    for line in result.lines().map(str::trim) {
+    for line in report.lines().map(str::trim) {
         if let Some(named) = line.strip_prefix("browser: ") {
             browser |= named
                 .split_whitespace()
@@ -411,7 +442,14 @@ fn report_reached_a_page(result: &str) -> bool {
     browser && url
 }
 
-// ---------------------------------------------------------------- the store
+/// One remembered pass, as the hook writes and reads it.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Pass {
+    repo: String,
+    tree: String,
+    agent: String,
+    how: String,
+}
 
 fn pass_file(repo: &str, tree: &str) -> Option<PathBuf> {
     if repo.contains('/') || repo.contains("..") || !review::is_sha256(tree) {
@@ -430,26 +468,31 @@ fn pass_file(repo: &str, tree: &str) -> Option<PathBuf> {
 fn remembered(repo: &str, tree: &str) -> bool {
     pass_file(repo, tree)
         .and_then(|file| std::fs::read_to_string(file).ok())
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .is_some_and(|record| record.get("tree").and_then(|t| t.as_str()) == Some(tree))
+        .and_then(|text| serde_json::from_str::<Pass>(&text).ok())
+        .is_some_and(|pass| pass.tree == tree)
 }
 
-/// Written only by the hook, from a bound check in the transcript.
-fn remember(repo: &str, tree: &str) -> Option<()> {
-    let file = pass_file(repo, tree)?;
-    let parent = file.parent()?;
-    std::fs::create_dir_all(parent).ok()?;
+/// Written only by the hook, from a bound check in the transcript. The
+/// error names what could not be written; the caller journals it.
+fn remember(repo: &str, tree: &str) -> std::io::Result<()> {
+    let file = pass_file(repo, tree).ok_or_else(|| {
+        std::io::Error::other("no journal directory, or a repository name the store refuses")
+    })?;
+    let parent = file
+        .parent()
+        .ok_or_else(|| std::io::Error::other("the pass file has no parent directory"))?;
+    std::fs::create_dir_all(parent)?;
     journal::private(parent, 0o700);
-    let body = serde_json::json!({
-        "repo": repo,
-        "tree": tree,
-        "agent": AGENT,
-        "how": "transcript",
-    })
-    .to_string();
-    greenbelay_guard::atomic::write_atomic(&file, &body).ok()?;
+    let body = serde_json::to_string(&Pass {
+        repo: repo.to_string(),
+        tree: tree.to_string(),
+        agent: AGENT.to_string(),
+        how: "transcript".to_string(),
+    })?;
+    greenbelay_guard::atomic::write_atomic(&file, &body)
+        .map_err(|e| std::io::Error::new(e.kind(), format!("{}: {e}", file.display())))?;
     journal::private(&file, 0o600);
-    Some(())
+    Ok(())
 }
 
 #[cfg(test)]

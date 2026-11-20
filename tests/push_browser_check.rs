@@ -52,7 +52,7 @@ impl World {
             "greenbelay-push-browser-check-{name}-{}-{thread}",
             std::process::id()
         ));
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&root); // a leftover of an earlier run, or none
         std::fs::create_dir_all(root.join("claude").join("agents")).unwrap();
         std::fs::write(root.join("global"), "").unwrap();
         std::fs::write(
@@ -303,8 +303,8 @@ struct Transcript {
 impl Transcript {
     /// A foreground launch of `agent` with `prompt` that completed with
     /// `result`.
-    fn run(&mut self, w: &World, agent: &str, prompt: &str, result: &str) -> &mut Self {
-        let id = w.id();
+    fn run(&mut self, world: &World, agent: &str, prompt: &str, result: &str) -> &mut Self {
+        let id = world.id();
         self.lines.push(
             serde_json::json!({
                 "type": "assistant",
@@ -330,9 +330,9 @@ impl Transcript {
     }
 
     /// A completed `browser-check` of `block` that reports `result`.
-    fn check(&mut self, w: &World, block: &str, result: &str) -> &mut Self {
+    fn check(&mut self, world: &World, block: &str, result: &str) -> &mut Self {
         self.run(
-            w,
+            world,
             AGENT,
             &format!("{block}\nLook at the settings page.\n"),
             result,
@@ -349,16 +349,16 @@ fn advised(said: &Said) -> &str {
 
 #[test]
 fn a_ui_push_with_no_check_is_advised_with_the_exact_tree_block_on_its_own_line() {
-    let w = World::new("missing");
-    let repo = w.ui_repo("app");
-    let empty = w.transcript("empty", &Transcript::default());
-    let said = w.push(&repo, Some(&empty));
+    let world = World::new("missing");
+    let repo = world.ui_repo("app");
+    let empty = world.transcript("empty", &Transcript::default());
+    let said = world.push(&repo, Some(&empty));
     let text = advised(&said);
     assert!(
-        text.contains("no browser check ran in this session"),
+        text.contains("no browser check in this session carried this tree"),
         "{text}"
     );
-    let block = w.block(&repo);
+    let block = world.block(&repo);
     assert!(
         text.lines().any(|l| l == block),
         "{block} alone on a line: {text}"
@@ -370,59 +370,60 @@ fn a_ui_push_with_no_check_is_advised_with_the_exact_tree_block_on_its_own_line(
         "names no skill: {text}"
     );
     assert!(
-        w.journal("push-browser-check")
+        world
+            .journal("push-browser-check")
             .last()
             .is_some_and(|l| l.contains("check=missing")),
         "{:?}",
-        w.journal("push-browser-check")
+        world.journal("push-browser-check")
     );
 }
 
 #[test]
 fn a_check_bound_to_the_pushed_tree_is_silent_and_remembered() {
-    let w = World::new("bound");
-    let repo = w.ui_repo("app");
+    let world = World::new("bound");
+    let repo = world.ui_repo("app");
     let mut t = Transcript::default();
-    t.check(&w, &w.block(&repo), GOOD_REPORT);
-    let transcript = w.transcript("t", &t);
-    assert_eq!(w.push(&repo, Some(&transcript)), Said::Silent);
-    let tree = w.tree(&repo);
+    t.check(&world, &world.block(&repo), GOOD_REPORT);
+    let transcript = world.transcript("t", &t);
+    assert_eq!(world.push(&repo, Some(&transcript)), Said::Silent);
+    let tree = world.tree(&repo);
     assert!(
-        w.pass_file("app", &tree).is_file(),
+        world.pass_file("app", &tree).is_file(),
         "the pass is remembered"
     );
     // The remembered pass stands without the transcript.
-    let empty = w.transcript("empty", &Transcript::default());
-    assert_eq!(w.push(&repo, Some(&empty)), Said::Silent);
+    let empty = world.transcript("empty", &Transcript::default());
+    assert_eq!(world.push(&repo, Some(&empty)), Said::Silent);
 }
 
 #[test]
 fn a_check_of_an_older_tree_then_an_edit_is_advised_naming_both_trees() {
-    let w = World::new("older");
-    let repo = w.ui_repo("app");
-    let old = w.tree(&repo);
+    let world = World::new("older");
+    let repo = world.ui_repo("app");
+    let old = world.tree(&repo);
     let mut t = Transcript::default();
-    t.check(&w, &w.block(&repo), GOOD_REPORT);
-    let transcript = w.transcript("t", &t);
-    w.commit(&repo, &[("src/App.tsx", "export const A = () => 2;\n")]);
-    let new = w.tree(&repo);
-    let said = w.push(&repo, Some(&transcript));
+    t.check(&world, &world.block(&repo), GOOD_REPORT);
+    let transcript = world.transcript("t", &t);
+    world.commit(&repo, &[("src/App.tsx", "export const A = () => 2;\n")]);
+    let new = world.tree(&repo);
+    let said = world.push(&repo, Some(&transcript));
     let text = advised(&said);
     assert!(
         text.contains(&format!(
-            "the last browser check read tree {}, not {}",
+            "a browser check of this session read tree {}, not {}",
             &old[..12],
             &new[..12]
         )),
         "{text}"
     );
-    assert!(!w.pass_file("app", &old).exists());
+    assert!(!world.pass_file("app", &old).exists());
 }
 
 #[test]
 fn a_report_that_reached_no_page_is_not_a_check() {
-    let w = World::new("unreachable");
-    let repo = w.ui_repo("app");
+    let world = World::new("unreachable");
+    let repo = world.ui_repo("app");
     for (name, report) in [
         ("only", "unreachable: http://localhost:3000/"),
         (
@@ -432,60 +433,60 @@ fn a_report_that_reached_no_page_is_not_a_check() {
         ("no-url", "browser: playwright\nnot checked: everything"),
     ] {
         let mut t = Transcript::default();
-        t.check(&w, &w.block(&repo), report);
-        let transcript = w.transcript(name, &t);
-        let said = w.push(&repo, Some(&transcript));
+        t.check(&world, &world.block(&repo), report);
+        let transcript = world.transcript(name, &t);
+        let said = world.push(&repo, Some(&transcript));
         let text = advised(&said);
         assert!(text.contains("reached no page"), "{name}: {text}");
     }
-    assert!(!w.pass_file("app", &w.tree(&repo)).exists());
+    assert!(!world.pass_file("app", &world.tree(&repo)).exists());
 }
 
 #[test]
 fn a_push_that_changes_no_interface_is_silent() {
-    let w = World::new("non-ui");
-    let repo = w.repo("app", &[("docs/notes.md", "notes\n")]);
-    let empty = w.transcript("empty", &Transcript::default());
-    assert_eq!(w.push(&repo, Some(&empty)), Said::Silent);
+    let world = World::new("non-ui");
+    let repo = world.repo("app", &[("docs/notes.md", "notes\n")]);
+    let empty = world.transcript("empty", &Transcript::default());
+    assert_eq!(world.push(&repo, Some(&empty)), Said::Silent);
 }
 
 #[test]
 fn a_test_only_ui_change_is_silent() {
-    let w = World::new("test-only");
-    let repo = w.repo("app", &[("src/App.test.tsx", "test('a', () => {});\n")]);
-    let empty = w.transcript("empty", &Transcript::default());
-    assert_eq!(w.push(&repo, Some(&empty)), Said::Silent);
+    let world = World::new("test-only");
+    let repo = world.repo("app", &[("src/App.test.tsx", "test('a', () => {});\n")]);
+    let empty = world.transcript("empty", &Transcript::default());
+    assert_eq!(world.push(&repo, Some(&empty)), Said::Silent);
 }
 
 #[test]
 fn a_rebase_onto_a_moved_base_needs_a_new_check() {
-    let w = World::new("rebase");
-    let repo = w.ui_repo("app");
+    let world = World::new("rebase");
+    let repo = world.ui_repo("app");
     let mut t = Transcript::default();
-    t.check(&w, &w.block(&repo), GOOD_REPORT);
-    let transcript = w.transcript("t", &t);
-    let before = w.tree(&repo);
+    t.check(&world, &world.block(&repo), GOOD_REPORT);
+    let transcript = world.transcript("t", &t);
+    let before = world.tree(&repo);
     git(&repo, &["checkout", "-q", "main"]);
-    w.commit(&repo, &[("README.md", "readme, moved\n")]);
+    world.commit(&repo, &[("README.md", "readme, moved\n")]);
     git(&repo, &["push", "-q", "origin", "main"]);
     git(&repo, &["fetch", "-q", "origin"]);
     git(&repo, &["checkout", "-q", "feat/x"]);
     git(&repo, &["rebase", "-q", "origin/main"]);
-    assert_ne!(w.tree(&repo), before, "the base moved the tree");
-    let said = w.push(&repo, Some(&transcript));
+    assert_ne!(world.tree(&repo), before, "the base moved the tree");
+    let said = world.push(&repo, Some(&transcript));
     assert!(
-        advised(&said).contains("the last browser check read tree"),
+        advised(&said).contains("a browser check of this session read tree"),
         "{said:?}"
     );
 }
 
 #[test]
 fn only_the_hook_writes_a_pass_file() {
-    let w = World::new("guard");
-    let repo = w.ui_repo("app");
-    let tree = w.tree(&repo);
-    let file = w.pass_file("app", &tree);
-    match w.write_tool(&repo, &file) {
+    let world = World::new("guard");
+    let repo = world.ui_repo("app");
+    let tree = world.tree(&repo);
+    let file = world.pass_file("app", &tree);
+    match world.write_tool(&repo, &file) {
         Said::Deny(text) => {
             assert!(text.contains("push-browser-check"), "{text}");
             assert!(text.contains("`browser-check`"), "its own remedy: {text}");
@@ -495,7 +496,7 @@ fn only_the_hook_writes_a_pass_file() {
         other => panic!("expected a refusal, got {other:?}"),
     }
     assert!(!file.exists());
-    let said = w.push_cmd(&repo, None, &format!("echo '{{}}' > {}", file.display()));
+    let said = world.push_cmd(&repo, None, &format!("echo '{{}}' > {}", file.display()));
     match said {
         Said::Deny(text) => assert!(text.contains("push-browser-check"), "{text}"),
         other => panic!("expected a refusal, got {other:?}"),
@@ -504,18 +505,21 @@ fn only_the_hook_writes_a_pass_file() {
 
 #[test]
 fn an_approved_plan_declaring_none_passes_and_is_journalled_with_its_reason() {
-    let w = World::new("declared");
+    let world = World::new("declared");
     let plan = "---\nstatus: active\n---\n# X\n\n## Browser check\n\nnone: the page needs a login nobody can script.\n";
-    let (repo, plan_rel) = w.planned_ui_repo("app", plan);
-    let empty = w.transcript("empty", &Transcript::default());
+    let (repo, plan_rel) = world.planned_ui_repo("app", plan);
+    let empty = world.transcript("empty", &Transcript::default());
 
     // Not approved yet: the declaration is the plan's, not the person's.
-    let said = w.push(&repo, Some(&empty));
-    assert!(advised(&said).contains("no browser check ran"), "{said:?}");
+    let said = world.push(&repo, Some(&empty));
+    assert!(
+        advised(&said).contains("no browser check in this session carried"),
+        "{said:?}"
+    );
 
-    let sha = w.approve_plan(&repo, plan_rel);
-    assert_eq!(w.push(&repo, Some(&empty)), Said::Silent);
-    let line = w
+    let sha = world.approve_plan(&repo, plan_rel);
+    assert_eq!(world.push(&repo, Some(&empty)), Said::Silent);
+    let line = world
         .journal("push-browser-check")
         .into_iter()
         .find(|l| l.contains(" declared "))
@@ -532,73 +536,86 @@ fn an_approved_plan_declaring_none_passes_and_is_journalled_with_its_reason() {
 
 #[test]
 fn a_pointer_plan_or_a_plan_without_the_section_does_not_pass() {
-    let w = World::new("pointer");
+    let world = World::new("pointer");
     let pointer = "---\nstatus: active\ncanonical: elsewhere/plan.md\n---\n# X\n\n## Browser check\n\nnone: later.\n";
-    let (repo, plan_rel) = w.planned_ui_repo("app", pointer);
-    w.approve_plan(&repo, plan_rel);
-    let empty = w.transcript("empty", &Transcript::default());
-    let said = w.push(&repo, Some(&empty));
-    assert!(advised(&said).contains("no browser check ran"), "{said:?}");
+    let (repo, plan_rel) = world.planned_ui_repo("app", pointer);
+    world.approve_plan(&repo, plan_rel);
+    let empty = world.transcript("empty", &Transcript::default());
+    let said = world.push(&repo, Some(&empty));
+    assert!(
+        advised(&said).contains("no browser check in this session carried"),
+        "{said:?}"
+    );
 
-    let w = World::new("no-section");
+    let world = World::new("no-section");
     let plain = "---\nstatus: active\n---\n# X\n\n## Preview\n\nevidence: nothing to see.\n";
-    let (repo, plan_rel) = w.planned_ui_repo("app", plain);
-    w.approve_plan(&repo, plan_rel);
-    let empty = w.transcript("empty", &Transcript::default());
-    let said = w.push(&repo, Some(&empty));
-    assert!(advised(&said).contains("no browser check ran"), "{said:?}");
+    let (repo, plan_rel) = world.planned_ui_repo("app", plain);
+    world.approve_plan(&repo, plan_rel);
+    let empty = world.transcript("empty", &Transcript::default());
+    let said = world.push(&repo, Some(&empty));
+    assert!(
+        advised(&said).contains("no browser check in this session carried"),
+        "{said:?}"
+    );
 }
 
 #[test]
 fn a_check_completed_in_a_fork_side_transcript_counts() {
-    let w = World::new("fork");
-    let repo = w.ui_repo("app");
-    let main = w.transcript("main", &Transcript::default());
+    let world = World::new("fork");
+    let repo = world.ui_repo("app");
+    let main = world.transcript("main", &Transcript::default());
     let mut forked = Transcript::default();
-    forked.check(&w, &w.block(&repo), GOOD_REPORT);
-    w.side_transcript("main", "fork-1", &forked);
-    assert_eq!(w.push(&repo, Some(&main)), Said::Silent);
+    forked.check(&world, &world.block(&repo), GOOD_REPORT);
+    world.side_transcript("main", "fork-1", &forked);
+    assert_eq!(world.push(&repo, Some(&main)), Said::Silent);
 }
 
 #[test]
 fn a_check_in_another_sessions_transcript_does_not_count() {
-    let w = World::new("other-session");
-    let repo = w.ui_repo("app");
-    let main = w.transcript("main", &Transcript::default());
+    let world = World::new("other-session");
+    let repo = world.ui_repo("app");
+    let main = world.transcript("main", &Transcript::default());
     let mut theirs = Transcript::default();
-    theirs.check(&w, &w.block(&repo), GOOD_REPORT);
-    w.transcript("other", &theirs);
-    w.side_transcript("other", "fork-1", &theirs);
-    let said = w.push(&repo, Some(&main));
-    assert!(advised(&said).contains("no browser check ran"), "{said:?}");
+    theirs.check(&world, &world.block(&repo), GOOD_REPORT);
+    world.transcript("other", &theirs);
+    world.side_transcript("other", "fork-1", &theirs);
+    let said = world.push(&repo, Some(&main));
+    assert!(
+        advised(&said).contains("no browser check in this session carried"),
+        "{said:?}"
+    );
 }
 
 #[test]
 fn the_stance_ladder_deny_holds_a_missing_check() {
-    let w = World::new("deny");
-    let repo = w.ui_repo("app");
-    let empty = w.transcript("empty", &Transcript::default());
-    w.set_global("greenbelay.push-browser-check.stance", "deny");
-    match w.push(&repo, Some(&empty)) {
-        Said::Deny(text) => assert!(text.contains(&w.tree(&repo)), "names the tree: {text}"),
+    let world = World::new("deny");
+    let repo = world.ui_repo("app");
+    let empty = world.transcript("empty", &Transcript::default());
+    world.set_global("greenbelay.push-browser-check.stance", "deny");
+    match world.push(&repo, Some(&empty)) {
+        Said::Deny(text) => assert!(text.contains(&world.tree(&repo)), "names the tree: {text}"),
         other => panic!("expected a refusal, got {other:?}"),
     }
-    // Under deny an unreadable push shape is held, not waved through.
-    assert!(matches!(
-        w.push_cmd(&repo, Some(&empty), "git push --all origin"),
-        Said::Deny(_)
-    ));
+    // Under deny an unreadable push shape is held by this rule, not waved
+    // through, and the hold says what to type instead.
+    match world.push_cmd(&repo, Some(&empty), "git push --all origin") {
+        Said::Deny(text) => {
+            assert!(text.contains("browser-checked cannot be told"), "{text}");
+            assert!(text.contains("git push origin <branch>"), "{text}");
+        }
+        other => panic!("expected a refusal of --all, got {other:?}"),
+    }
 }
 
 #[test]
 fn a_missing_browser_check_agent_is_a_gap_said_as_advice_at_advise_and_under_deny() {
-    let w = World::new("gap");
-    let repo = w.ui_repo("app");
-    let empty = w.transcript("empty", &Transcript::default());
-    std::fs::remove_dir_all(w.root.join("claude").join("agents")).unwrap();
+    let world = World::new("gap");
+    let repo = world.ui_repo("app");
+    let empty = world.transcript("empty", &Transcript::default());
+    std::fs::remove_dir_all(world.root.join("claude").join("agents")).unwrap();
     for stance in ["advise", "deny"] {
-        w.set_global("greenbelay.push-browser-check.stance", stance);
-        let said = w.push(&repo, Some(&empty));
+        world.set_global("greenbelay.push-browser-check.stance", stance);
+        let said = world.push(&repo, Some(&empty));
         let text = advised(&said);
         assert!(
             text.contains("no `browser-check` agent is installed"),
@@ -606,20 +623,21 @@ fn a_missing_browser_check_agent_is_a_gap_said_as_advice_at_advise_and_under_den
         );
         assert!(!text.contains("grh"), "names no sibling: {text}");
         assert!(
-            w.journal("push-browser-check")
+            world
+                .journal("push-browser-check")
                 .last()
                 .is_some_and(|l| l.contains("check=gap")),
             "{stance}: {:?}",
-            w.journal("push-browser-check")
+            world.journal("push-browser-check")
         );
     }
 }
 
 #[test]
 fn a_push_of_another_worktree_names_that_worktrees_tree() {
-    let w = World::new("worktree");
-    let repo = w.ui_repo("app");
-    let other = w.root.join("app-wt-y");
+    let world = World::new("worktree");
+    let repo = world.ui_repo("app");
+    let other = world.root.join("app-wt-y");
     git(
         &repo,
         &[
@@ -634,18 +652,18 @@ fn a_push_of_another_worktree_names_that_worktrees_tree() {
     );
     git(&other, &["config", "user.email", "t@t"]);
     git(&other, &["config", "user.name", "t"]);
-    w.commit(&other, &[("src/Other.tsx", "export const B = () => 2;\n")]);
-    assert_ne!(w.tree(&repo), w.tree(&other));
-    let empty = w.transcript("empty", &Transcript::default());
-    let said = w.push_cmd(
+    world.commit(&other, &[("src/Other.tsx", "export const B = () => 2;\n")]);
+    assert_ne!(world.tree(&repo), world.tree(&other));
+    let empty = world.transcript("empty", &Transcript::default());
+    let said = world.push_cmd(
         &repo,
         Some(&empty),
         &format!("git -C {} push -u origin feat/y", other.display()),
     );
     let text = advised(&said);
-    let block = w.block(&other);
+    let block = world.block(&other);
     assert!(text.lines().any(|l| l == block), "{block}: {text}");
-    assert!(!text.contains(&w.tree(&repo)), "{text}");
+    assert!(!text.contains(&world.tree(&repo)), "{text}");
     assert!(
         text.contains(&format!(
             "tree-sha --block -C {} {}",
@@ -659,15 +677,15 @@ fn a_push_of_another_worktree_names_that_worktrees_tree() {
 
 #[test]
 fn push_previews_evidence_journal_detail_is_unchanged() {
-    let w = World::new("preview-evidence");
-    w.set_global("greenbelay.push-preview.stance", "advise");
+    let world = World::new("preview-evidence");
+    world.set_global("greenbelay.push-preview.stance", "advise");
     let plan = "---\nstatus: active\n---\n# X\n\n## Preview\n\nevidence: nothing visible is left to judge.\n";
-    let (repo, plan_rel) = w.planned_ui_repo("app", plan);
-    let sha = w.approve_plan(&repo, plan_rel);
-    let empty = w.transcript("empty", &Transcript::default());
-    w.set_global("greenbelay.push-browser-check.stance", "observe");
-    assert_eq!(w.push(&repo, Some(&empty)), Said::Silent);
-    let line = w
+    let (repo, plan_rel) = world.planned_ui_repo("app", plan);
+    let sha = world.approve_plan(&repo, plan_rel);
+    let empty = world.transcript("empty", &Transcript::default());
+    world.set_global("greenbelay.push-browser-check.stance", "observe");
+    assert_eq!(world.push(&repo, Some(&empty)), Said::Silent);
+    let line = world
         .journal("push-preview")
         .into_iter()
         .find(|l| l.contains(" evidence "))

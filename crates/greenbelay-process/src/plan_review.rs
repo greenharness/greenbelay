@@ -3327,7 +3327,7 @@ mod tests {
     #[test]
     fn side_transcripts_lists_only_this_sessions_subagents() {
         let root = std::env::temp_dir().join(format!("greenbelay-side-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&root); // a leftover of an earlier run, or none
         let write = |rel: &str| {
             let file = root.join(rel);
             std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -3349,6 +3349,6 @@ mod tests {
             ]
         );
         assert!(side_transcripts(&root.join("p/none.jsonl")).is_empty());
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&root); // a leftover of an earlier run, or none
     }
 }
