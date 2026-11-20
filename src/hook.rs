@@ -3525,6 +3525,9 @@ mod secret_read_tests {
         matches!(decision, Decision::Silent)
     }
 
+    // Unix only: the command embeds a temp path, and a Windows path's backslashes
+    // are escapes to the shell parser this guard reads commands with.
+    #[cfg(unix)]
     #[test]
     fn a_bash_read_refused_by_another_rule_leaves_the_path_unmarked() {
         let world = Isolated::new("bash", "");
@@ -3631,7 +3634,7 @@ mod secret_read_tests {
             secret_key(path, None),
             secret_key(std::path::Path::new("/h/.npmrc"), None)
         );
-        assert!(secret_key(path, Some("a1")).starts_with("secret-read /"));
+        assert!(secret_key(path, Some("a1")).starts_with("secret-read "));
     }
 
     #[test]
