@@ -3349,6 +3349,6 @@ mod tests {
             ]
         );
         assert!(side_transcripts(&root.join("p/none.jsonl")).is_empty());
-        let _ = std::fs::remove_dir_all(&root); // a leftover of an earlier run, or none
+        let _ = std::fs::remove_dir_all(&root); // scratch of this test: best effort
     }
 }

@@ -135,9 +135,9 @@ impl World {
     }
 
     fn id(&self) -> String {
-        let n = self.ids.get() + 1;
-        self.ids.set(n);
-        format!("toolu_{n:04}")
+        let next = self.ids.get() + 1;
+        self.ids.set(next);
+        format!("toolu_{next:04}")
     }
 
     fn hook(&self, payload: serde_json::Value) -> Said {
@@ -167,13 +167,17 @@ impl World {
         if stdout.trim().is_empty() {
             return Said::Silent;
         }
-        let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-        let o = &v["hookSpecificOutput"];
-        if let Some(reason) = o["permissionDecisionReason"].as_str() {
-            assert_eq!(o["permissionDecision"].as_str(), Some("deny"), "{stdout}");
+        let decision: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        let output = &decision["hookSpecificOutput"];
+        if let Some(reason) = output["permissionDecisionReason"].as_str() {
+            assert_eq!(
+                output["permissionDecision"].as_str(),
+                Some("deny"),
+                "{stdout}"
+            );
             return Said::Deny(reason.to_string());
         }
-        if let Some(text) = o["additionalContext"].as_str() {
+        if let Some(text) = output["additionalContext"].as_str() {
             return Said::Advise(text.to_string());
         }
         panic!("unexpected decision: {stdout}");
@@ -251,19 +255,19 @@ impl World {
             .collect()
     }
 
-    fn transcript(&self, name: &str, t: &Transcript) -> PathBuf {
+    fn transcript(&self, name: &str, transcript: &Transcript) -> PathBuf {
         let file = self.root.join(format!("{name}.jsonl"));
-        std::fs::write(&file, t.lines.join("\n") + "\n").unwrap();
+        std::fs::write(&file, transcript.lines.join("\n") + "\n").unwrap();
         file
     }
 
     /// A side transcript of the session whose own transcript is `name`:
     /// `<root>/<name>/subagents/<file>.jsonl`.
-    fn side_transcript(&self, name: &str, file: &str, t: &Transcript) -> PathBuf {
+    fn side_transcript(&self, name: &str, file: &str, transcript: &Transcript) -> PathBuf {
         let dir = self.root.join(name).join("subagents");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(format!("{file}.jsonl"));
-        std::fs::write(&path, t.lines.join("\n") + "\n").unwrap();
+        std::fs::write(&path, transcript.lines.join("\n") + "\n").unwrap();
         path
     }
 
@@ -302,8 +306,8 @@ struct Transcript {
 
 impl Transcript {
     /// A foreground launch of `agent` with `prompt` that completed with
-    /// `result`.
-    fn run(&mut self, world: &World, agent: &str, prompt: &str, result: &str) -> &mut Self {
+    /// `report`.
+    fn run(&mut self, world: &World, agent: &str, prompt: &str, report: &str) -> &mut Self {
         let id = world.id();
         self.lines.push(
             serde_json::json!({
@@ -320,7 +324,7 @@ impl Transcript {
                 "type": "user",
                 "message": {"role": "user", "content": [{
                     "type": "tool_result", "tool_use_id": id,
-                    "content": [{"type": "text", "text": result}]
+                    "content": [{"type": "text", "text": report}]
                 }]},
                 "toolUseResult": {"status": "completed", "agentType": agent, "content": []}
             })
@@ -329,13 +333,13 @@ impl Transcript {
         self
     }
 
-    /// A completed `browser-check` of `block` that reports `result`.
-    fn check(&mut self, world: &World, block: &str, result: &str) -> &mut Self {
+    /// A completed `browser-check` of `block` that reports `report`.
+    fn check(&mut self, world: &World, block: &str, report: &str) -> &mut Self {
         self.run(
             world,
             AGENT,
             &format!("{block}\nLook at the settings page.\n"),
-            result,
+            report,
         )
     }
 }
@@ -383,9 +387,9 @@ fn a_ui_push_with_no_check_is_advised_with_the_exact_tree_block_on_its_own_line(
 fn a_check_bound_to_the_pushed_tree_is_silent_and_remembered() {
     let world = World::new("bound");
     let repo = world.ui_repo("app");
-    let mut t = Transcript::default();
-    t.check(&world, &world.block(&repo), GOOD_REPORT);
-    let transcript = world.transcript("t", &t);
+    let mut session = Transcript::default();
+    session.check(&world, &world.block(&repo), GOOD_REPORT);
+    let transcript = world.transcript("t", &session);
     assert_eq!(world.push(&repo, Some(&transcript)), Said::Silent);
     let tree = world.tree(&repo);
     assert!(
@@ -402,9 +406,9 @@ fn a_check_of_an_older_tree_then_an_edit_is_advised_naming_both_trees() {
     let world = World::new("older");
     let repo = world.ui_repo("app");
     let old = world.tree(&repo);
-    let mut t = Transcript::default();
-    t.check(&world, &world.block(&repo), GOOD_REPORT);
-    let transcript = world.transcript("t", &t);
+    let mut session = Transcript::default();
+    session.check(&world, &world.block(&repo), GOOD_REPORT);
+    let transcript = world.transcript("t", &session);
     world.commit(&repo, &[("src/App.tsx", "export const A = () => 2;\n")]);
     let new = world.tree(&repo);
     let said = world.push(&repo, Some(&transcript));
@@ -432,9 +436,9 @@ fn a_report_that_reached_no_page_is_not_a_check() {
         ),
         ("no-url", "browser: playwright\nnot checked: everything"),
     ] {
-        let mut t = Transcript::default();
-        t.check(&world, &world.block(&repo), report);
-        let transcript = world.transcript(name, &t);
+        let mut session = Transcript::default();
+        session.check(&world, &world.block(&repo), report);
+        let transcript = world.transcript(name, &session);
         let said = world.push(&repo, Some(&transcript));
         let text = advised(&said);
         assert!(text.contains("reached no page"), "{name}: {text}");
@@ -462,9 +466,9 @@ fn a_test_only_ui_change_is_silent() {
 fn a_rebase_onto_a_moved_base_needs_a_new_check() {
     let world = World::new("rebase");
     let repo = world.ui_repo("app");
-    let mut t = Transcript::default();
-    t.check(&world, &world.block(&repo), GOOD_REPORT);
-    let transcript = world.transcript("t", &t);
+    let mut session = Transcript::default();
+    session.check(&world, &world.block(&repo), GOOD_REPORT);
+    let transcript = world.transcript("t", &session);
     let before = world.tree(&repo);
     git(&repo, &["checkout", "-q", "main"]);
     world.commit(&repo, &[("README.md", "readme, moved\n")]);

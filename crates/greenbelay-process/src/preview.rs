@@ -288,13 +288,13 @@ fn base_over_tracking(repo: &Path, t: &Target, tracking: String) -> String {
 
 /// Whether a branch push carries an interface change, or `None` when its
 /// files cannot be listed. Stops at the first file that counts.
-pub(crate) fn carries_ui(repo: &Path, t: &Target) -> Option<bool> {
-    let p = published(repo, t)?;
+pub(crate) fn carries_ui(repo: &Path, target: &Target) -> Option<bool> {
+    let p = published(repo, target)?;
     let mut packages = std::collections::HashMap::new();
     Some(
         p.files
             .iter()
-            .any(|f| counts_as_ui(repo, p.base.as_deref(), t, f, &mut packages)),
+            .any(|f| counts_as_ui(repo, p.base.as_deref(), target, f, &mut packages)),
     )
 }
 

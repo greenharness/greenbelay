@@ -150,9 +150,9 @@ enum Standing {
     Bound,
     /// A completed check of this tree reached no page.
     Unreachable,
-    /// The last check that reached a page read another tree.
+    /// A check of this session that reached a page read another tree.
     Older(String),
-    /// No check of this repository.
+    /// No completed check in this session carried this tree's TREE line.
     Missing,
 }
 
@@ -165,7 +165,7 @@ pub fn judge_push(context: &Context, cmd: &Simple, stance: Stance) -> Judged {
         Push::Refused(_) => return Judged::Decline("land-refused"),
         Push::Unresolvable { repo, shape } => {
             return if stance == Stance::Deny && repo.as_deref().is_some_and(crate::preview::gated) {
-                unknown(None, &format!("the push cannot be read: {shape}"))
+                unknown_shape(&format!("the push cannot be read: {shape}"))
             } else {
                 Judged::Decline("unresolvable")
             };
@@ -179,7 +179,7 @@ pub fn judge_push(context: &Context, cmd: &Simple, stance: Stance) -> Judged {
         match crate::preview::carries_ui(&repo, target) {
             None => {
                 if stance == Stance::Deny {
-                    return unknown(None, "the published files cannot be listed");
+                    return unknown_shape("the published files cannot be listed");
                 }
                 judged = Judged::Decline("files-unlisted");
             }
@@ -316,12 +316,26 @@ fn shell_word(word: &str) -> String {
     }
 }
 
+/// The push's shape or its files cannot be read: the way through is a shape
+/// the rule can read.
+fn unknown_shape(why: &str) -> Judged {
+    Judged::Say {
+        reason: format!(
+            "whether this push was browser-checked cannot be told: {why}. Push one branch by \
+             name (`git push origin <branch>`), then push again."
+        ),
+        excerpt: "tree=- check=unknown".to_string(),
+    }
+}
+
+/// The push names one branch, but what this session checked cannot be read:
+/// the way through is a check of this tree.
 fn unknown(tree: Option<&str>, why: &str) -> Judged {
     Judged::Say {
         reason: format!(
             concat!(
-                "whether this push was browser-checked cannot be told: {why}. Push one branch \
-                 by name (`git push origin <branch>`), or launch `browser-check` with the line `",
+                "whether this push was browser-checked cannot be told: {why}. Launch \
+                 `browser-check` with the line `",
                 greenbelay_guard::bin!(),
                 " tree-sha --block -C <repo> <rev>` prints in its brief, then push again."
             ),

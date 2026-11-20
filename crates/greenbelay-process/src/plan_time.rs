@@ -573,12 +573,12 @@ fn side_files(projects: &Path) -> Vec<(PathBuf, f64)> {
         };
         for s in sessions.flatten() {
             for path in crate::plan_review::session_side_transcripts(&s.path()) {
-                let m = std::fs::metadata(&path)
+                let modified_secs = std::fs::metadata(&path)
                     .and_then(|m| m.modified())
                     .ok()
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map_or(0.0, |d| d.as_secs_f64());
-                out.push((path, m));
+                out.push((path, modified_secs));
             }
         }
     }

@@ -71,9 +71,9 @@ gap too.
 The advice names the tree and prints its block alone on one line:
 
 ```
-This push changes the interface and no browser check in this session carried this tree's TREE line. Launch
-`browser-check` on the dev server serving this commit, with this line, on a line of its
-own, in its brief:
+This push changes the interface and no browser check in this session carried
+this tree's TREE line. Launch `browser-check` on the dev server serving this
+commit, with this line, on a line of its own, in its brief:
 <<<TREE repo=app sha=…>>>
 then push again. …
 ```
