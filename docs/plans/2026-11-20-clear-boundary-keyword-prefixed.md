@@ -101,7 +101,7 @@ before the loop resolves. The #298 lows are closed in the same branch.
 
 ## Phases
 
-- [ ] Phase 1: keyword-prefixed boundaries and the #298 lows. Files:
+- [x] Phase 1 (done 2026-11-20): keyword-prefixed boundaries and the #298 lows. Files:
   `crates/greenbelay-process/src/clear_boundary.rs`, `CHANGELOG.md`.
   - **One keyword set.** Add `fn command_words(words: &[Word]) -> &[Word]`
     that skips leading bare `then`, `do`, `else`, `elif`, `{`, `if`,
@@ -193,6 +193,31 @@ None.
     exactly one `unresolved loop-var worktree remove` row and one `cap`
     row, against two of each on `origin/main`. The `explain
     clear-at-boundary` watched total is noted beside it (2, against 4).
+
+## Verification record (Phase 1, 2026-11-20)
+
+| Check | Input | Expected | Observed |
+|---|---|---|---|
+| New tests | `cargo test -p greenbelay-process`, the three fixes reverted on a copy | red, then green | 5 of 6 new tests red with the fixes reverted. `two_boundaries_at_the_cap` passes on both, by design: it guards against over-silencing. All green at dcdeb386 and ff9f2e73 |
+| Corpus | `greenbelay corpus check`, branch binary | every case agrees | `clear-at-boundary 20 reviewed (11 negative), 0 unreviewed, precision 100%` |
+| Backtest (ADR-0060) | `rows.py` to 2026-11-20 (1,717 calls), `t23_backtest` on `origin/main` and on the branch | +21 found (19 to 11-18), none lost, dirs kept | +20 found to 11-20, +19 to 11-18 (matches t23's 19); lost 0; 0 rows lose a directory. The 21st regex hit is an inbox `printf` that quotes "do git worktree remove" inside single quotes, correctly not a boundary. 19 already-found calls gain a second, keyword-led boundary: 6 of them add a directory to the check (e.g. `/Perso/adr-lint`), and 2 add an `unresolved not-literal` shape from a later `$R` loop boundary. Each was read |
+| Low 2 rows | the same, `not-literal` → resolved | listed and read | 1 row: `cd …-wt-work-board && command grep -n setup relais.toml …`, now resolved, which is correct |
+| Unresolved share | the branch, all boundaries seen | ≤ 15% | 112/1,535 (7.3%) to 11-20; 108/1,383 (7.8%) to 11-18 (main: 99/1,364) |
+| Pilot, dirty | scratch HOME at deny, `P=<probe>; for w in x; do git -C $P worktree remove ../$w; done`, cwd elsewhere, probe modified | held | journal `pending uncommitted changes dir=probe`, no output |
+| Pilot, clean | same, probe committed and pushed | Continue | `{"decision":"block",…}`, journal `denied worktree remove` |
+| Pilot, loop variable | `for r in <probe>; do git -C $r worktree remove x; done` | one `unresolved loop-var` row | `watched … unresolved loop-var worktree remove`, then `denied worktree remove` |
+| Pilot, cap | state at `advices: 3`, two Stops on one boundary | 1 `unresolved` + 1 `cap` row | loop boundary: 1 + 1. Subshell boundary: branch 1 + 1; installed 6.5.0 (without #298's row) 0 + 2 `cap` |
+| Control | installed 6.5.0, the dirty, clean and loop pilots | the bug | `no boundary` on all three |
+
+## Implementation review
+
+- implementation-review: approve-with-changes twice. Fixed: the exact keyword asserts, the record and the Phase 1 tick. Deliberate: brace-expanded wrapped words (contrived). 63k+33k, 79+47 s.
+- backend: approve-with-changes, then approve. Fixed: an unreadable wrapped word stays unread; the exact asserts. Deliberate: `command -v "$tool"` stays unread (cautious). 68k+26k, 56+23 s.
+- lang:rust: approve-with-changes, then approve. Fixed: `let _saved`, the asserts, the doc wording. 57k+26k, 61+21 s.
+- unix: approve. Deliberate: `!`/`time`/`case`-arm prefixes (Non-goals); `command -v cd` stays cautious. 46k, 42 s.
+- tui: approve. Fixed: the CHANGELOG wording and the keyword order. 50k, 37 s.
+
+**Next:** Phase 2, the decisions record, after this PR merges.
 
 ## Decision log
 
