@@ -58,10 +58,12 @@ fn triggers(cmd: &Simple) -> bool {
 
 /// A binary run straight out of a cargo build: `./target/debug/x`.
 fn built_binary(program: &str) -> bool {
-    let p = program.replace('\\', "/");
+    let normalized = program.replace('\\', "/");
     ["target/debug/", "target/release/"]
         .iter()
-        .any(|t| p.starts_with(t) || p.contains(&format!("/{t}")))
+        .any(|build_dir| {
+            normalized.starts_with(build_dir) || normalized.contains(&format!("/{build_dir}"))
+        })
 }
 
 /// A run behind a wrapper: `greengate slot run … -- cargo test` (queued, but a
@@ -87,8 +89,8 @@ fn queued(cmd: &Simple) -> bool {
         return false;
     }
     match args[sep + 1..].split_first() {
-        Some((p, rest)) if !p.quoted => {
-            !exempt_words(rest) && (is_heavy(&p.text, rest) || built_binary(&p.text))
+        Some((wrapped, rest)) if !wrapped.quoted => {
+            !exempt_words(rest) && (is_heavy(&wrapped.text, rest) || built_binary(&wrapped.text))
         }
         _ => false,
     }
@@ -137,7 +139,7 @@ pub fn before(bash: &Bash) {
     let Some(store) = home_print::store() else {
         eprintln!(concat!(
             crate::bin!(),
-            ": home-fingerprint-drift: no state directory, so no snapshot was kept"
+            ": home-fingerprint-drift: no snapshot was kept: neither CLAUDE_CONFIG_DIR, HOME nor USERPROFILE names a state directory"
         ));
         return;
     };
@@ -153,14 +155,21 @@ pub fn before(bash: &Bash) {
 }
 
 fn verify(context: &Context, claim: &Claim) -> Verdict {
-    let Ok(id) = home_print::RecordId::try_from(context.tool_use_id) else {
-        return Verdict::Unknown("the tool_use_id names no single file");
+    let id = match home_print::RecordId::try_from(context.tool_use_id) {
+        Ok(id) => id,
+        Err(why) => return Verdict::Unknown(why),
     };
     let Some(store) = home_print::store() else {
         return Verdict::Unknown("no state directory");
     };
-    let Some(before) = home_print::take(&store, &id) else {
-        return Verdict::Unknown("no snapshot was kept before the command");
+    let before = match home_print::take(&store, &id) {
+        home_print::Taken::Kept(snapshot) => snapshot,
+        home_print::Taken::Absent => {
+            return Verdict::Unknown("no snapshot was kept before the command")
+        }
+        home_print::Taken::OtherVersion => {
+            return Verdict::Unknown("the snapshot was kept by another greenbelay version")
+        }
     };
     let after = home_print::as_recorded(&home_print::snapshot(&before.roots));
     let changed = home_print::diff(&before, &after);
@@ -175,15 +184,22 @@ fn verify(context: &Context, claim: &Claim) -> Verdict {
 }
 
 /// Starts on its own line: [`reason`] ends with one, and `decision::phrase`
-/// joins the two with a space. Wrapped under 80 columns.
+/// then joins the two without a space. Wrapped under [`COLUMNS`].
 const REMEDY: &str = "Inspect each file (`git config --list --show-origin` for git config);\n\
 the snapshot keeps hashes, not contents, so compare with your dotfiles\n\
 source or a backup. If this command changed them, restore them and rerun\n\
 it with HOME and XDG_CONFIG_HOME set to a scratch directory.";
 
-/// The longest command excerpt the heading quotes: with the
-/// `greenbelay/home-fingerprint-drift: ` prefix, the heading fits 80 columns.
-const SHOWN: usize = 24;
+/// The widest line the advice may print.
+const COLUMNS: usize = 80;
+
+/// How many characters of the command a heading can quote and still fit
+/// [`COLUMNS`] behind the `greenbelay/home-fingerprint-drift: ` prefix:
+/// `{heading} `…` ran:` adds two backticks, a space and ` ran:`.
+fn shown_width(heading: &str) -> usize {
+    let prefix = crate::names::BIN.len() + 1 + ASSERTION.id.len() + 2;
+    COLUMNS.saturating_sub(prefix + heading.chars().count() + " `` ran:".len())
+}
 
 fn reason(
     command: &str,
@@ -196,17 +212,18 @@ fn reason(
         .unwrap_or(command)
         .trim()
         .replace(['\n', '\r'], " ");
-    let shown: String = if clause.chars().count() > SHOWN {
-        let mut cut: String = clause.chars().take(SHOWN - 1).collect();
-        cut.push('…');
-        cut
-    } else {
-        clause
-    };
     let heading = if changed.iter().any(|(_, change)| change.is_real()) {
         "Changed while"
     } else {
         "Could not check while"
+    };
+    let width = shown_width(heading).max(2);
+    let shown: String = if clause.chars().count() > width {
+        let mut cut: String = clause.chars().take(width - 1).collect();
+        cut.push('…');
+        cut
+    } else {
+        clause
     };
     let mut text = format!("{heading} `{shown}` ran:");
     for (path, change) in changed {
@@ -321,18 +338,23 @@ mod tests {
             what: String::new(),
             span: 0..command.len(),
         };
-        let changed = vec![(path("/h/.gitconfig"), home_print::Change::Modified)];
-        let said = crate::decision::phrase(
-            ASSERTION.id,
-            &reason(command, &claim, &changed, Some(std::path::Path::new("/h"))),
-            REMEDY,
-        );
-        for line in said.lines() {
-            assert!(
-                line.chars().count() <= 80,
-                "{} columns: {line}",
-                line.chars().count()
+        for change in [home_print::Change::Modified, home_print::Change::Unreadable] {
+            let changed = vec![(path("/h/.gitconfig"), change)];
+            let said = crate::decision::phrase(
+                ASSERTION.id,
+                &reason(command, &claim, &changed, Some(std::path::Path::new("/h"))),
+                REMEDY,
             );
+            let lines: Vec<&str> = said.lines().collect();
+            assert_eq!(lines[0].chars().count(), COLUMNS, "{}", lines[0]);
+            for line in &lines {
+                assert!(
+                    line.chars().count() <= COLUMNS,
+                    "{} columns: {line}",
+                    line.chars().count()
+                );
+            }
+            assert!(lines[3].starts_with("Inspect"), "{said}");
         }
     }
 

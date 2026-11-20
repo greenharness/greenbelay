@@ -197,6 +197,10 @@ fn clamp(text: &str) -> String {
 pub fn phrase(rule_id: &str, reason: &str, remedy: &str) -> String {
     if remedy.is_empty() {
         format!("{BIN}/{rule_id}: {reason}")
+    } else if reason.ends_with('\n') {
+        // A reason that ends its own line puts the remedy at the start of the
+        // next one, with no stray space in front of it.
+        format!("{BIN}/{rule_id}: {reason}{remedy}")
     } else {
         format!("{BIN}/{rule_id}: {reason} {remedy}")
     }
@@ -210,6 +214,15 @@ mod tests {
     fn a_decision_message_starts_with_the_product_name() {
         assert!(phrase("some-rule", "why", "").starts_with("greenbelay/some-rule: "));
         assert!(phrase("some-rule", "why", "do this").starts_with("greenbelay/some-rule: "));
+    }
+
+    #[test]
+    fn a_remedy_after_a_reason_ending_its_line_starts_the_next_one() {
+        assert_eq!(phrase("r", "why", "do this"), "greenbelay/r: why do this");
+        assert_eq!(
+            phrase("r", "why\n", "do this"),
+            "greenbelay/r: why\ndo this"
+        );
     }
 
     #[test]

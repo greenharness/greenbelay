@@ -52,7 +52,7 @@ changed:
 greenbelay/home-fingerprint-drift: Changed while `cargo test` ran:
   /Users/me/repo/.git/config (modified)
 An edit made at the same time, by you or another session, shows too.
- Inspect each file (`git config --list --show-origin` for git config);
+Inspect each file (`git config --list --show-origin` for git config);
 the snapshot keeps hashes, not contents, so compare with your dotfiles
 source or a backup. If this command changed them, restore them and rerun
 it with HOME and XDG_CONFIG_HOME set to a scratch directory.
@@ -80,8 +80,8 @@ over 1 MiB is fingerprinted by its size and modification time, never read. FIFOs
 sockets and devices are never opened. A directory counts at most 500 files in
 byte order; past that the change list ends with `(not checked: over 500
 files)`, shown only beside a real change. A file readable on one side only
-prints `(not checked: unreadable)`. The record carries a version line; one
-another version wrote is not compared. Paths under `HOME` print as `~/…` on unix,
+prints `(not checked: unreadable)`. A record another greenbelay version wrote
+is not compared. Paths under `HOME` print as `~/…` on unix,
 others as absolute paths.
 
 It is advise-only and cannot refuse. It prevents nothing and restores

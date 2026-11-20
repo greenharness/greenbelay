@@ -29,7 +29,7 @@
 //! marked truncated.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -64,9 +64,16 @@ pub enum Root {
 /// What one path was when the snapshot was taken.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum State {
-    /// A regular file: content hash (or, over [`HASH_LIMIT`], `mtime:<ns>`),
-    /// size, and mode bits (0 off unix).
+    /// A regular file up to [`HASH_LIMIT`]: content hash, size, and mode
+    /// bits (0 off unix).
     File { sha: String, size: u64, mode: u32 },
+    /// A regular file over [`HASH_LIMIT`], never read: modification time in
+    /// nanoseconds since the epoch, size, and mode bits.
+    Large {
+        modified_ns: u128,
+        size: u64,
+        mode: u32,
+    },
     /// A symlink, by the hash of its target.
     Link(String),
     /// The path exists but could not be read.
@@ -268,14 +275,9 @@ fn sorted_entries(dir: &Path) -> Vec<PathBuf> {
         return Vec::new();
     };
     let mut entries: Vec<PathBuf> = listing.flatten().map(|entry| entry.path()).collect();
-    entries.sort_by(|left, right| {
-        let key = |path: &PathBuf| {
-            path.file_name()
-                .map(OsStr::as_encoded_bytes)
-                .map(<[u8]>::to_vec)
-        };
-        key(left).cmp(&key(right))
-    });
+    // `OsStr` orders by its encoded bytes: byte order on unix, WTF-8 order
+    // on Windows, the same on both snapshots either way.
+    entries.sort_by(|left, right| left.file_name().cmp(&right.file_name()));
     entries
 }
 
@@ -344,8 +346,8 @@ fn state_of(path: &Path, read: Reader<'_>) -> Option<State> {
             .ok()
             .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok());
         return Some(match modified {
-            Some(since) => State::File {
-                sha: format!("mtime:{}", since.as_nanos()),
+            Some(since) => State::Large {
+                modified_ns: since.as_nanos(),
                 size: meta.len(),
                 mode: mode_of(&meta),
             },
@@ -455,6 +457,11 @@ pub fn encode(snapshot: &Snapshot) -> String {
         let Some(path) = field(path) else { continue };
         let state = match state {
             State::File { sha, size, mode } => format!("file\t{sha}\t{size}\t{mode}"),
+            State::Large {
+                modified_ns,
+                size,
+                mode,
+            } => format!("large\t{modified_ns}\t{size}\t{mode}"),
             State::Link(target) => format!("link\t{target}"),
             State::Unreadable => "unreadable".to_string(),
         };
@@ -467,16 +474,17 @@ pub fn encode(snapshot: &Snapshot) -> String {
 /// is left out here too, so the snapshot after a command compares like for
 /// like with the one kept before it and such a file never shows as added.
 pub fn as_recorded(snapshot: &Snapshot) -> Snapshot {
-    decode(&encode(snapshot)).unwrap_or_default()
+    decode_body(encode(snapshot).lines().skip(1))
 }
 
-/// [`encode`] read back; `None` without this version's [`HEADER`]. A line
-/// it does not know is skipped.
+/// [`encode`] read back; `None` without this version's [`HEADER`].
 pub fn decode(text: &str) -> Option<Snapshot> {
     let mut lines = text.lines();
-    if lines.next() != Some(HEADER) {
-        return None;
-    }
+    (lines.next() == Some(HEADER)).then(|| decode_body(lines))
+}
+
+/// The lines after the header; a line it does not know is skipped.
+fn decode_body<'a>(lines: impl Iterator<Item = &'a str>) -> Snapshot {
     let mut snapshot = Snapshot::default();
     for line in lines {
         let fields: Vec<&str> = line.split('\t').collect();
@@ -509,6 +517,21 @@ pub fn decode(text: &str) -> Option<Snapshot> {
                     },
                 );
             }
+            ["path", path, "large", modified_ns, size, mode] => {
+                let (Ok(modified_ns), Ok(size), Ok(mode)) =
+                    (modified_ns.parse(), size.parse(), mode.parse())
+                else {
+                    continue;
+                };
+                snapshot.paths.insert(
+                    PathBuf::from(path),
+                    State::Large {
+                        modified_ns,
+                        size,
+                        mode,
+                    },
+                );
+            }
             ["path", path, "link", target] => {
                 snapshot
                     .paths
@@ -522,7 +545,7 @@ pub fn decode(text: &str) -> Option<Snapshot> {
             _ => {}
         }
     }
-    Some(snapshot)
+    snapshot
 }
 
 /// How long a record nobody came back for is kept: an interrupted command
@@ -564,13 +587,27 @@ pub fn keep(store: &Path, id: &RecordId, snapshot: &Snapshot) -> io::Result<()> 
     Ok(())
 }
 
-/// Read and remove the record kept for this call; `None` when there is
-/// none, or it was written by another version.
-pub fn take(store: &Path, id: &RecordId) -> Option<Snapshot> {
+/// What [`take`] found for one call.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Taken {
+    Kept(Snapshot),
+    /// No record: the PreToolUse kept none, or it could not be read.
+    Absent,
+    /// A record without this version's [`HEADER`].
+    OtherVersion,
+}
+
+/// Read and remove the record kept for this call.
+pub fn take(store: &Path, id: &RecordId) -> Taken {
     let path = store.join(&id.0);
-    let text = std::fs::read_to_string(&path).ok()?;
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Taken::Absent;
+    };
     let _ = std::fs::remove_file(&path); // best-effort: a leftover is pruned after a day
-    decode(&text)
+    match decode(&text) {
+        Some(snapshot) => Taken::Kept(snapshot),
+        None => Taken::OtherVersion,
+    }
 }
 
 fn prune(store: &Path) {
@@ -732,10 +769,7 @@ mod tests {
         let roots = home.roots(None);
         let never: Reader<'_> = &|path| panic!("read {}", path.display());
         let before = snapshot_with(&roots, never);
-        assert!(matches!(
-            before.paths.get(&big),
-            Some(State::File { sha, .. }) if sha.starts_with("mtime:")
-        ));
+        assert!(matches!(before.paths.get(&big), Some(State::Large { .. })));
         let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
         std::fs::File::options()
             .write(true)
@@ -915,6 +949,14 @@ mod tests {
                     },
                 ),
                 (PathBuf::from("/h/.ssh/l"), State::Link("cd".to_string())),
+                (
+                    PathBuf::from("/h/.ssh/m"),
+                    State::Large {
+                        modified_ns: 7,
+                        size: 2_000_000,
+                        mode: 384,
+                    },
+                ),
                 (PathBuf::from("/h/.ssh/u"), State::Unreadable),
             ]),
             truncated: vec![PathBuf::from("/h/.ssh")],
@@ -926,6 +968,7 @@ mod tests {
                     cut\t/h/.ssh\n\
                     path\t/h/.gitconfig\tfile\tab\t3\t420\n\
                     path\t/h/.ssh/l\tlink\tcd\n\
+                    path\t/h/.ssh/m\tlarge\t7\t2000000\t384\n\
                     path\t/h/.ssh/u\tunreadable\n";
         assert_eq!(encode(&snapshot), want);
         assert_eq!(decode(want), Some(snapshot));
@@ -967,8 +1010,19 @@ mod tests {
         let taken = snapshot(&home.roots(None));
         let id = RecordId::try_from("toolu_1").unwrap();
         keep(&store, &id, &taken).unwrap();
-        assert_eq!(take(&store, &id), Some(taken));
-        assert_eq!(take(&store, &id), None);
+        assert_eq!(take(&store, &id), Taken::Kept(taken));
+        assert_eq!(take(&store, &id), Taken::Absent);
+    }
+
+    #[test]
+    fn a_record_another_version_wrote_is_taken_as_such_and_removed() {
+        let home = Scratch::new("otherver");
+        let store = home.join("home");
+        std::fs::create_dir_all(&store).unwrap();
+        std::fs::write(store.join("t"), "homeprint/0\nroot\tfile\t/h/x\n").unwrap();
+        let id = RecordId::try_from("t").unwrap();
+        assert_eq!(take(&store, &id), Taken::OtherVersion);
+        assert_eq!(take(&store, &id), Taken::Absent);
     }
 
     #[test]
