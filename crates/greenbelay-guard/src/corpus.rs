@@ -331,6 +331,10 @@ const EMBEDDED: &[(&str, &str)] = &[
         "suppressions-override",
         include_str!("../tests/corpus/suppressions-override.cases"),
     ),
+    (
+        "secret-read",
+        include_str!("../tests/corpus/secret-read.cases"),
+    ),
 ];
 
 /// The compiled-in corpus for a rule, if the table has one.
@@ -740,6 +744,7 @@ impl ReadCase {
 fn read_judge(rule: &str) -> Option<fn(&ReadCase) -> bool> {
     match rule {
         "read-unbounded-large" => Some(crate::rules::read_unbounded_large::judge_case),
+        "secret-read" => Some(crate::rules::secret_read::judge_case),
         _ => None,
     }
 }

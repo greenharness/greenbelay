@@ -66,6 +66,7 @@ pub mod read_unbounded_large;
 pub mod relais_run_forks;
 pub mod release_tag_push;
 pub mod screenshot_in_main_session;
+pub mod secret_read;
 pub mod sed_in_place;
 pub mod stale_base;
 pub mod stat_bsd_format;
