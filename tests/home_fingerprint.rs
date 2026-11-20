@@ -23,7 +23,7 @@ impl Fixture {
             std::process::id(),
             std::thread::current().id()
         ));
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&root); // absent on a fresh run
         let home = root.join("home");
         let config = root.join("claude");
         let xdg = root.join("xdg");
@@ -108,6 +108,12 @@ impl Fixture {
     }
 }
 
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root); // best-effort: temp is cleaned eventually
+    }
+}
+
 fn context(stdout: &str) -> String {
     serde_json::from_str::<serde_json::Value>(stdout)
         .ok()
@@ -130,10 +136,10 @@ fn ends_with_path(text: &str, tail: &Path, change: &str) -> bool {
 
 #[test]
 fn a_test_run_that_writes_the_repo_config_is_named() {
-    let f = Fixture::new("repo-config");
-    assert_eq!(f.event("PreToolUse", "hf1", "cargo test"), "");
-    f.git_config_local();
-    let said = context(&f.event("PostToolUse", "hf1", "cargo test"));
+    let fixture = Fixture::new("repo-config");
+    assert_eq!(fixture.event("PreToolUse", "hf1", "cargo test"), "");
+    fixture.git_config_local();
+    let said = context(&fixture.event("PostToolUse", "hf1", "cargo test"));
     assert!(said.contains("home-fingerprint-drift"), "{said}");
     assert!(
         ends_with_path(&said, &Path::new(".git").join("config"), "modified"),
@@ -144,9 +150,9 @@ fn a_test_run_that_writes_the_repo_config_is_named() {
 
 #[test]
 fn a_test_run_that_writes_nothing_is_silent() {
-    let f = Fixture::new("quiet");
-    assert_eq!(f.event("PreToolUse", "hf2", "cargo test"), "");
-    assert_eq!(f.event("PostToolUse", "hf2", "cargo test"), "");
+    let fixture = Fixture::new("quiet");
+    assert_eq!(fixture.event("PreToolUse", "hf2", "cargo test"), "");
+    assert_eq!(fixture.event("PostToolUse", "hf2", "cargo test"), "");
 }
 
 /// The 2026-11-15 leak rewrote `~/.config/git/config`: replayed under a
@@ -154,46 +160,61 @@ fn a_test_run_that_writes_nothing_is_silent() {
 /// PostToolUse of the same id has no snapshot left to compare.
 #[test]
 fn the_11_15_rewrite_of_the_xdg_git_config_warns_once() {
-    let f = Fixture::new("xdg");
-    assert_eq!(f.event("PreToolUse", "hf3", "cargo test --workspace"), "");
+    let fixture = Fixture::new("xdg");
+    assert_eq!(
+        fixture.event("PreToolUse", "hf3", "cargo test --workspace"),
+        ""
+    );
     std::fs::write(
-        f.xdg.join("git").join("config"),
+        fixture.xdg.join("git").join("config"),
         "[core]\n\thooksPath = x\n",
     )
     .unwrap();
-    let said = context(&f.event("PostToolUseFailure", "hf3", "cargo test --workspace"));
+    let said = context(&fixture.event("PostToolUseFailure", "hf3", "cargo test --workspace"));
     assert!(
         ends_with_path(&said, &Path::new("git").join("config"), "modified"),
         "{said}"
     );
     assert_eq!(
-        f.event("PostToolUseFailure", "hf3", "cargo test --workspace"),
+        fixture.event("PostToolUseFailure", "hf3", "cargo test --workspace"),
         ""
     );
 }
 
+/// The store is first shown to fill for a test run, so an empty count for
+/// `git status` cannot come from looking in the wrong directory.
 #[test]
 fn a_command_that_is_not_a_test_run_keeps_no_snapshot() {
-    let f = Fixture::new("other");
-    assert_eq!(f.event("PreToolUse", "hf4", "git status"), "");
-    let store = f.config.join("greenbelay").join("previews").join("home");
-    let kept = std::fs::read_dir(&store).map(|d| d.count()).unwrap_or(0);
-    assert_eq!(kept, 0, "{}", store.display());
-    f.git_config_local();
-    assert_eq!(f.event("PostToolUse", "hf4", "git status"), "");
+    let fixture = Fixture::new("other");
+    let store = fixture
+        .config
+        .join("greenbelay")
+        .join("previews")
+        .join("home");
+    let kept = || {
+        std::fs::read_dir(&store)
+            .map(|dir| dir.count())
+            .unwrap_or(0)
+    };
+    assert_eq!(fixture.event("PreToolUse", "hf4a", "cargo test"), "");
+    assert_eq!(kept(), 1, "{}", store.display());
+    assert_eq!(fixture.event("PreToolUse", "hf4b", "git status"), "");
+    assert_eq!(kept(), 1, "{}", store.display());
+    fixture.git_config_local();
+    assert_eq!(fixture.event("PostToolUse", "hf4b", "git status"), "");
 }
 
 #[test]
 fn a_new_ssh_file_under_home_is_named() {
-    let f = Fixture::new("ssh");
+    let fixture = Fixture::new("ssh");
     assert_eq!(
-        f.event("PreToolUse", "hf5", "./target/debug/tool migrate"),
+        fixture.event("PreToolUse", "hf5", "./target/debug/tool migrate"),
         ""
     );
-    std::fs::create_dir_all(f.home.join(".ssh")).unwrap();
-    std::fs::write(f.home.join(".ssh").join("config"), "Host *\n").unwrap();
-    std::fs::write(f.home.join(".ssh").join("known_hosts"), "h\n").unwrap();
-    let said = context(&f.event("PostToolUse", "hf5", "./target/debug/tool migrate"));
+    std::fs::create_dir_all(fixture.home.join(".ssh")).unwrap();
+    std::fs::write(fixture.home.join(".ssh").join("config"), "Host *\n").unwrap();
+    std::fs::write(fixture.home.join(".ssh").join("known_hosts"), "h\n").unwrap();
+    let said = context(&fixture.event("PostToolUse", "hf5", "./target/debug/tool migrate"));
     assert!(
         ends_with_path(&said, &Path::new(".ssh").join("config"), "added"),
         "{said}"

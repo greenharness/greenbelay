@@ -104,16 +104,20 @@ fn examine(parsed: &Parsed) -> Option<Claim> {
 
 /// PreToolUse, for a command that is going to run in the foreground: keep
 /// the fingerprint the PostToolUse compares against. Silent and best-effort:
-/// a snapshot that cannot be kept leaves the assertion `unverified`.
+/// a snapshot that cannot be kept says so on stderr and leaves the assertion
+/// `unverified`.
 pub fn before(bash: &Bash) {
-    if bash.background || !home_print::usable_id(&bash.tool_use_id) {
+    if bash.background {
         return;
     }
+    let Ok(id) = home_print::RecordId::try_from(bash.tool_use_id.as_str()) else {
+        return;
+    };
     let parsed = crate::shell::lex(&bash.command);
     let Some(cmd) = trigger(&parsed) else {
         return;
     };
-    let ctx = Context {
+    let context = Context {
         platform: None,
         cwd: &bash.cwd,
         parsed: &parsed,
@@ -127,27 +131,35 @@ pub fn before(bash: &Bash) {
         session: &bash.session,
         failed: false,
     };
-    let git_dir = home_print::git_common_dir(&ctx.cwd_at(cmd.at));
-    let roots = home_print::watched(&|k| std::env::var_os(k), git_dir.as_deref());
-    let snap = home_print::snapshot(&roots);
-    if let Some(store) = home_print::store() {
-        if let Err(e) = home_print::keep(&store, &bash.tool_use_id, &snap) {
-            eprintln!(
-                concat!(
-                    crate::bin!(),
-                    ": home-fingerprint-drift: could not keep the snapshot: {}"
-                ),
-                e
-            );
-        }
+    let git_dir = home_print::git_common_dir(&context.cwd_at(cmd.at));
+    let roots = home_print::watched(&|key| std::env::var_os(key), git_dir.as_deref());
+    let snapshot = home_print::snapshot(&roots);
+    let Some(store) = home_print::store() else {
+        eprintln!(concat!(
+            crate::bin!(),
+            ": home-fingerprint-drift: no state directory, so no snapshot was kept"
+        ));
+        return;
+    };
+    if let Err(e) = home_print::keep(&store, &id, &snapshot) {
+        eprintln!(
+            concat!(
+                crate::bin!(),
+                ": home-fingerprint-drift: could not keep the snapshot: {}"
+            ),
+            e
+        );
     }
 }
 
-fn verify(ctx: &Context, claim: &Claim) -> Verdict {
+fn verify(context: &Context, claim: &Claim) -> Verdict {
+    let Ok(id) = home_print::RecordId::try_from(context.tool_use_id) else {
+        return Verdict::Unknown("the tool_use_id names no single file");
+    };
     let Some(store) = home_print::store() else {
         return Verdict::Unknown("no state directory");
     };
-    let Some(before) = home_print::take(&store, ctx.tool_use_id) else {
+    let Some(before) = home_print::take(&store, &id) else {
         return Verdict::Unknown("no snapshot was kept before the command");
     };
     let after = home_print::as_recorded(&home_print::snapshot(&before.roots));
@@ -155,21 +167,23 @@ fn verify(ctx: &Context, claim: &Claim) -> Verdict {
     if changed.is_empty() {
         return Verdict::Held;
     }
-    let home = std::env::var_os("HOME")
-        .filter(|h| !h.is_empty())
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(std::path::PathBuf::from);
+    let home = home_print::home(&|key| std::env::var_os(key));
     Verdict::Broken {
-        reason: reason(ctx.command, claim, &changed, home.as_deref()),
-        remedy: "Inspect each file (`git config --list --show-origin` for git); if this \
-                 command changed it, restore it and run the tests again with `HOME` and \
-                 `XDG_CONFIG_HOME` set to a scratch directory."
-            .to_string(),
+        reason: reason(context.command, claim, &changed, home.as_deref()),
+        remedy: REMEDY.to_string(),
     }
 }
 
-/// The longest command excerpt the reason quotes.
-const SHOWN: usize = 60;
+/// Starts on its own line: [`reason`] ends with one, and `decision::phrase`
+/// joins the two with a space. Wrapped under 80 columns.
+const REMEDY: &str = "Inspect each file (`git config --list --show-origin` for git config);\n\
+the snapshot keeps hashes, not contents, so compare with your dotfiles\n\
+source or a backup. If this command changed them, restore them and rerun\n\
+it with HOME and XDG_CONFIG_HOME set to a scratch directory.";
+
+/// The longest command excerpt the heading quotes: with the
+/// `greenbelay/home-fingerprint-drift: ` prefix, the heading fits 80 columns.
+const SHOWN: usize = 24;
 
 fn reason(
     command: &str,
@@ -183,22 +197,27 @@ fn reason(
         .trim()
         .replace(['\n', '\r'], " ");
     let shown: String = if clause.chars().count() > SHOWN {
-        let mut s: String = clause.chars().take(SHOWN - 1).collect();
-        s.push('…');
-        s
+        let mut cut: String = clause.chars().take(SHOWN - 1).collect();
+        cut.push('…');
+        cut
     } else {
         clause
     };
-    let mut out = format!("These files changed while `{shown}` ran:");
-    for (p, c) in changed {
-        out.push_str(&format!(
+    let heading = if changed.iter().any(|(_, change)| change.is_real()) {
+        "Changed while"
+    } else {
+        "Could not check while"
+    };
+    let mut text = format!("{heading} `{shown}` ran:");
+    for (path, change) in changed {
+        text.push_str(&format!(
             "\n  {} ({})",
-            home_print::display(p, home),
-            c.as_str()
+            home_print::display(path, home),
+            change.as_str()
         ));
     }
-    out.push_str("\nAn edit you made at the same time shows here too.");
-    out
+    text.push_str("\nAn edit made at the same time, by you or another session, shows too.\n");
+    text
 }
 
 #[cfg(test)]
@@ -251,33 +270,70 @@ mod tests {
         assert_eq!(command[claim.span].trim(), "cargo test -p x");
     }
 
+    fn path(text: &str) -> std::path::PathBuf {
+        std::path::PathBuf::from(text)
+    }
+
     #[test]
-    fn the_reason_lists_one_path_per_line_and_says_a_person_edit_shows() {
+    fn the_reason_lists_one_path_per_line_and_says_a_concurrent_edit_shows() {
         let claim = Claim {
             what: String::new(),
             span: 0..10,
         };
         let changed = vec![
-            (
-                std::path::PathBuf::from("/h/.gitconfig"),
-                home_print::Change::Modified,
-            ),
-            (
-                std::path::PathBuf::from("/r/.git/config"),
-                home_print::Change::Added,
-            ),
+            (path("/h/.gitconfig"), home_print::Change::Modified),
+            (path("/r/.git/config"), home_print::Change::Added),
         ];
-        let r = reason(
+        let text = reason(
             "cargo test",
             &claim,
             &changed,
             Some(std::path::Path::new("/h")),
         );
-        let lines: Vec<&str> = r.lines().collect();
-        assert_eq!(lines[0], "These files changed while `cargo test` ran:");
-        assert!(lines[1].ends_with(".gitconfig (modified)"), "{r}");
-        assert!(lines[2].ends_with("config (added)"), "{r}");
-        assert!(lines[3].contains("at the same time"));
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "Changed while `cargo test` ran:");
+        assert!(lines[1].ends_with(".gitconfig (modified)"), "{text}");
+        assert!(lines[2].ends_with("config (added)"), "{text}");
+        assert!(lines[3].contains("by you or another session"), "{text}");
+        assert!(text.ends_with('\n'), "the remedy starts on its own line");
+    }
+
+    #[test]
+    fn an_unreadable_only_list_is_not_called_a_change() {
+        let claim = Claim {
+            what: String::new(),
+            span: 0..10,
+        };
+        let changed = vec![(path("/h/.netrc"), home_print::Change::Unreadable)];
+        let text = reason("cargo test", &claim, &changed, None);
+        assert!(
+            text.starts_with("Could not check while `cargo test` ran:"),
+            "{text}"
+        );
+    }
+
+    /// Every line of the advice fits 80 columns: the heading with its prefix
+    /// and a long command, and each remedy line.
+    #[test]
+    fn the_advice_fits_80_columns() {
+        let command = "cargo test --workspace --locked -p greenbelay-guard home_print";
+        let claim = Claim {
+            what: String::new(),
+            span: 0..command.len(),
+        };
+        let changed = vec![(path("/h/.gitconfig"), home_print::Change::Modified)];
+        let said = crate::decision::phrase(
+            ASSERTION.id,
+            &reason(command, &claim, &changed, Some(std::path::Path::new("/h"))),
+            REMEDY,
+        );
+        for line in said.lines() {
+            assert!(
+                line.chars().count() <= 80,
+                "{} columns: {line}",
+                line.chars().count()
+            );
+        }
     }
 
     /// The reviewed cases in `tests/corpus/home-fingerprint-drift.cases`

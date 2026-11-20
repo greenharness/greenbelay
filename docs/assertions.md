@@ -49,27 +49,39 @@ PostToolUseFailure, of the same call takes it again and names each file that
 changed:
 
 ```text
-greenbelay/home-fingerprint-drift: These files changed while `cargo test` ran:
+greenbelay/home-fingerprint-drift: Changed while `cargo test` ran:
   /Users/me/repo/.git/config (modified)
-An edit you made at the same time shows here too.
+An edit made at the same time, by you or another session, shows too.
+ Inspect each file (`git config --list --show-origin` for git config);
+the snapshot keeps hashes, not contents, so compare with your dotfiles
+source or a backup. If this command changed them, restore them and rerun
+it with HOME and XDG_CONFIG_HOME set to a scratch directory.
 ```
+
+When every entry is `not checked`, the heading reads `Could not check while
+… ran:` instead. A record left by a command that got no PostToolUse (it was
+interrupted, or refused at a prompt) stays up to a day.
 
 The watched set is the one relais watches around a run (its `homeprint.rs`;
 no code is shared): `~/.gitconfig`, `$XDG_CONFIG_HOME/git/config` (else
 `~/.config/git/config`), `~/.netrc` (and `~/_netrc` on Windows),
 `~/.claude/settings*.json`, `~/.claude/plugins/installed_plugins.json` and
 `known_marketplaces.json`, every file under `~/.ssh` but `known_hosts*`, and
-the repository's shared `.git/config` (`git rev-parse --git-common-dir`, so a
-linked worktree watches its main repository's). `~` is `HOME`, else
+the repository's shared `.git/config` (found on disk as git finds it: the
+nearest `.git`, a `.git` file's `gitdir:`, then `commondir`, so a linked
+worktree watches its main repository's; outside a repository it is not
+watched). `~` is `HOME`, else
 `USERPROFILE`; `~/.claude` is `CLAUDE_CONFIG_DIR` when set. `~/.config` as a
 whole is not watched: caches rewrite it all day.
 
 A fingerprint holds hashes, never contents: sha256, size and (on unix) mode
-bits of each regular file, a symlink by its target (never followed). FIFOs,
+bits of each regular file, a symlink by its target (never followed). A file
+over 1 MiB is fingerprinted by its size and modification time, never read. FIFOs,
 sockets and devices are never opened. A directory counts at most 500 files in
 byte order; past that the change list ends with `(not checked: over 500
 files)`, shown only beside a real change. A file readable on one side only
-prints `(not checked: unreadable)`. Paths under `HOME` print as `~/…` on unix,
+prints `(not checked: unreadable)`. The record carries a version line; one
+another version wrote is not compared. Paths under `HOME` print as `~/…` on unix,
 others as absolute paths.
 
 It is advise-only and cannot refuse. It prevents nothing and restores

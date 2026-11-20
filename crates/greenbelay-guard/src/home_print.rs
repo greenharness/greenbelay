@@ -21,18 +21,28 @@
 //!
 //! Hashes only, never contents: sha256 and size of each regular file, its mode
 //! bits on unix, a symlink by the hash of its target (never followed), an
-//! absent path as absent. Only regular files are opened: a FIFO would block
-//! the read and an ssh ControlMaster socket comes and goes, so both are left
-//! out. A directory expands to at most [`CAP`] files in byte order; past that
-//! it is marked truncated.
+//! absent path as absent. A file over [`HASH_LIMIT`] is fingerprinted by its
+//! size and modification time instead, so a stray large file cannot cost the
+//! hook its budget. Only regular files are opened: a FIFO would block the read
+//! and an ssh ControlMaster socket comes and goes, so both are left out. A
+//! directory expands to at most [`CAP`] files in byte order; past that it is
+//! marked truncated.
 
-use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::{Path, PathBuf};
 
 /// The most files one watched directory expands to.
 pub const CAP: usize = 500;
+
+/// The largest file read and hashed; a larger one is fingerprinted by size
+/// and modification time.
+pub const HASH_LIMIT: u64 = 1024 * 1024;
+
+/// The first line of every record, so a record another version wrote is
+/// never read as a snapshot with paths missing.
+const HEADER: &str = "homeprint/1";
 
 /// One watched place.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,7 +64,8 @@ pub enum Root {
 /// What one path was when the snapshot was taken.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum State {
-    /// A regular file: content hash, size, and mode bits (0 off unix).
+    /// A regular file: content hash (or, over [`HASH_LIMIT`], `mtime:<ns>`),
+    /// size, and mode bits (0 off unix).
     File { sha: String, size: u64, mode: u32 },
     /// A symlink, by the hash of its target.
     Link(String),
@@ -93,15 +104,38 @@ impl Change {
             Change::Truncated => "not checked: over 500 files",
         }
     }
+
+    /// A change of the file itself, as opposed to a note that it could not
+    /// be checked.
+    pub fn is_real(self) -> bool {
+        match self {
+            Change::Added | Change::Removed | Change::Modified => true,
+            Change::Unreadable | Change::Truncated => false,
+        }
+    }
+}
+
+/// An environment lookup: the real `std::env::var_os`, or a test's.
+pub type Env<'a> = &'a dyn Fn(&str) -> Option<OsString>;
+
+/// The home directory: `HOME`, else `USERPROFILE`, an empty value counting
+/// as unset.
+pub fn home(var: Env<'_>) -> Option<PathBuf> {
+    set(var, "HOME").or_else(|| set(var, "USERPROFILE"))
+}
+
+fn set(var: Env<'_>, key: &str) -> Option<PathBuf> {
+    var(key)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 /// The watched set for this environment. `var` reads an environment
 /// variable (a closure, so tests never call `set_var`); `git_dir` is the
 /// repository's shared git directory, when the command ran in one.
-pub fn watched(var: &dyn Fn(&str) -> Option<OsString>, git_dir: Option<&Path>) -> Vec<Root> {
-    let set = |k: &str| var(k).filter(|v| !v.is_empty()).map(PathBuf::from);
+pub fn watched(var: Env<'_>, git_dir: Option<&Path>) -> Vec<Root> {
     let mut roots = Vec::new();
-    if let Some(home) = set("HOME").or_else(|| set("USERPROFILE")) {
+    if let Some(home) = home(var) {
         roots.push(Root::File(home.join(".gitconfig")));
         roots.push(Root::File(home.join(".netrc")));
         if cfg!(windows) {
@@ -111,9 +145,9 @@ pub fn watched(var: &dyn Fn(&str) -> Option<OsString>, git_dir: Option<&Path>) -
             dir: home.join(".ssh"),
             skip: vec!["known_hosts".to_string()],
         });
-        let xdg = set("XDG_CONFIG_HOME").unwrap_or_else(|| home.join(".config"));
+        let xdg = set(var, "XDG_CONFIG_HOME").unwrap_or_else(|| home.join(".config"));
         roots.push(Root::File(xdg.join("git").join("config")));
-        let claude = set("CLAUDE_CONFIG_DIR").unwrap_or_else(|| home.join(".claude"));
+        let claude = set(var, "CLAUDE_CONFIG_DIR").unwrap_or_else(|| home.join(".claude"));
         roots.push(Root::Glob {
             dir: claude.clone(),
             prefix: "settings".to_string(),
@@ -122,34 +156,39 @@ pub fn watched(var: &dyn Fn(&str) -> Option<OsString>, git_dir: Option<&Path>) -
         let plugins = claude.join("plugins");
         roots.push(Root::File(plugins.join("installed_plugins.json")));
         roots.push(Root::File(plugins.join("known_marketplaces.json")));
-    } else if let Some(xdg) = set("XDG_CONFIG_HOME") {
+    } else if let Some(xdg) = set(var, "XDG_CONFIG_HOME") {
         roots.push(Root::File(xdg.join("git").join("config")));
     }
-    if let Some(g) = git_dir {
-        roots.push(Root::File(g.join("config")));
+    if let Some(git_dir) = git_dir {
+        roots.push(Root::File(git_dir.join("config")));
     }
     roots
 }
 
 /// The shared git directory of the repository holding `cwd`, absolute: a
 /// linked worktree answers with its main repository's, whose `config` both
-/// share. `None` outside a repository.
+/// share. `None` outside a repository, and then no repository config is
+/// watched.
 ///
 /// Read from disk the way git finds it (the nearest `.git` up from `cwd`; a
 /// `.git` file's `gitdir:` line; that directory's `commondir` file), not by
 /// spawning `git rev-parse --git-common-dir`: the spawn measured 46 ms p50 on
-/// a loaded host, more than the hook's whole 20 ms budget.
+/// a loaded host, more than the hook's whole 20 ms budget. `GIT_DIR` set for
+/// the command alone is not seen; the hook only knows its cwd.
 pub fn git_common_dir(cwd: &Path) -> Option<PathBuf> {
     let cwd = std::path::absolute(cwd).ok()?;
     let dot_git = cwd
         .ancestors()
-        .map(|d| d.join(".git"))
-        .find(|g| g.exists())?;
+        .map(|dir| dir.join(".git"))
+        .find(|candidate| candidate.exists())?;
     let git_dir = if dot_git.is_dir() {
         dot_git
     } else {
         let text = std::fs::read_to_string(&dot_git).ok()?;
-        let target = text.lines().find_map(|l| l.strip_prefix("gitdir:"))?.trim();
+        let target = text
+            .lines()
+            .find_map(|line| line.strip_prefix("gitdir:"))?
+            .trim();
         dot_git.parent()?.join(target)
     };
     let common = match std::fs::read_to_string(git_dir.join("commondir")) {
@@ -173,122 +212,147 @@ pub type Reader<'a> = &'a dyn Fn(&Path) -> io::Result<Vec<u8>>;
 
 /// Take a snapshot of `roots` from the real filesystem.
 pub fn snapshot(roots: &[Root]) -> Snapshot {
-    snapshot_with(roots, &|p| std::fs::read(p))
+    snapshot_with(roots, &|path| std::fs::read(path))
 }
 
 /// [`snapshot`] through `read`, the seam a test injects a read error with.
 pub fn snapshot_with(roots: &[Root], read: Reader<'_>) -> Snapshot {
-    let mut snap = Snapshot {
+    let mut snapshot = Snapshot {
         roots: roots.to_vec(),
         ..Snapshot::default()
     };
     for root in roots {
         match root {
-            Root::File(p) => {
-                if let Some(s) = state_of(p, read) {
-                    snap.paths.insert(p.clone(), s);
+            Root::File(path) => {
+                if let Some(state) = state_of(path, read) {
+                    snapshot.paths.insert(path.clone(), state);
                 }
             }
             Root::Tree { dir, skip } => {
-                let mut seen = 0usize;
-                if !walk(dir, skip, read, &mut snap.paths, &mut seen) {
-                    snap.truncated.push(dir.clone());
+                let mut walker = Walker {
+                    skip,
+                    read,
+                    found: BTreeMap::new(),
+                };
+                if !walker.walk(dir) {
+                    snapshot.truncated.push(dir.clone());
                 }
+                snapshot.paths.extend(walker.found);
             }
             Root::Glob {
                 dir,
                 prefix,
                 suffix,
             } => {
-                for p in sorted_entries(dir) {
-                    let name = p.file_name().map(|n| n.to_string_lossy().into_owned());
-                    let fits = name.is_some_and(|n| {
-                        n.starts_with(prefix.as_str()) && n.ends_with(suffix.as_str())
+                for path in sorted_entries(dir) {
+                    let fits = path.file_name().is_some_and(|name| {
+                        let name = name.to_string_lossy();
+                        name.starts_with(prefix.as_str()) && name.ends_with(suffix.as_str())
                     });
                     if fits {
-                        if let Some(s) = state_of(&p, read) {
-                            snap.paths.insert(p, s);
+                        if let Some(state) = state_of(&path, read) {
+                            snapshot.paths.insert(path, state);
                         }
                     }
                 }
             }
         }
     }
-    snap
+    snapshot
 }
 
 /// The entries of `dir` in byte order of their names; none when it cannot
 /// be listed (absent, not a directory).
 fn sorted_entries(dir: &Path) -> Vec<PathBuf> {
-    let Ok(rd) = std::fs::read_dir(dir) else {
+    let Ok(listing) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
-    let mut v: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
-    v.sort_by(|a, b| {
-        let a = a.file_name().map(|n| n.as_encoded_bytes().to_vec());
-        let b = b.file_name().map(|n| n.as_encoded_bytes().to_vec());
-        a.cmp(&b)
+    let mut entries: Vec<PathBuf> = listing.flatten().map(|entry| entry.path()).collect();
+    entries.sort_by(|left, right| {
+        let key = |path: &PathBuf| {
+            path.file_name()
+                .map(OsStr::as_encoded_bytes)
+                .map(<[u8]>::to_vec)
+        };
+        key(left).cmp(&key(right))
     });
-    v
+    entries
 }
 
-/// Walk `dir` into `out`; false once [`CAP`] files are recorded and more
-/// remain. Directories are entered, symlinks are not.
-fn walk(
-    dir: &Path,
-    skip: &[String],
-    read: Reader<'_>,
-    out: &mut BTreeMap<PathBuf, State>,
-    seen: &mut usize,
-) -> bool {
-    for p in sorted_entries(dir) {
-        let skipped = p.file_name().is_some_and(|n| {
-            let n = n.to_string_lossy();
-            skip.iter().any(|s| n.starts_with(s.as_str()))
-        });
-        if skipped {
-            continue;
-        }
-        let Ok(meta) = std::fs::symlink_metadata(&p) else {
-            continue;
-        };
-        if meta.is_dir() {
-            if !walk(&p, skip, read, out, seen) {
+/// One `Tree` root's walk: the files found so far, at most [`CAP`].
+struct Walker<'a> {
+    skip: &'a [String],
+    read: Reader<'a>,
+    found: BTreeMap<PathBuf, State>,
+}
+
+impl Walker<'_> {
+    /// Record the files under `dir`; false once [`CAP`] are recorded and
+    /// more remain. Directories are entered, symlinks are not.
+    fn walk(&mut self, dir: &Path) -> bool {
+        for path in sorted_entries(dir) {
+            let skipped = path.file_name().is_some_and(|name| {
+                let name = name.to_string_lossy();
+                self.skip
+                    .iter()
+                    .any(|prefix| name.starts_with(prefix.as_str()))
+            });
+            if skipped {
+                continue;
+            }
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if meta.is_dir() {
+                if !self.walk(&path) {
+                    return false;
+                }
+                continue;
+            }
+            if self.found.len() == CAP {
                 return false;
             }
-            continue;
+            if let Some(state) = state_of(&path, self.read) {
+                self.found.insert(path, state);
+            }
         }
-        let Some(s) = state_of(&p, read) else {
-            continue;
-        };
-        if *seen == CAP {
-            return false;
-        }
-        *seen += 1;
-        out.insert(p, s);
+        true
     }
-    true
 }
 
 /// One path's state; `None` when it is absent or is neither a regular file
 /// nor a symlink (a FIFO, a socket, a device, a directory).
-fn state_of(p: &Path, read: Reader<'_>) -> Option<State> {
-    let meta = match std::fs::symlink_metadata(p) {
-        Ok(m) => m,
+fn state_of(path: &Path, read: Reader<'_>) -> Option<State> {
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return None,
         Err(_) => return Some(State::Unreadable),
     };
     let kind = meta.file_type();
     if kind.is_symlink() {
-        return Some(match std::fs::read_link(p) {
-            Ok(t) => State::Link(hash(t.as_os_str().as_encoded_bytes())),
+        return Some(match std::fs::read_link(path) {
+            Ok(target) => State::Link(hash(target.as_os_str().as_encoded_bytes())),
             Err(_) => State::Unreadable,
         });
     }
     if !kind.is_file() {
         return None;
     }
-    match read(p) {
+    if meta.len() > HASH_LIMIT {
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok());
+        return Some(match modified {
+            Some(since) => State::File {
+                sha: format!("mtime:{}", since.as_nanos()),
+                size: meta.len(),
+                mode: mode_of(&meta),
+            },
+            None => State::Unreadable,
+        });
+    }
+    match read(path) {
         Ok(bytes) => Some(State::File {
             sha: hash(&bytes),
             size: bytes.len() as u64,
@@ -318,11 +382,10 @@ fn mode_of(_meta: &std::fs::Metadata) -> u32 {
 /// watched. A truncated directory is named only beside a real change, so a
 /// large `~/.ssh` does not speak on every test run.
 pub fn diff(before: &Snapshot, after: &Snapshot) -> Vec<(PathBuf, Change)> {
-    let mut out = Vec::new();
-    let keys: std::collections::BTreeSet<&PathBuf> =
-        before.paths.keys().chain(after.paths.keys()).collect();
-    for k in keys {
-        let change = match (before.paths.get(k), after.paths.get(k)) {
+    let mut changes = Vec::new();
+    let paths: BTreeSet<&PathBuf> = before.paths.keys().chain(after.paths.keys()).collect();
+    for path in paths {
+        let change = match (before.paths.get(path), after.paths.get(path)) {
             (None, Some(State::Unreadable)) | (Some(State::Unreadable), None) => None,
             (None, Some(_)) => Some(Change::Added),
             (Some(_), None) => Some(Change::Removed),
@@ -330,112 +393,115 @@ pub fn diff(before: &Snapshot, after: &Snapshot) -> Vec<(PathBuf, Change)> {
             (Some(State::Unreadable), Some(_)) | (Some(_), Some(State::Unreadable)) => {
                 Some(Change::Unreadable)
             }
-            (Some(a), Some(b)) if a != b => Some(Change::Modified),
-            _ => None,
+            (Some(was), Some(now)) if was != now => Some(Change::Modified),
+            (Some(_), Some(_)) | (None, None) => None,
         };
-        if let Some(c) = change {
-            out.push((k.clone(), c));
+        if let Some(change) = change {
+            changes.push((path.clone(), change));
         }
     }
-    let real = out.iter().any(|(_, c)| *c != Change::Unreadable);
-    if real {
-        let cut: std::collections::BTreeSet<&PathBuf> =
-            before.truncated.iter().chain(&after.truncated).collect();
-        out.extend(cut.into_iter().map(|d| (d.clone(), Change::Truncated)));
+    if changes.iter().any(|(_, change)| change.is_real()) {
+        let cut: BTreeSet<&PathBuf> = before.truncated.iter().chain(&after.truncated).collect();
+        changes.extend(cut.into_iter().map(|dir| (dir.clone(), Change::Truncated)));
     }
-    out
+    changes
 }
 
 /// How a path prints: `~/…` under `home` on unix, absolute otherwise (a
 /// Windows path, or one outside home), so it can be pasted.
 pub fn display(path: &Path, home: Option<&Path>) -> String {
     if cfg!(unix) {
-        if let Some(rest) = home.and_then(|h| path.strip_prefix(h).ok()) {
+        if let Some(rest) = home.and_then(|home| path.strip_prefix(home).ok()) {
             return format!("~/{}", rest.display());
         }
     }
     path.display().to_string()
 }
 
-// --- the record kept between PreToolUse and PostToolUse -------------------
+// The record kept between PreToolUse and PostToolUse.
 
-/// A path that would break the one-line-per-entry format.
-fn printable(p: &Path) -> Option<String> {
-    let s = p.to_str()?;
-    (!s.contains(['\t', '\n', '\r'])).then(|| s.to_string())
+/// A path as one record field: `None` when it is not UTF-8 or holds a tab or
+/// a newline, which would break the one-line-per-entry format.
+fn field(path: &Path) -> Option<String> {
+    let text = path.to_str()?;
+    (!text.contains(['\t', '\n', '\r'])).then(|| text.to_string())
 }
 
-/// The snapshot as text: one line per root, per truncated root and per path.
-/// A path with a tab or a newline in it is left out.
-pub fn encode(s: &Snapshot) -> String {
-    let mut out = String::new();
-    for r in &s.roots {
-        let line = match r {
-            Root::File(p) => printable(p).map(|p| format!("root\tfile\t{p}")),
+/// The snapshot as text: a [`HEADER`] line, then one line per root, per
+/// truncated root and per path. A path [`field`] refuses is left out.
+pub fn encode(snapshot: &Snapshot) -> String {
+    let mut out = format!("{HEADER}\n");
+    for root in &snapshot.roots {
+        let line = match root {
+            Root::File(path) => field(path).map(|path| format!("root\tfile\t{path}")),
             Root::Tree { dir, skip } => {
-                printable(dir).map(|d| format!("root\ttree\t{d}\t{}", skip.join("\t")))
+                field(dir).map(|dir| format!("root\ttree\t{dir}\t{}", skip.join("\t")))
             }
             Root::Glob {
                 dir,
                 prefix,
                 suffix,
-            } => printable(dir).map(|d| format!("root\tglob\t{d}\t{prefix}\t{suffix}")),
+            } => field(dir).map(|dir| format!("root\tglob\t{dir}\t{prefix}\t{suffix}")),
         };
-        if let Some(l) = line {
-            out.push_str(&l);
+        if let Some(line) = line {
+            out.push_str(&line);
             out.push('\n');
         }
     }
-    for d in s.truncated.iter().filter_map(|d| printable(d)) {
-        out.push_str(&format!("cut\t{d}\n"));
+    for dir in snapshot.truncated.iter().filter_map(|dir| field(dir)) {
+        out.push_str(&format!("cut\t{dir}\n"));
     }
-    for (p, st) in &s.paths {
-        let Some(p) = printable(p) else { continue };
-        let st = match st {
+    for (path, state) in &snapshot.paths {
+        let Some(path) = field(path) else { continue };
+        let state = match state {
             State::File { sha, size, mode } => format!("file\t{sha}\t{size}\t{mode}"),
-            State::Link(t) => format!("link\t{t}"),
+            State::Link(target) => format!("link\t{target}"),
             State::Unreadable => "unreadable".to_string(),
         };
-        out.push_str(&format!("path\t{p}\t{st}\n"));
+        out.push_str(&format!("path\t{path}\t{state}\n"));
     }
     out
 }
 
-/// `s` as it reads back from its record: what [`encode`] leaves out (a path
-/// that is not UTF-8, or holds a tab or a newline) is left out here too, so
-/// the snapshot after a command compares like for like with the one kept
-/// before it and such a file never shows as added.
-pub fn as_recorded(s: &Snapshot) -> Snapshot {
-    decode(&encode(s))
+/// `snapshot` as it reads back from its record: what [`encode`] leaves out
+/// is left out here too, so the snapshot after a command compares like for
+/// like with the one kept before it and such a file never shows as added.
+pub fn as_recorded(snapshot: &Snapshot) -> Snapshot {
+    decode(&encode(snapshot)).unwrap_or_default()
 }
 
-/// [`encode`] read back; a line it does not know is skipped.
-pub fn decode(text: &str) -> Snapshot {
-    let mut s = Snapshot::default();
-    for line in text.lines() {
-        let f: Vec<&str> = line.split('\t').collect();
-        match f.as_slice() {
-            ["root", "file", p] => s.roots.push(Root::File(PathBuf::from(p))),
-            ["root", "tree", d, skip @ ..] => s.roots.push(Root::Tree {
-                dir: PathBuf::from(d),
+/// [`encode`] read back; `None` without this version's [`HEADER`]. A line
+/// it does not know is skipped.
+pub fn decode(text: &str) -> Option<Snapshot> {
+    let mut lines = text.lines();
+    if lines.next() != Some(HEADER) {
+        return None;
+    }
+    let mut snapshot = Snapshot::default();
+    for line in lines {
+        let fields: Vec<&str> = line.split('\t').collect();
+        match fields.as_slice() {
+            ["root", "file", path] => snapshot.roots.push(Root::File(PathBuf::from(path))),
+            ["root", "tree", dir, skip @ ..] => snapshot.roots.push(Root::Tree {
+                dir: PathBuf::from(dir),
                 skip: skip
                     .iter()
-                    .filter(|x| !x.is_empty())
-                    .map(|x| x.to_string())
+                    .filter(|prefix| !prefix.is_empty())
+                    .map(|prefix| prefix.to_string())
                     .collect(),
             }),
-            ["root", "glob", d, prefix, suffix] => s.roots.push(Root::Glob {
-                dir: PathBuf::from(d),
+            ["root", "glob", dir, prefix, suffix] => snapshot.roots.push(Root::Glob {
+                dir: PathBuf::from(dir),
                 prefix: prefix.to_string(),
                 suffix: suffix.to_string(),
             }),
-            ["cut", d] => s.truncated.push(PathBuf::from(d)),
-            ["path", p, "file", sha, size, mode] => {
+            ["cut", dir] => snapshot.truncated.push(PathBuf::from(dir)),
+            ["path", path, "file", sha, size, mode] => {
                 let (Ok(size), Ok(mode)) = (size.parse(), mode.parse()) else {
                     continue;
                 };
-                s.paths.insert(
-                    PathBuf::from(p),
+                snapshot.paths.insert(
+                    PathBuf::from(path),
                     State::File {
                         sha: sha.to_string(),
                         size,
@@ -443,16 +509,20 @@ pub fn decode(text: &str) -> Snapshot {
                     },
                 );
             }
-            ["path", p, "link", t] => {
-                s.paths.insert(PathBuf::from(p), State::Link(t.to_string()));
+            ["path", path, "link", target] => {
+                snapshot
+                    .paths
+                    .insert(PathBuf::from(path), State::Link(target.to_string()));
             }
-            ["path", p, "unreadable"] => {
-                s.paths.insert(PathBuf::from(p), State::Unreadable);
+            ["path", path, "unreadable"] => {
+                snapshot
+                    .paths
+                    .insert(PathBuf::from(path), State::Unreadable);
             }
             _ => {}
         }
     }
-    s
+    Some(snapshot)
 }
 
 /// How long a record nobody came back for is kept: an interrupted command
@@ -464,52 +534,58 @@ pub fn store() -> Option<PathBuf> {
     Some(crate::push_record::dir()?.join("home"))
 }
 
-/// An id that names one file in the store, and nothing else.
-pub fn usable_id(id: &str) -> bool {
-    !id.is_empty() && !id.contains(['/', '\\', ':']) && !id.contains("..")
+/// A `tool_use_id` checked to name one file in the store and nothing else:
+/// no `/`, `\`, `:` or `..`, and not empty.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordId(String);
+
+impl TryFrom<&str> for RecordId {
+    type Error = &'static str;
+
+    fn try_from(id: &str) -> Result<Self, Self::Error> {
+        if id.is_empty() || id.contains(['/', '\\', ':']) || id.contains("..") {
+            Err("the tool_use_id names no single file")
+        } else {
+            Ok(RecordId(id.to_string()))
+        }
+    }
 }
 
-/// Keep `snap` for this call, after pruning the store's stale records.
-pub fn keep(store: &Path, tool_use_id: &str, snap: &Snapshot) -> io::Result<()> {
-    if !usable_id(tool_use_id) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "the tool_use_id names no single file",
-        ));
-    }
-    std::fs::create_dir_all(store)?;
+/// Keep `snapshot` for this call, after pruning the store's stale records.
+/// The error names the path it could not write.
+pub fn keep(store: &Path, id: &RecordId, snapshot: &Snapshot) -> io::Result<()> {
+    let path = store.join(&id.0);
+    let named = |e: io::Error| io::Error::new(e.kind(), format!("{}: {e}", path.display()));
+    std::fs::create_dir_all(store).map_err(named)?;
     crate::journal::private(store, 0o700);
     prune(store);
-    let path = store.join(tool_use_id);
-    crate::atomic::write_atomic(&path, &encode(snap))?;
+    crate::atomic::write_atomic(&path, &encode(snapshot)).map_err(named)?;
     crate::journal::private(&path, 0o600);
     Ok(())
 }
 
-/// Read and remove the record kept for this call.
-pub fn take(store: &Path, tool_use_id: &str) -> Option<Snapshot> {
-    if !usable_id(tool_use_id) {
-        return None;
-    }
-    let path = store.join(tool_use_id);
+/// Read and remove the record kept for this call; `None` when there is
+/// none, or it was written by another version.
+pub fn take(store: &Path, id: &RecordId) -> Option<Snapshot> {
+    let path = store.join(&id.0);
     let text = std::fs::read_to_string(&path).ok()?;
     let _ = std::fs::remove_file(&path); // best-effort: a leftover is pruned after a day
-    Some(decode(&text))
+    decode(&text)
 }
 
 fn prune(store: &Path) {
     let Ok(entries) = std::fs::read_dir(store) else {
         return;
     };
-    for e in entries.flatten() {
-        let old = e
+    for entry in entries.flatten() {
+        let old = entry
             .metadata()
-            .and_then(|m| m.modified())
+            .and_then(|meta| meta.modified())
             .ok()
-            .and_then(|t| t.elapsed().ok())
+            .and_then(|time| time.elapsed().ok())
             .is_some_and(|age| age > KEEP);
         if old {
-            let _ = std::fs::remove_file(e.path()); // best-effort: retried at the next record
+            let _ = std::fs::remove_file(entry.path()); // best-effort: retried at the next record
         }
     }
 }
@@ -518,71 +594,86 @@ fn prune(store: &Path) {
 mod tests {
     use super::*;
 
-    fn scratch(label: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "gb-homeprint-{label}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    /// A scratch home, removed when the test ends.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(label: &str) -> Scratch {
+            let dir = std::env::temp_dir().join(format!(
+                "gb-homeprint-{label}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|since| since.as_nanos())
+                    .unwrap_or(0)
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            Scratch(dir)
+        }
+
+        fn join(&self, rest: impl AsRef<Path>) -> PathBuf {
+            self.0.join(rest)
+        }
+
+        fn roots(&self, git_dir: Option<&Path>) -> Vec<Root> {
+            let home = self.0.as_os_str().to_os_string();
+            watched(&move |key| (key == "HOME").then(|| home.clone()), git_dir)
+        }
     }
 
-    fn env_home(home: &Path) -> impl Fn(&str) -> Option<OsString> + '_ {
-        move |k| (k == "HOME").then(|| home.as_os_str().to_os_string())
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0); // best-effort: temp is cleaned eventually
+        }
     }
 
     #[test]
     fn no_change_is_no_drift() {
-        let h = scratch("same");
-        std::fs::write(h.join(".gitconfig"), "[user]\n").unwrap();
-        let roots = watched(&env_home(&h), None);
+        let home = Scratch::new("same");
+        std::fs::write(home.join(".gitconfig"), "[user]\n").unwrap();
+        let roots = home.roots(None);
         assert!(diff(&snapshot(&roots), &snapshot(&roots)).is_empty());
     }
 
     #[test]
     fn modified_added_and_removed_each_show() {
-        let h = scratch("mar");
-        std::fs::write(h.join(".gitconfig"), "a").unwrap();
-        std::fs::write(h.join(".netrc"), "x").unwrap();
-        let roots = watched(&env_home(&h), None);
+        let home = Scratch::new("mar");
+        std::fs::write(home.join(".gitconfig"), "a").unwrap();
+        std::fs::write(home.join(".netrc"), "x").unwrap();
+        let roots = home.roots(None);
         let before = snapshot(&roots);
-        std::fs::write(h.join(".gitconfig"), "b").unwrap();
-        std::fs::remove_file(h.join(".netrc")).unwrap();
-        std::fs::create_dir_all(h.join(".claude")).unwrap();
-        std::fs::write(h.join(".claude").join("settings.local.json"), "{}").unwrap();
-        let got = diff(&before, &snapshot(&roots));
+        std::fs::write(home.join(".gitconfig"), "b").unwrap();
+        std::fs::remove_file(home.join(".netrc")).unwrap();
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        std::fs::write(home.join(".claude").join("settings.local.json"), "{}").unwrap();
         assert_eq!(
-            got,
+            diff(&before, &snapshot(&roots)),
             vec![
-                (h.join(".claude/settings.local.json"), Change::Added),
-                (h.join(".gitconfig"), Change::Modified),
-                (h.join(".netrc"), Change::Removed),
+                (home.join(".claude/settings.local.json"), Change::Added),
+                (home.join(".gitconfig"), Change::Modified),
+                (home.join(".netrc"), Change::Removed),
             ]
         );
     }
 
     #[test]
     fn the_glob_takes_settings_json_only() {
-        let h = scratch("glob");
-        let c = h.join(".claude");
-        std::fs::create_dir_all(&c).unwrap();
-        let roots = watched(&env_home(&h), None);
+        let home = Scratch::new("glob");
+        let claude = home.join(".claude");
+        std::fs::create_dir_all(&claude).unwrap();
+        let roots = home.roots(None);
         let before = snapshot(&roots);
-        std::fs::write(c.join("history.jsonl"), "x").unwrap();
-        std::fs::write(c.join("settings.json.bak"), "x").unwrap();
+        std::fs::write(claude.join("history.jsonl"), "x").unwrap();
+        std::fs::write(claude.join("settings.json.bak"), "x").unwrap();
         assert!(diff(&before, &snapshot(&roots)).is_empty());
     }
 
     #[test]
     fn known_hosts_is_not_watched_but_the_rest_of_ssh_is() {
-        let h = scratch("ssh");
-        let ssh = h.join(".ssh");
+        let home = Scratch::new("ssh");
+        let ssh = home.join(".ssh");
         std::fs::create_dir_all(ssh.join("conf.d")).unwrap();
-        let roots = watched(&env_home(&h), None);
+        let roots = home.roots(None);
         let before = snapshot(&roots);
         std::fs::write(ssh.join("known_hosts"), "host").unwrap();
         std::fs::write(ssh.join("known_hosts.old"), "host").unwrap();
@@ -594,94 +685,126 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_mode_change_is_a_modification() {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let h = scratch("mode");
-            let f = h.join(".netrc");
-            std::fs::write(&f, "x").unwrap();
-            std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o600)).unwrap();
-            let roots = watched(&env_home(&h), None);
-            let before = snapshot(&roots);
-            std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
-            assert_eq!(
-                diff(&before, &snapshot(&roots)),
-                vec![(f, Change::Modified)]
-            );
-        }
+        use std::os::unix::fs::PermissionsExt;
+        let home = Scratch::new("mode");
+        let netrc = home.join(".netrc");
+        std::fs::write(&netrc, "x").unwrap();
+        std::fs::set_permissions(&netrc, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let roots = home.roots(None);
+        let before = snapshot(&roots);
+        std::fs::set_permissions(&netrc, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(
+            diff(&before, &snapshot(&roots)),
+            vec![(netrc, Change::Modified)]
+        );
     }
 
     #[test]
     fn a_read_error_is_unreadable_and_silent_when_on_both_sides() {
-        let h = scratch("unread");
-        std::fs::write(h.join(".gitconfig"), "a").unwrap();
-        let roots = watched(&env_home(&h), None);
+        let home = Scratch::new("unread");
+        std::fs::write(home.join(".gitconfig"), "a").unwrap();
+        let roots = home.roots(None);
         let fail: Reader<'_> = &|_| Err(io::Error::other("injected"));
         let before = snapshot_with(&roots, fail);
         assert_eq!(
-            before.paths.get(&h.join(".gitconfig")),
+            before.paths.get(&home.join(".gitconfig")),
             Some(&State::Unreadable)
         );
         assert!(diff(&before, &snapshot_with(&roots, fail)).is_empty());
         assert_eq!(
             diff(&before, &snapshot(&roots)),
-            vec![(h.join(".gitconfig"), Change::Unreadable)]
+            vec![(home.join(".gitconfig"), Change::Unreadable)]
+        );
+    }
+
+    /// A file over the limit is never read, and a rewrite of it still shows.
+    #[test]
+    fn a_large_file_is_fingerprinted_without_being_read() {
+        let home = Scratch::new("large");
+        let ssh = home.join(".ssh");
+        std::fs::create_dir_all(&ssh).unwrap();
+        let big = ssh.join("archive");
+        let size = usize::try_from(HASH_LIMIT).unwrap() + 1;
+        std::fs::write(&big, vec![b'a'; size]).unwrap();
+        let roots = home.roots(None);
+        let never: Reader<'_> = &|path| panic!("read {}", path.display());
+        let before = snapshot_with(&roots, never);
+        assert!(matches!(
+            before.paths.get(&big),
+            Some(State::File { sha, .. }) if sha.starts_with("mtime:")
+        ));
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        std::fs::File::options()
+            .write(true)
+            .open(&big)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        assert_eq!(
+            diff(&before, &snapshot_with(&roots, never)),
+            vec![(big, Change::Modified)]
         );
     }
 
     #[test]
     fn truncation_is_stable_and_named_only_beside_a_change() {
-        let h = scratch("cap");
-        let ssh = h.join(".ssh");
+        let home = Scratch::new("cap");
+        let ssh = home.join(".ssh");
         std::fs::create_dir_all(&ssh).unwrap();
         for i in 0..600 {
             std::fs::write(ssh.join(format!("k{i:04}")), "x").unwrap();
         }
-        let roots = watched(&env_home(&h), None);
-        let a = snapshot(&roots);
-        let b = snapshot(&roots);
-        assert_eq!(a.truncated, vec![ssh.clone()]);
-        assert_eq!(a.paths.len(), CAP);
-        assert!(diff(&a, &b).is_empty());
-        std::fs::write(h.join(".gitconfig"), "new").unwrap();
+        let roots = home.roots(None);
+        let first = snapshot(&roots);
+        let second = snapshot(&roots);
+        assert_eq!(first.truncated, vec![ssh.clone()]);
+        assert_eq!(first.paths.len(), CAP);
+        assert!(diff(&first, &second).is_empty());
+        std::fs::write(home.join(".gitconfig"), "new").unwrap();
         assert_eq!(
-            diff(&a, &snapshot(&roots)),
+            diff(&first, &snapshot(&roots)),
             vec![
-                (h.join(".gitconfig"), Change::Added),
+                (home.join(".gitconfig"), Change::Added),
                 (ssh, Change::Truncated)
             ]
         );
     }
 
+    #[test]
+    fn the_truncated_note_names_the_cap() {
+        assert!(Change::Truncated.as_str().contains(&CAP.to_string()));
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_fifo_is_skipped_and_does_not_hang() {
-        let h = scratch("fifo");
-        let ssh = h.join(".ssh");
+        let home = Scratch::new("fifo");
+        let ssh = home.join(".ssh");
         std::fs::create_dir_all(&ssh).unwrap();
         let fifo = ssh.join("ctl");
-        let ok = std::process::Command::new("mkfifo")
+        let made = std::process::Command::new("mkfifo")
             .arg(&fifo)
             .status()
-            .is_ok_and(|s| s.success());
-        assert!(ok, "mkfifo");
-        let snap = snapshot(&watched(&env_home(&h), None));
-        assert!(!snap.paths.contains_key(&fifo));
+            .is_ok_and(|status| status.success());
+        assert!(made, "mkfifo");
+        let taken = snapshot(&home.roots(None));
+        assert!(!taken.paths.contains_key(&fifo));
     }
 
     #[cfg(unix)]
     #[test]
     fn a_symlink_is_recorded_by_target_not_followed() {
-        let h = scratch("link");
-        let target = h.join("elsewhere");
+        let home = Scratch::new("link");
+        let target = home.join("elsewhere");
         std::fs::write(&target, "one").unwrap();
-        std::os::unix::fs::symlink(&target, h.join(".gitconfig")).unwrap();
-        let roots = watched(&env_home(&h), None);
+        std::os::unix::fs::symlink(&target, home.join(".gitconfig")).unwrap();
+        let roots = home.roots(None);
         let before = snapshot(&roots);
         assert!(matches!(
-            before.paths.get(&h.join(".gitconfig")),
+            before.paths.get(&home.join(".gitconfig")),
             Some(State::Link(_))
         ));
         std::fs::write(&target, "two").unwrap();
@@ -690,7 +813,7 @@ mod tests {
 
     #[test]
     fn userprofile_stands_in_for_home_and_xdg_moves_git_config() {
-        let var = |k: &str| match k {
+        let var = |key: &str| match key {
             "USERPROFILE" => Some(OsString::from("/u")),
             "XDG_CONFIG_HOME" => Some(OsString::from("/x")),
             "CLAUDE_CONFIG_DIR" => Some(OsString::from("/c")),
@@ -709,16 +832,17 @@ mod tests {
 
     #[test]
     fn an_empty_home_falls_back_to_userprofile() {
-        let var = |k: &str| match k {
+        let var = |key: &str| match key {
             "HOME" => Some(OsString::new()),
             "USERPROFILE" => Some(OsString::from("/u")),
             _ => None,
         };
+        assert_eq!(home(&var), Some(PathBuf::from("/u")));
         assert!(watched(&var, None).contains(&Root::File(PathBuf::from("/u").join(".gitconfig"))));
     }
 
     fn git(args: &[&str], dir: &Path) {
-        let ok = std::process::Command::new("git")
+        let ran = std::process::Command::new("git")
             .arg("-C")
             .arg(dir)
             .args(args)
@@ -727,16 +851,16 @@ mod tests {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
-            .is_ok_and(|s| s.success());
-        assert!(ok, "git {args:?}");
+            .is_ok_and(|status| status.success());
+        assert!(ran, "git {args:?}");
     }
 
     /// Agrees with `git rev-parse --git-common-dir` in a main checkout, a
     /// subdirectory of it and a linked worktree; outside a repository, none.
     #[test]
     fn the_common_git_dir_is_the_one_git_reports() {
-        let h = scratch("gitdir");
-        let main = h.join("main");
+        let root = Scratch::new("gitdir");
+        let main = root.join("main");
         std::fs::create_dir_all(main.join("sub")).unwrap();
         git(&["init", "-q", "--template="], &main);
         git(
@@ -757,49 +881,137 @@ mod tests {
         let want = std::fs::canonicalize(main.join(".git")).unwrap();
         assert_eq!(git_common_dir(&main), Some(want.clone()));
         assert_eq!(git_common_dir(&main.join("sub")), Some(want.clone()));
-        assert_eq!(git_common_dir(&h.join("wt")), Some(want));
-        let outside = std::env::temp_dir().join(format!("gb-nogit-{}", std::process::id()));
-        std::fs::create_dir_all(&outside).unwrap();
-        if outside.ancestors().all(|d| !d.join(".git").exists()) {
-            assert_eq!(git_common_dir(&outside), None);
+        assert_eq!(git_common_dir(&root.join("wt")), Some(want));
+        let outside = Scratch::new("nogit");
+        if outside.0.ancestors().all(|dir| !dir.join(".git").exists()) {
+            assert_eq!(git_common_dir(&outside.0), None);
         }
     }
 
+    /// The format itself, written out by hand: a round trip alone cannot
+    /// show that either direction writes the intended lines.
     #[test]
-    fn the_record_round_trips() {
-        let h = scratch("codec");
-        std::fs::write(h.join(".gitconfig"), "a").unwrap();
-        std::fs::create_dir_all(h.join(".ssh")).unwrap();
-        std::fs::write(h.join(".ssh").join("id"), "k").unwrap();
-        let snap = snapshot(&watched(&env_home(&h), Some(&h.join("repo/.git"))));
-        assert_eq!(decode(&encode(&snap)), snap);
+    fn a_record_has_the_header_then_one_line_per_root_and_path() {
+        let snapshot = Snapshot {
+            roots: vec![
+                Root::File(PathBuf::from("/h/.gitconfig")),
+                Root::Tree {
+                    dir: PathBuf::from("/h/.ssh"),
+                    skip: vec!["known_hosts".to_string()],
+                },
+                Root::Glob {
+                    dir: PathBuf::from("/h/.claude"),
+                    prefix: "settings".to_string(),
+                    suffix: ".json".to_string(),
+                },
+            ],
+            paths: BTreeMap::from([
+                (
+                    PathBuf::from("/h/.gitconfig"),
+                    State::File {
+                        sha: "ab".to_string(),
+                        size: 3,
+                        mode: 420,
+                    },
+                ),
+                (PathBuf::from("/h/.ssh/l"), State::Link("cd".to_string())),
+                (PathBuf::from("/h/.ssh/u"), State::Unreadable),
+            ]),
+            truncated: vec![PathBuf::from("/h/.ssh")],
+        };
+        let want = "homeprint/1\n\
+                    root\tfile\t/h/.gitconfig\n\
+                    root\ttree\t/h/.ssh\tknown_hosts\n\
+                    root\tglob\t/h/.claude\tsettings\t.json\n\
+                    cut\t/h/.ssh\n\
+                    path\t/h/.gitconfig\tfile\tab\t3\t420\n\
+                    path\t/h/.ssh/l\tlink\tcd\n\
+                    path\t/h/.ssh/u\tunreadable\n";
+        assert_eq!(encode(&snapshot), want);
+        assert_eq!(decode(want), Some(snapshot));
+    }
+
+    #[test]
+    fn a_record_without_this_header_is_not_read() {
+        assert_eq!(decode("root\tfile\t/h/.gitconfig\n"), None);
+        assert_eq!(decode("homeprint/2\nroot\tfile\t/h/.gitconfig\n"), None);
+    }
+
+    #[test]
+    fn a_real_snapshot_round_trips() {
+        let home = Scratch::new("codec");
+        std::fs::write(home.join(".gitconfig"), "a").unwrap();
+        std::fs::create_dir_all(home.join(".ssh")).unwrap();
+        std::fs::write(home.join(".ssh").join("id"), "k").unwrap();
+        let taken = snapshot(&home.roots(Some(&home.join("repo/.git"))));
+        assert_eq!(decode(&encode(&taken)), Some(taken));
     }
 
     #[cfg(unix)]
     #[test]
     fn a_name_the_record_cannot_hold_is_never_added() {
-        let h = scratch("oddname");
-        let ssh = h.join(".ssh");
+        let home = Scratch::new("oddname");
+        let ssh = home.join(".ssh");
         std::fs::create_dir_all(&ssh).unwrap();
         std::fs::write(ssh.join("bad\nname"), "k").unwrap();
         std::fs::write(ssh.join("tab\there"), "k").unwrap();
-        let roots = watched(&env_home(&h), None);
-        let kept = decode(&encode(&snapshot(&roots)));
+        let roots = home.roots(None);
+        let kept = decode(&encode(&snapshot(&roots))).unwrap();
         assert!(diff(&kept, &as_recorded(&snapshot(&roots))).is_empty());
     }
 
     #[test]
-    fn keep_then_take_once_and_refuse_odd_ids() {
-        let h = scratch("store");
-        let store = h.join("home");
-        let snap = snapshot(&watched(&env_home(&h), None));
-        keep(&store, "toolu_1", &snap).unwrap();
-        assert_eq!(take(&store, "toolu_1"), Some(snap.clone()));
-        assert_eq!(take(&store, "toolu_1"), None);
+    fn keep_then_take_once() {
+        let home = Scratch::new("store");
+        let store = home.join("home");
+        let taken = snapshot(&home.roots(None));
+        let id = RecordId::try_from("toolu_1").unwrap();
+        keep(&store, &id, &taken).unwrap();
+        assert_eq!(take(&store, &id), Some(taken));
+        assert_eq!(take(&store, &id), None);
+    }
+
+    #[test]
+    fn an_id_naming_more_than_one_file_is_refused() {
         for bad in ["", "a/b", "a\\b", "c:d", "..", "x..y"] {
-            assert!(keep(&store, bad, &snap).is_err(), "{bad}");
-            assert!(take(&store, bad).is_none(), "{bad}");
+            assert!(RecordId::try_from(bad).is_err(), "{bad}");
         }
+        assert!(RecordId::try_from("toolu_01Ab-9").is_ok());
+    }
+
+    #[test]
+    fn a_failed_keep_names_the_path() {
+        let home = Scratch::new("keepfail");
+        let blocker = home.join("file");
+        std::fs::write(&blocker, "x").unwrap();
+        let id = RecordId::try_from("t").unwrap();
+        let error = keep(&blocker.join("store"), &id, &Snapshot::default()).unwrap_err();
+        assert!(error.to_string().contains("store"), "{error}");
+    }
+
+    /// The hook's own cost on this machine's real home, read-only: 100 runs
+    /// of what one side of the hook does. Run by hand for the budget
+    /// (`cargo test --release -p greenbelay-guard --lib
+    /// fingerprint_cost -- --ignored --nocapture`); the budget is 20 ms p95.
+    #[test]
+    #[ignore = "reads the real home; a measurement, not a check"]
+    fn fingerprint_cost_on_this_machine() {
+        let cwd = std::env::current_dir().unwrap();
+        let mut costs: Vec<std::time::Duration> = (0..100)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                let git_dir = git_common_dir(&cwd);
+                let roots = watched(&|key| std::env::var_os(key), git_dir.as_deref());
+                let taken = as_recorded(&snapshot(&roots));
+                assert!(!encode(&taken).is_empty());
+                started.elapsed()
+            })
+            .collect();
+        costs.sort();
+        eprintln!(
+            "fingerprint: p50 {:?} p95 {:?} max {:?}",
+            costs[49], costs[94], costs[99]
+        );
     }
 
     #[test]
