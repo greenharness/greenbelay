@@ -5,6 +5,17 @@
 - The inbox notice at session start stays quiet when its only lines are in a
   take a live session is filing: it no longer prints `holds 0 lines unfiled`.
   The journal line still counts them (session-boundaries t17).
+- `clear-at-boundary` now sees a boundary whose step starts with a reserved
+  word (`then`, `do`, `else`, `elif`, `{`, `if`, `while`, `until`), such as
+  `for w in …; do git -C "$H" worktree remove "$w"; done`. Before, such a
+  call was never a boundary. Its `-C` words resolve as anywhere else, and a
+  loop variable is journalled `unresolved loop-var` (session-boundaries t25).
+- A `command` or `builtin` call leaves the walk's directory unread only when
+  the command it runs can move the shell (`cd`, `pushd`, `popd`, `eval`,
+  `source`, `.`). `command -v jq` and `builtin echo` no longer make a later
+  boundary `unresolved not-literal`.
+- Past the session's advice cap, a repeated Stop on the same boundary writes
+  no second `cap` or `unresolved` journal row.
 
 ## v6.5.0
 
