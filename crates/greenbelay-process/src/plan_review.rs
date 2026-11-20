@@ -697,6 +697,29 @@ pub fn bindings(reader: impl BufRead) -> Vec<Binding> {
         .collect()
 }
 
+/// The side transcripts of one session, `<session>/subagents/*.jsonl`
+/// (forks, subagents, relais workers), sorted; empty when the directory is
+/// absent. `transcript` is the session's own `<session>.jsonl`: only that
+/// session's directory is listed, never another session's.
+pub fn side_transcripts(transcript: &Path) -> Vec<PathBuf> {
+    session_side_transcripts(&transcript.with_extension(""))
+}
+
+/// [`side_transcripts`] from the session's directory, for a walk that
+/// already holds it.
+pub fn session_side_transcripts(session_dir: &Path) -> Vec<PathBuf> {
+    let Ok(files) = std::fs::read_dir(session_dir.join("subagents")) else {
+        return Vec::new();
+    };
+    let mut out: Vec<PathBuf> = files
+        .flatten()
+        .map(|f| f.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "jsonl"))
+        .collect();
+    out.sort();
+    out
+}
+
 /// One agent launch that Claude Code recorded as completed: the agent type,
 /// the prompt it was given, and the text of its result (a foreground
 /// result's text parts; a background notification's `<result>` body, or the
@@ -3299,5 +3322,33 @@ mod tests {
     fn a_notification_names_what_completed() {
         let t = "<task-notification>\n<task-id>a</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<status>completed</status>\n</task-notification><task-notification><tool-use-id>toolu_2</tool-use-id><status>failed</status></task-notification>";
         assert_eq!(completed_ids(t), vec!["toolu_1"]);
+    }
+
+    #[test]
+    fn side_transcripts_lists_only_this_sessions_subagents() {
+        let root = std::env::temp_dir().join(format!("greenbelay-side-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let write = |rel: &str| {
+            let file = root.join(rel);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(&file, "{}\n").unwrap();
+        };
+        write("p/abc.jsonl");
+        write("p/abc/subagents/b.jsonl");
+        write("p/abc/subagents/a.jsonl");
+        write("p/abc/subagents/notes.txt");
+        write("p/abc/other/c.jsonl");
+        write("p/abcd/subagents/d.jsonl");
+        write("p/xyz/subagents/e.jsonl");
+        let listed = side_transcripts(&root.join("p/abc.jsonl"));
+        assert_eq!(
+            listed,
+            vec![
+                root.join("p/abc/subagents/a.jsonl"),
+                root.join("p/abc/subagents/b.jsonl")
+            ]
+        );
+        assert!(side_transcripts(&root.join("p/none.jsonl")).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

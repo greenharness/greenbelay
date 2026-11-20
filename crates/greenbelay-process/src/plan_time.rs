@@ -572,20 +572,13 @@ fn side_files(projects: &Path) -> Vec<(PathBuf, f64)> {
             continue;
         };
         for s in sessions.flatten() {
-            let Ok(files) = std::fs::read_dir(s.path().join("subagents")) else {
-                continue;
-            };
-            for f in files.flatten() {
-                let path = f.path();
-                if path.extension().is_some_and(|e| e == "jsonl") {
-                    let m = f
-                        .metadata()
-                        .and_then(|m| m.modified())
-                        .ok()
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map_or(0.0, |d| d.as_secs_f64());
-                    out.push((path, m));
-                }
+            for path in crate::plan_review::session_side_transcripts(&s.path()) {
+                let m = std::fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0.0, |d| d.as_secs_f64());
+                out.push((path, m));
             }
         }
     }

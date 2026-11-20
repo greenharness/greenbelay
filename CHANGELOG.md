@@ -11,6 +11,22 @@
   A flag's value is never read as the pattern or the path, a reader whose
   stdout goes to `/dev/null` is silent, and one redirected to a file is
   advised as a copy.
+- New rule `push-browser-check` (advise, ceiling deny): a push of a branch
+  that changes interface files, in a repository with a user interface, is
+  advised unless this session's transcript or one of its side transcripts
+  (`<session>/subagents/*.jsonl`) holds a completed `browser-check` agent
+  whose prompt carries the pushed tree's `<<<TREE repo=… sha=…>>>` block and
+  whose result has a `browser: ` line and a `url: ` line. A pass is remembered
+  per tree in `push-browser-check/by-tree/`, a store only the hook writes (a
+  write there is refused with its own remedy). A landed, approved plan whose
+  `## Browser check` section starts `none: <reason>` passes. Without the
+  `browser-check` agent installed it is a gap: said as advice at every
+  stance, never held, and `greenbelay doctor` lists it.
+  Behind it, `plan_review::side_transcripts` lists one session's side
+  transcripts (`plan-time` reuses it), and `push-preview`'s plan-declared
+  evidence reader is generalised over the section and prefix with its journal
+  detail unchanged.
+
 - The inbox notice at session start stays quiet when its only lines are in a
   take a live session is filing: it no longer prints `holds 0 lines unfiled`.
   The journal line still counts them (session-boundaries t17).

@@ -595,10 +595,9 @@ fn on_bash(bash: &Bash) -> Decision {
     // alone. A command that would write there is refused before any stance
     // is consulted: there is no legitimate writer to advise, and `observe`
     // turns a rule off, not a boundary. A read of the record passes.
-    if let Some(span) = crate::implementation_review::store_clause(&parsed) {
-        let rule = &crate::implementation_review_rule::RULE;
+    if let Some((span, guard)) = crate::implementation_review::store_clause(&parsed) {
         journal::record(&journal::Entry {
-            rule: rule.id,
+            rule: guard.rule_id,
             stance: "deny",
             outcome: "denied",
             session: &bash.session,
@@ -606,11 +605,7 @@ fn on_bash(bash: &Bash) -> Decision {
             mode: &bash.permission_mode,
             excerpt: &crate::backtest::excerpt(&bash.command, span.start, span.end),
         });
-        return Decision::Deny(decision::phrase(
-            rule.id,
-            crate::implementation_review::GUARD_REASON,
-            crate::implementation_review::GUARD_REMEDY,
-        ));
+        return Decision::Deny(decision::phrase(guard.rule_id, guard.reason, guard.remedy));
     }
     // When a `preview register` call started, for `preview::bind` to tell
     // its own output from a line an earlier clause printed.
@@ -1457,10 +1452,9 @@ fn on_file(op: &crate::payload::FileOp) -> Decision {
         // A pass file of the implementation review is written by the hook
         // alone; a Write or Edit there is refused whatever the rule's
         // stance, since there is no legitimate writer to advise.
-        if crate::implementation_review::guards_path(&op.path) {
-            let rule = &crate::implementation_review_rule::RULE;
+        if let Some(guard) = crate::implementation_review::guards_path(&op.path) {
             journal::record(&journal::Entry {
-                rule: rule.id,
+                rule: guard.rule_id,
                 stance: "deny",
                 outcome: "denied",
                 session: &op.session,
@@ -1468,11 +1462,7 @@ fn on_file(op: &crate::payload::FileOp) -> Decision {
                 mode: &op.permission_mode,
                 excerpt: &format!("write {}", op.path.display()),
             });
-            return Decision::Deny(decision::phrase(
-                rule.id,
-                crate::implementation_review::GUARD_REASON,
-                crate::implementation_review::GUARD_REMEDY,
-            ));
+            return Decision::Deny(decision::phrase(guard.rule_id, guard.reason, guard.remedy));
         }
         if let Some(agent) = crate::lsp::agent_key(op.agent_id.as_deref()) {
             crate::session_state::record(&op.session, &agent, "write", &op.path, "full", true);
@@ -3139,6 +3129,7 @@ fn unknown_directory(
     let gates = [
         crate::push_preview::RULE.id,
         crate::implementation_review_rule::RULE.id,
+        greenbelay_process::push_browser_check::RULE.id,
     ];
     if stance != Stance::Deny || !gates.contains(&rule.id) {
         return Err(WHY);
@@ -3208,6 +3199,7 @@ fn attributed_repo(id: &str, bash: &Bash) -> String {
     let pushes = [
         crate::push_preview::RULE.id,
         crate::implementation_review_rule::RULE.id,
+        greenbelay_process::push_browser_check::RULE.id,
         crate::assertions::push_published::ASSERTION.id,
         crate::assertions::land_retry::ASSERTION.id,
     ];

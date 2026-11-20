@@ -2522,11 +2522,11 @@ pub fn confirm_push(ctx: &Context, cmd: &Simple, stance: Stance) -> Confirmed {
 /// Whether a path is inside the pass-file store, compared lexically (`.`
 /// and `..` folded, no symlink followed) and, where the store exists, by
 /// its canonical form too. Only the hook writes there.
-pub fn guards_path(path: &Path) -> bool {
+pub fn guards_path(path: &Path) -> Option<Guard> {
     HOOK_ONLY_DIRS
         .iter()
-        .filter_map(|d| Some(journal::dir()?.join(d)))
-        .any(|store| guards_store(path, &store))
+        .find(|d| journal::dir().is_some_and(|dir| guards_store(path, &dir.join(d))))
+        .map(|d| guard_of(d))
 }
 
 fn guards_store(path: &Path, store: &Path) -> bool {
@@ -2577,41 +2577,83 @@ const WRITERS: &[&str] = &[
 /// into it (`> …/by-tree/…`), or a program on [`WRITERS`] with a word naming
 /// it. A read — `ls`, `cat`, `find` of the pass files — passes: the record is
 /// there to be looked at. Returns the clause's span.
-pub fn store_clause(parsed: &greenbelay_guard::shell::Parsed) -> Option<std::ops::Range<usize>> {
-    parsed
-        .clauses()
-        .iter()
-        .find(|cmd| {
-            let redirected = cmd
-                .redirects
-                .iter()
-                .any(|(op, w)| op.contains('>') && names_store(&w.text));
-            let writer = cmd
-                .program()
-                .map(|p| p.rsplit('/').next().unwrap_or(p))
-                .is_some_and(|p| WRITERS.contains(&p) || p.starts_with("python"));
-            redirected || (writer && cmd.words.iter().any(|w| names_store(&w.text)))
-        })
-        .map(|cmd| cmd.at..cmd.end)
+pub fn store_clause(
+    parsed: &greenbelay_guard::shell::Parsed,
+) -> Option<(std::ops::Range<usize>, Guard)> {
+    parsed.clauses().iter().find_map(|cmd| {
+        let writer = cmd
+            .program()
+            .map(|p| p.rsplit('/').next().unwrap_or(p))
+            .is_some_and(|p| WRITERS.contains(&p) || p.starts_with("python"));
+        let named = |word: &str| store_named(word).map(guard_of);
+        let hit = cmd
+            .redirects
+            .iter()
+            .filter(|(op, _)| op.contains('>'))
+            .find_map(|(_, w)| named(&w.text))
+            .or_else(|| {
+                writer
+                    .then(|| cmd.words.iter().find_map(|w| named(&w.text)))
+                    .flatten()
+            });
+        hit.map(|guard| (cmd.at..cmd.end, guard))
+    })
 }
 
 /// Whether a shell word names the store, spelled with either separator:
 /// Windows writes the same directory with backslashes.
 pub fn names_store(word: &str) -> bool {
+    store_named(word).is_some()
+}
+
+/// The hook-only directory a shell word names, if any.
+fn store_named(word: &str) -> Option<&'static str> {
     let word = word.replace('\\', "/");
-    HOOK_ONLY_DIRS.iter().any(|d| {
+    HOOK_ONLY_DIRS.iter().copied().find(|d| {
         word.contains(&format!("{DATA_DIR}/{d}/"))
             || word.contains(&format!("{DATA_DIR}/{d}")) && word.ends_with(d)
     })
 }
 
 /// The directories under the config dir that only the hook writes.
-const HOOK_ONLY_DIRS: &[&str] = &[RULE_ID, "provenance"];
+const HOOK_ONLY_DIRS: &[&str] = &[RULE_ID, "provenance", crate::push_browser_check::RULE_ID];
+
+/// What a refusal of a write into a hook-only directory says: the rule it
+/// is journalled under, why the directory is the hook's, and what to do
+/// instead. Each store names its own remedy.
+pub struct Guard {
+    pub rule_id: &'static str,
+    pub reason: &'static str,
+    pub remedy: &'static str,
+}
+
+fn guard_of(dir: &str) -> Guard {
+    if dir == crate::push_browser_check::RULE_ID {
+        Guard {
+            rule_id: crate::push_browser_check::RULE_ID,
+            reason: GUARD_BROWSER_REASON,
+            remedy: GUARD_BROWSER_REMEDY,
+        }
+    } else {
+        Guard {
+            rule_id: RULE_ID,
+            reason: GUARD_REASON,
+            remedy: GUARD_REMEDY,
+        }
+    }
+}
 
 pub const GUARD_REASON: &str =
     "files under ~/.claude/greenbelay/implementation-review/ and ~/.claude/greenbelay/provenance/ are written by the hook alone: the pass files from a completed review in this session's transcript or the person's Overrule, the provenance records from a push the hook passed.";
 pub const GUARD_REMEDY: &str =
     "Run the review (worktree-task F4b) or ask the person; never write the record by hand.";
+const GUARD_BROWSER_REASON: &str =
+    "files under ~/.claude/greenbelay/push-browser-check/ are written by the hook alone: the pass files from a completed browser-check of the pushed tree in this session's transcript.";
+const GUARD_BROWSER_REMEDY: &str = concat!(
+    "Launch the `browser-check` agent with the line `",
+    greenbelay_guard::bin!(),
+    " tree-sha --block -C <repo> <rev>` prints in its brief; never write the record by hand."
+);
 
 // ---------------------------------------------------------------- the person
 
