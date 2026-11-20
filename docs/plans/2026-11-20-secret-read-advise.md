@@ -196,7 +196,7 @@ twice and asserts no journal line holds `ghp_abc`.
 - unix (opus): both rounds approve-with-changes; value-taking flags and `cp -t` fixed; `&>` and `>|` redirects carried as `deliberate: advise-only, wording at worst`.
 - tui (opus): both rounds approve-with-changes; contents wording and per-kind remedies done; docker and claude remedies, copy-advice backticks and tense carried as `deliberate: wording nits`.
 
-- CI fix: `tests (windows-latest)` failed on two new hook tests (a Unix-only Bash command built from a temp path, and a `/`-rooted key prefix); the first is now `#[cfg(unix)]`, the second asserts the prefix `secret-read ` only. Re-reviewed on the new tree.
+- CI fix: `tests (windows-latest)` failed on two new hook tests (a Unix-only Bash command built from a temp path, and a `/`-rooted key prefix); the first is now `#[cfg(unix)]`, the second asserts the prefix `secret-read ` only. Re-reviewed on the new tree. implementation-review: approve-with-changes, no new blocker; `deliberate: the Bash-command test stays cfg(unix), since a Windows path's backslashes are escapes to the shell parser and Claude Code's Bash tool uses POSIX paths`; `deliberate: the key test still binds the path through its assert_ne on .netrc vs .npmrc`.
 
 ## Observed verification
 
