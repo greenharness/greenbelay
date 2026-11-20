@@ -139,9 +139,10 @@ The hook fills in the block, the path and the rev it already computed, so a push
 - 2026-11-20 — No by-patch carry-over, per the panel: a rebase onto a moved base can change the render.
 - 2026-11-20 — `HookOnlyStore` as an enum (rust reviewer, low) left as a follow-up: the string-keyed `guard_of` is the two older stores' shape and a third variant touches implementation-review's guard paths in `hook.rs`.
 - 2026-11-20 — A test for the `remember-failed` journal path left out (backend, low): a read-only-directory test is platform-dependent; the live check after install watches the journal instead.
+- 2026-11-21 — Rebased onto main's `secret-read` rule (#304): CHANGELOG keeps both Unreleased entries, the rule table counts 57; the first PR head had no CI run because GitHub runs no `pull_request` workflow on a conflicting PR, which is how the drift was noticed.
 
 ## Implementation review
-- implementation-review: approve on tree 70bcd6ff (round 1 approve-with-changes, 6 blocking code-rule findings fixed: module doc, banner, swallowed pass write, `_` arm, let-discard reasons, names; Delta approve-with-changes, names on added lines fixed; Delta 2 approve). 116k/56k/40k tokens, 118/82/43 s.
+- implementation-review: approve on tree 70bcd6ff (round 1 approve-with-changes, 6 blocking code-rule findings fixed: module doc, banner, swallowed pass write, `_` arm, let-discard reasons, names; Delta approve-with-changes, names on added lines fixed; Delta 2 approve). 116k/56k/40k tokens, 118/82/43 s. After the rebase onto #304 (`secret-read`): approve-with-changes on 4f34b72c (low: the rule-table comment's count), approve on 7b8feb6c once the comment read 57 = 46 + 11. 30k/31k, 27/26 s. The four profiles re-read the rebase: approve (tui's two deferred lows unchanged).
 - backend: approve (lost pass write journalled as `remember-failed`; `unknown` split per cause; deliberate: no read-only-dir test for `remember-failed`, `session: "-"` as the rule's other entries). 70k/40k/32k, 80/23/39 s.
 - lang:rust: approve on a393af32, carried (exhaustive `Standing`, typed `Pass`, `context.cwd`; deliberate: `HookOnlyStore` enum as a follow-up). 66k/41k, 73/41 s.
 - unix: approve on a393af32, carried (`shell_word` quotes `~`/`=`). 68k/40k, 83/19 s.
