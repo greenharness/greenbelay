@@ -196,6 +196,8 @@ twice and asserts no journal line holds `ghp_abc`.
 - unix (opus): both rounds approve-with-changes; value-taking flags and `cp -t` fixed; `&>` and `>|` redirects carried as `deliberate: advise-only, wording at worst`.
 - tui (opus): both rounds approve-with-changes; contents wording and per-kind remedies done; docker and claude remedies, copy-advice backticks and tense carried as `deliberate: wording nits`.
 
+- CI fix: `tests (windows-latest)` failed on two new hook tests (a Unix-only Bash command built from a temp path, and a `/`-rooted key prefix); the first is now `#[cfg(unix)]`, the second asserts the prefix `secret-read ` only. Re-reviewed on the new tree.
+
 ## Observed verification
 
 - `greenbelay check 'cat ~/.netrc'` twice: advises (netrc remedy, `curl --netrc-file`), the told-once gate is in `on_bash`, not `check`. `curl -n`, `ls ~/.ssh`, `cat ~/.ssh/id_ed25519.pub`, `grep -q x ~/.netrc`: no rule fires. `cat "$HOME/.netrc"` and `grep ghp_abc ~/.netrc` advise; the `.env` redirect case advises on a real `.env`.
