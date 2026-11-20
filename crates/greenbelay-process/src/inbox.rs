@@ -215,6 +215,11 @@ fn session_of_fresh(line: &str, today: Day) -> Option<String> {
     }
 }
 
+/// Where an unfiled line goes, written into the orphan block and the
+/// fresh block alike, so either block stands alone.
+const WHERE_TO_FILE: &str = "as a task ticket in the plan's programme map, \
+     or else in docs/programmes/follow-ups/, then remove its line";
+
 fn phrase(inbox: &Path, scan: &Scan) -> String {
     let unfiled = scan.orphans.len() + scan.fresh.len();
     let mut out = format!(
@@ -240,10 +245,8 @@ fn phrase(inbox: &Path, scan: &Scan) -> String {
                 scan.orphans.len() - MAX_ORPHANS_SHOWN
             ));
         }
-        out.push_str(
-            "\nany session may file an orphan: as a task ticket in the plan's programme map, \
-             or else in docs/programmes/follow-ups/, then remove its line",
-        );
+        out.push_str("\nany session may file an orphan: ");
+        out.push_str(WHERE_TO_FILE);
     }
     if scan.being_filed > 0 {
         out.push_str(&format!(
@@ -261,7 +264,7 @@ fn phrase(inbox: &Path, scan: &Scan) -> String {
         out.push_str(&format!(
             "\n{} under {ORPHAN_AGE_DAYS} days old, by session id: {}\n\
              a live session files its own at its boundary; after a /clear, \
-             the lines of the cleared session's id are yours to file",
+             the lines of the cleared session's id are yours to file: {WHERE_TO_FILE}",
             lines_of(scan.fresh.len()),
             sessions.join(", "),
         ));
@@ -541,6 +544,25 @@ mod tests {
         );
         assert!(
             text.contains("3 lines under 2 days old, by session id: aaaaaaaa, bbbbbbbb\n"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn fresh_lines_alone_say_where_to_file() {
+        let scan = Scan {
+            orphans: Vec::new(),
+            fresh: vec!["aaaaaaaa".into()],
+            being_filed: 0,
+        };
+        let text = phrase(Path::new("/r/.git/greenharness/inbox.md"), &scan);
+        assert!(!text.contains("orphan"), "{text}");
+        assert!(
+            text.ends_with(
+                "the lines of the cleared session's id are yours to file: \
+                 as a task ticket in the plan's programme map, \
+                 or else in docs/programmes/follow-ups/, then remove its line"
+            ),
             "{text}"
         );
     }
