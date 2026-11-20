@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 plan-id: p-01M7W2VAMA1WZ1M03ZS9JKKQHD
 branch: feat/secret-read-advise
 repos: [greenbelay]
@@ -187,5 +187,20 @@ twice and asserts no journal line holds `ghp_abc`.
   `grep -r … ~`, process substitution.
 - `whole-file-dump` (deny) may still refuse a secret over 8 KB and point to Read
   (`whole_file_dump.rs:114`); out of scope.
+
+## Implementation review
+
+- implementation-review (opus): round 1 approve-with-changes, delta approve-with-changes; flag-argument and exhaustive-match findings fixed. 54k, 44 s; 53k, 24 s.
+- backend (opus): both rounds approve-with-changes; Grep told-mark on a symbol-grep deny and hook-path tests fixed; `jq -e` valued-flag arm carried as `deliberate: the file operand is still caught`.
+- lang:rust (opus): both rounds approve-with-changes; enums for kind and access done; `Isolated` env lock and `long_arity` `--` lookup carried as `deliberate: low, test-only or cosmetic`.
+- unix (opus): both rounds approve-with-changes; value-taking flags and `cp -t` fixed; `&>` and `>|` redirects carried as `deliberate: advise-only, wording at worst`.
+- tui (opus): both rounds approve-with-changes; contents wording and per-kind remedies done; docker and claude remedies, copy-advice backticks and tense carried as `deliberate: wording nits`.
+
+## Observed verification
+
+- `greenbelay check 'cat ~/.netrc'` twice: advises (netrc remedy, `curl --netrc-file`), the told-once gate is in `on_bash`, not `check`. `curl -n`, `ls ~/.ssh`, `cat ~/.ssh/id_ed25519.pub`, `grep -q x ~/.netrc`: no rule fires. `cat "$HOME/.netrc"` and `grep ghp_abc ~/.netrc` advise; the `.env` redirect case advises on a real `.env`.
+- `greenbelay graduate secret-read --to deny`: refused, "capped at advise".
+- `greenbelay rules` lists `secret-read advise (max advise)`; `per_1000` is 0.0, unmeasured (no backtest over transcripts was run).
+- Commit gates (clippy, `cargo test --workspace`) passed on all three code commits.
 
 <!-- panel: repos=greenbelay adds= reviewers=backend,lang:rust,tui,unix body-sha=9986028052a2 -->
