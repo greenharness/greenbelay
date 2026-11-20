@@ -80,7 +80,7 @@ fn builds(program: &str, words: &[Word]) -> bool {
     }
 }
 
-fn is_heavy(program: &str, words: &[Word]) -> bool {
+pub(crate) fn is_heavy(program: &str, words: &[Word]) -> bool {
     !exempt_words(words) && (runner_words(program, words) || builds(program, words))
 }
 

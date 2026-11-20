@@ -17,15 +17,16 @@
 //! the admission test this crate applies to any new guard: *does the failure it
 //! prevents go unnoticed?*
 //!
-//! ## Only successful calls, with two exceptions
+//! ## Only successful calls, with three exceptions
 //!
 //! Claude Code sends a failed tool call to `PostToolUseFailure`. Everything
 //! reaching [`examine_all`] claimed to work, and an assertion's whole job is
-//! to ask whether the claim holds. [`after_failure`] also runs `bug-nudge` and
-//! `land-retry` on a failed call: a check that failed is the moment to say a
-//! bug needs a test, and an `amont land` that ends `unverified` or
-//! `not-observed` exits non-zero after the remote accepted its push, and that
-//! push may be one nobody judged.
+//! to ask whether the claim holds. [`after_failure`] also runs `bug-nudge`,
+//! `land-retry` and `home-fingerprint-drift` on a failed call: a check that
+//! failed is the moment to say a bug needs a test; an `amont land` that ends
+//! `unverified` or `not-observed` exits non-zero after the remote accepted its
+//! push, and that push may be one nobody judged; and a red test run can change
+//! a home file as surely as a green one.
 //!
 //! ## The same two halves as a rule, on the other side of execution
 //!
@@ -58,6 +59,7 @@ use crate::rules::{Context, Evidence, Stance};
 use crate::shell::Parsed;
 
 pub mod bug_nudge;
+pub mod home_fingerprint_drift;
 pub mod land_retry;
 
 /// Shared by every test that sets `CLAUDE_CONFIG_DIR`, which is process-wide.
@@ -137,10 +139,15 @@ pub const ASSERTIONS: &[Assertion] = &[
     push_published::ASSERTION,
     land_retry::ASSERTION,
     bug_nudge::ASSERTION,
+    home_fingerprint_drift::ASSERTION,
 ];
 
 /// The assertions that also run on a FAILED call (`PostToolUseFailure`).
-pub const AFTER_FAILURE: &[Assertion] = &[land_retry::ASSERTION, bug_nudge::ASSERTION];
+pub const AFTER_FAILURE: &[Assertion] = &[
+    land_retry::ASSERTION,
+    bug_nudge::ASSERTION,
+    home_fingerprint_drift::ASSERTION,
+];
 
 /// [`examine_all`] over [`AFTER_FAILURE`].
 pub fn after_failure(parsed: &Parsed) -> Vec<(&'static Assertion, Claim)> {

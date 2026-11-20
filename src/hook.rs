@@ -220,6 +220,11 @@ fn decide(raw: &str) -> Decision {
         Event::PostWrite(op) => on_post_write(&op),
         Event::PreBash(bash) => {
             let decision = on_bash(&bash);
+            // A command that runs gets its home fingerprint taken first, for
+            // `home-fingerprint-drift` to compare once it ended.
+            if !matches!(decision, Decision::Deny(_)) {
+                greenbelay_guard::assertions::home_fingerprint_drift::before(&bash);
+            }
             record_bash_activity(&bash);
             decision
         }

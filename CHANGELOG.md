@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- New advise-only assertion `home-fingerprint-drift`: PreToolUse takes a
+  fingerprint (hashes only) of `~/.gitconfig`, the XDG git config, `~/.netrc`,
+  `~/.ssh` (but `known_hosts*`), `~/.claude/settings*.json`, the Claude plugin
+  lists and the repository's shared `.git/config` before a test, lint or
+  build run, or a binary run out of `target/`; the PostToolUse (or
+  PostToolUseFailure) names each file that changed while it ran. It never
+  refuses, and says that an edit of your own shows too. The watched set is
+  the one relais warns about around a run (relais v0.73.0).
 - New advise-only rule `secret-read` (max stance advise, so `graduate` cannot raise
   it): a `cat`, `grep`, `cp` and the like of a secret file (`~/.netrc`,
   `~/.ssh/id_*`, `.env`, cloud credentials, private keys), a Read of one, or a

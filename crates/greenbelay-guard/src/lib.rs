@@ -24,6 +24,7 @@ pub mod gitconfig;
 pub mod graduate;
 pub mod guidance;
 pub mod harness_review;
+pub mod home_print;
 pub mod journal;
 pub mod json;
 pub mod land;
