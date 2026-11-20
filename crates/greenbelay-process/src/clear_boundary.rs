@@ -284,6 +284,8 @@ pub enum Shape {
 }
 
 impl Shape {
+    /// The shape's name as the journal's `unresolved <shape> <what>` row
+    /// writes it.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Subshell => "subshell",
@@ -365,7 +367,7 @@ pub fn boundaries(window: &TurnWindow<'_>, cwd: &Path, home: Option<&Path>) -> V
 }
 
 /// Where a Bash call began: the entry's own `cwd` when it is a non-empty
-/// absolute path (in a replay, also a path under the symbolic home, which is
+/// rooted path (in a replay, also a path under the symbolic home, which is
 /// relative), else the payload `cwd`.
 fn entry_start(entry_cwd: Option<&str>, payload_cwd: &Path, home: Option<&Path>) -> PathBuf {
     // Rooted, not `is_absolute`: on Windows a `/w` path has no drive and is
@@ -764,7 +766,7 @@ impl Expanded {
 fn leaves_the_shell(step: &Step) -> bool {
     let ends_alone = matches!(step.end, Operator::Sequence);
     let words = without_redirects(&step.words);
-    let status_ok = |status: Option<&&Word>| {
+    let status_ok = |status: Option<&Word>| {
         status.is_none_or(|word| {
             !word.text.is_empty() && word.text.chars().all(|c| c.is_ascii_digit())
         })
@@ -775,7 +777,7 @@ fn leaves_the_shell(step: &Step) -> bool {
             Some("exit" | "return")
         )
         && words.len() <= 2
-        && status_ok(words.get(1))
+        && status_ok(words.get(1).copied())
 }
 
 /// Whether a simple command certainly ran: after a `&&` or `||` it may not
@@ -820,6 +822,47 @@ fn keyword(word: &Word) -> Option<&str> {
         .iter()
         .all(|quoting| *quoting == Quoting::Bare)
         .then_some(word.text.as_str())
+}
+
+/// Reserved words that continue an open compound command before a simple
+/// command in the same step.
+const CONTINUING_KEYWORDS: [&str; 4] = ["then", "do", "else", "elif"];
+
+/// Reserved words that open a compound command whose body starts in the
+/// same step.
+const OPENING_KEYWORDS: [&str; 4] = ["{", "if", "while", "until"];
+
+/// A bare word of [`CONTINUING_KEYWORDS`] or [`OPENING_KEYWORDS`].
+fn leads_a_command(word: &Word) -> bool {
+    keyword(word)
+        .is_some_and(|text| CONTINUING_KEYWORDS.contains(&text) || OPENING_KEYWORDS.contains(&text))
+}
+
+/// A step's words after the reserved words that lead its simple command,
+/// as the walk strips them: `do git worktree remove x` is a `git` call.
+fn command_words(words: &[Word]) -> &[Word] {
+    let skipped = words
+        .iter()
+        .take_while(|word| leads_a_command(word))
+        .count();
+    &words[skipped..]
+}
+
+/// The command `command` or `builtin` runs, after their options (`-p`,
+/// `-v`, `-V`, `--`) and any nested `command`/`builtin`.
+fn wrapped_command<'a>(arguments: &[&'a Word]) -> Option<&'a str> {
+    let mut rest = arguments.iter().map(|word| word.text.as_str());
+    let mut next = rest.next();
+    while let Some(text) = next {
+        if text == "--" {
+            return rest.next();
+        }
+        if !(text.len() > 1 && text.starts_with('-')) && text != "command" && text != "builtin" {
+            return Some(text);
+        }
+        next = rest.next();
+    }
+    None
 }
 
 fn is_identifier(text: &str) -> bool {
@@ -988,9 +1031,10 @@ impl Walk {
         let mut words = step.words.as_slice();
         while let Some(first) = words.first() {
             match keyword(first) {
-                Some("then" | "do" | "else" | "elif") => {}
-                Some("{" | "if") => self.compounds.push(Shape::Keyword),
-                Some("while" | "until") => self.compounds.push(Shape::Keyword),
+                Some(text) if CONTINUING_KEYWORDS.contains(&text) => {}
+                Some(text) if OPENING_KEYWORDS.contains(&text) => {
+                    self.compounds.push(Shape::Keyword);
+                }
                 Some("for" | "select") => {
                     self.compounds.push(Shape::LoopVar);
                     if let Some(name) = words.get(1).filter(|word| is_identifier(&word.text)) {
@@ -1067,8 +1111,19 @@ impl Walk {
                 };
                 self.change_directory(&words[1..], end, (reach, piping), home);
             }
-            Some("pushd" | "popd" | "builtin" | "command" | "eval" | "source" | ".") => {
-                if !matches!(self.here, Err(Shape::Subshell)) {
+            Some(name @ ("pushd" | "popd" | "builtin" | "command" | "eval" | "source" | ".")) => {
+                // `command -v jq` or `builtin echo` leave the directory;
+                // only a wrapped command that can move it is unread.
+                // A wrapped word the walk cannot read (`command "$c" x`)
+                // may be `cd`, so it is unread too.
+                let moves = match name {
+                    "builtin" | "command" => wrapped_command(&words[1..]).is_some_and(|wrapped| {
+                        matches!(wrapped, "cd" | "pushd" | "popd" | "eval" | "source" | ".")
+                            || wrapped.contains(['$', '`', '*', '?', '['])
+                    }),
+                    _ => true,
+                };
+                if moves && !matches!(self.here, Err(Shape::Subshell)) {
                     self.here = Err(Shape::NotLiteral);
                 }
             }
@@ -1241,6 +1296,7 @@ fn variable_name(text: &str) -> Option<(&str, usize)> {
 }
 
 fn classify(words: &[Word], walk: &Walk, cwd: &Path, home: Option<&Path>) -> Option<Reached> {
+    let words = command_words(words);
     let texts: Vec<String> = words.iter().map(|word| word.text.clone()).collect();
     if texts.iter().any(|word| base_name(word) == "sweep.py")
         && texts.iter().any(|word| word == "--apply")
@@ -2165,6 +2221,12 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
             return None;
         }
         if advices >= MAX_ADVICES_PER_SESSION {
+            // The key, saved alone, sends a repeat Stop on this boundary
+            // through the key check above: no second `cap` or `unresolved`
+            // row. A failed save journals `state-unwritable`, and the next
+            // Stop writes the rows again, as before.
+            state.key = key;
+            let _saved = self.save(&state);
             return self.watched("cap");
         }
         // At `advise` a note cannot carry the plan on, and a lone plan commit's
@@ -3995,5 +4057,185 @@ mod tests {
                 "{head}"
             );
         }
+    }
+
+    /// The plan's Behaviour table (t25), payload and entry cwd `/w`, home
+    /// `/h` (as [`walked`] sets it): a boundary led
+    /// by a reserved word is judged like any other.
+    #[test]
+    fn a_boundary_led_by_a_keyword_is_a_boundary() {
+        type Walked = Vec<(Vec<PathBuf>, Option<&'static str>)>;
+        let cases: &[(&str, Walked)] = &[
+            (
+                "for r in a b; do git -C $r worktree remove x; done",
+                vec![(paths(&["/w/$r"]), Some("loop-var"))],
+            ),
+            (
+                "H=/h/repo; for w in a; do git -C $H worktree remove $w; done",
+                vec![(paths(&["/h/repo"]), None)],
+            ),
+            (
+                "LIVE=/h/r; if true; then git -C \"$LIVE\" worktree remove x; fi",
+                vec![(paths(&["/h/r"]), None)],
+            ),
+            (
+                "if true; then :; else git -C /h/e worktree remove x; fi",
+                vec![(paths(&["/h/e"]), None)],
+            ),
+            (
+                "{ git commit -m \"docs(plan): x\"; }",
+                vec![(Vec::new(), None)],
+            ),
+            (
+                "if true; then git commit -m \"docs(plan): x, done\"; fi",
+                Vec::new(),
+            ),
+            ("echo \"then git worktree remove x\"", Vec::new()),
+            ("\"do\" git worktree remove x", Vec::new()),
+        ];
+        for (command, expected) in cases {
+            assert_eq!(&walked(command, "/w", Some("/w")), expected, "{command}");
+        }
+    }
+
+    /// Every word the walk strips before a simple command, `classify` strips
+    /// too.
+    #[test]
+    fn classify_and_the_walk_strip_the_same_keywords() {
+        for word in CONTINUING_KEYWORDS.iter().chain(OPENING_KEYWORDS.iter()) {
+            let command = format!("{word} git -C /h/a worktree remove x");
+            assert_eq!(
+                walked(&command, "/w", Some("/w")),
+                vec![(paths(&["/h/a"]), None)],
+                "{command}"
+            );
+        }
+        // The walk reads the `cd` after the word: after a continuing word it
+        // moves the shell, inside a compound a word opens it is `keyword`.
+        let cd_after = |word: &str| {
+            walked(
+                &format!("{word} cd /h/b; git worktree remove x"),
+                "/w",
+                Some("/w"),
+            )
+        };
+        for word in CONTINUING_KEYWORDS {
+            assert_eq!(cd_after(word), vec![(paths(&["/h/b"]), None)], "{word}");
+        }
+        for word in OPENING_KEYWORDS {
+            assert_eq!(
+                cd_after(word),
+                vec![(Vec::new(), Some("keyword"))],
+                "{word}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_keyword_led_heredoc_line_reads_as_a_bare_one() {
+        let bare = walked(
+            "cat > s.sh <<EOF\ngit worktree remove x\nEOF",
+            "/w",
+            Some("/w"),
+        );
+        let led = walked(
+            "cat > s.sh <<EOF\ndo git worktree remove x\nEOF",
+            "/w",
+            Some("/w"),
+        );
+        assert_eq!(led, bare);
+        assert_eq!(led.len(), 1);
+    }
+
+    #[test]
+    fn command_and_builtin_unread_only_a_command_that_moves_the_shell() {
+        let resolved = [
+            "command -v jq && git worktree remove ../x",
+            "builtin echo hi; git worktree remove ../x",
+            "command git status && git worktree remove ../x",
+        ];
+        for command in resolved {
+            assert_eq!(
+                walked(command, "/w", Some("/w")),
+                vec![(Vec::new(), None)],
+                "{command}"
+            );
+        }
+        let unread = [
+            "command cd /h/b && git worktree remove x",
+            "command -v cd && git worktree remove x",
+            "command -- cd /h/b && git worktree remove x",
+            "command -p builtin cd /h/b && git worktree remove x",
+            "builtin source env.sh; git worktree remove x",
+            "command eval 'cd /h/b'; git worktree remove x",
+            "command \"$c\" /h/b && git worktree remove x",
+            "builtin . ./env; git worktree remove x",
+        ];
+        for command in unread {
+            assert_eq!(
+                walked(command, "/w", Some("/w")),
+                vec![(Vec::new(), Some("not-literal"))],
+                "{command}"
+            );
+        }
+    }
+
+    fn rows_named(verdict: &Verdict, what: &str) -> usize {
+        verdict
+            .records
+            .iter()
+            .filter(|(_, row)| row == what)
+            .count()
+    }
+
+    /// Two Stops on one unresolved boundary, past the advice cap, and the
+    /// state the first one saved.
+    fn two_stops_at_the_cap(entries: &[Value], second: &[Value]) -> (Verdict, Verdict) {
+        let view = deny_view();
+        let saved = std::cell::RefCell::new(None);
+        let decide_with = |entries: &[Value], prior: State| {
+            super::decide(
+                &view,
+                entries,
+                prior,
+                || PhaseFact::NoOpenPhase,
+                || Stance::Deny,
+                |_| Repositories::Clean { heads: Vec::new() },
+                |state| {
+                    *saved.borrow_mut() = Some(state.clone());
+                    true
+                },
+            )
+        };
+        let capped = State {
+            advices: MAX_ADVICES_PER_SESSION,
+            ..State::default()
+        };
+        let first = decide_with(entries, capped.clone());
+        let prior = saved.borrow().clone().unwrap_or(capped);
+        let second = decide_with(second, prior);
+        (first, second)
+    }
+
+    #[test]
+    fn two_stops_at_the_cap_write_one_unresolved_row() {
+        let entries = turn_of(&["for r in a; do git -C $r worktree remove x; done"]);
+        let (first, second) = two_stops_at_the_cap(&entries, &entries);
+        assert_eq!(
+            unresolved_rows(&first),
+            ["unresolved loop-var worktree remove"]
+        );
+        assert_eq!(rows_named(&first, "cap"), 1);
+        assert!(unresolved_rows(&second).is_empty());
+        assert_eq!(rows_named(&second, "cap"), 0);
+    }
+
+    #[test]
+    fn two_boundaries_at_the_cap_write_two_cap_rows() {
+        let first_turn = turn_of(&["git worktree remove ../a"]);
+        let second_turn = turn_of(&["git worktree remove ../a", "git worktree remove ../b"]);
+        let (first, second) = two_stops_at_the_cap(&first_turn, &second_turn);
+        assert_eq!(rows_named(&first, "cap"), 1);
+        assert_eq!(rows_named(&second, "cap"), 1);
     }
 }
