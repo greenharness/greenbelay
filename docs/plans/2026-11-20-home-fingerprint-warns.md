@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 plan-id: p-01M7W0WBH0ABNE7ZWF4JH0S6RN
 canonical: relais:docs/plans/2026-11-20-home-fingerprint-warns.md
 phases: 2 (greenbelay assertion home-fingerprint-drift)
@@ -34,3 +34,15 @@ when a file changed. It never refuses.
 - Deviation: the shared git dir is read from `.git`/`gitdir:`/`commondir` on disk, not `git rev-parse --git-common-dir` (46 ms p50 alone, over the 20 ms budget); `GIT_DIR` set for the command only is not seen.
 - Deviation: outside a repository the `.git/config` root is dropped, not recorded `unreadable`; the diff stays silent for a path unreadable on both sides either way.
 - Added by review: a `homeprint/1` version line (a record another binary wrote is not compared), files over 1 MiB fingerprinted by size+mtime, never read.
+
+## Implementation review
+
+- implementation-review: a-w-c → a-w-c → approve (3 rounds). Fixed: Walker struct, banner, names, store-path test, docs/decision log, corpus 34, cfg, exhaustive match. 112k+44k+35k.
+- backend: a-w-c → approve. Fixed: `homeprint/1` header, "by you or another session", literal format test, `Taken::OtherVersion`. Deliberate: a failed keep is stderr only (a marker would fail in the same directory). 83k+78k.
+- lang:rust: a-w-c → a-w-c → approve. Fixed: RecordId, shared `home()`, path in keep's error, `State::Large`, `decode_body`, OsStr sort, Drop cleanup. 78k+75k+32k.
+- unix: approve, round 1 (finding 3 fixed: files over 1 MiB fingerprinted by size+mtime, never read). 50k.
+- tui: a-w-c ×3. Fixed: 80 columns per heading, remedy on its own line, "Could not check" heading, docs example. Deliberate: Unknown texts never shown; the 125-col stderr line appears only with no HOME at all. 66k+80k+32k.
+
+## Outcome
+
+Phase 2 is built and verified; with relais#512 (Phase 1) the plan's code is done. Next: release greenbelay, then the canonical plan's "Measure after release" (7 days after install: sort warnings into tool-caused and user-edit; roll back if over 1 in 3 are the person's own edits or p95 exceeds 50 ms).
