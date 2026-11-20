@@ -69,7 +69,9 @@ pub fn gap_line(need: Need) -> String {
     // agent type (ADR-0073): no installer is named for it.
     let ending = match need {
         Need::BrowserCheck => ".",
-        _ => ": run `grh install workflow`.",
+        Need::PlanPanel | Need::ImplementationReview | Need::CodeReview(_) => {
+            ": run `grh install workflow`."
+        }
     };
     format!(
         "{what} is installed (looked in the Claude config agents/, .claude/agents/ and installed \
