@@ -580,6 +580,15 @@ fn stale_checkout_notice(session: &Session) -> Option<String> {
     }
 }
 
+/// A `secret-read` advice waiting on the rest of the command: spoken, and
+/// its path marked told, only when nothing refuses the command.
+struct SecretPending {
+    key: String,
+    text: String,
+    excerpt: Option<String>,
+    finding: Finding,
+}
+
 fn on_bash(bash: &Bash) -> Decision {
     let parsed = shell::lex(&bash.command);
     // A pass file of the implementation review is written by the hook
@@ -688,6 +697,7 @@ fn on_bash(bash: &Bash) -> Decision {
     // Refuse-once refusals, phrased after the loop (see `alone` below), and
     // the files this command already dumped, so `cat a; cat a` is one decision.
     let mut refused_once: Vec<(&'static str, String, String)> = Vec::new();
+    let mut secret_pending: Vec<SecretPending> = Vec::new();
     let mut settled: std::collections::HashSet<std::path::PathBuf> =
         std::collections::HashSet::new();
     for (rule, finding) in &fired {
@@ -782,6 +792,30 @@ fn on_bash(bash: &Bash) -> Decision {
             remedy
         };
         let text = decision::phrase(rule.id, reason, remedy);
+        // `secret-read` is told once per path and agent, across Bash, Read and
+        // Grep, but only once the whole command is known to run: a refusal
+        // drops the advice, and the path must not be marked told for advice
+        // nobody saw. An observing rule marks nothing either.
+        if rule.id == rules::secret_read::RULE.id && stance != Stance::Observe {
+            let resolved = rules::secret_read::resolved(&context(bash, &parsed), finding);
+            let Some((path, _, _)) = resolved else {
+                note(
+                    rule,
+                    "unconfirmed",
+                    "the command no longer matches",
+                    bash,
+                    finding,
+                );
+                continue;
+            };
+            secret_pending.push(SecretPending {
+                key: secret_key(&path, bash.agent_id.as_deref()),
+                text,
+                excerpt: excerpt.map(str::to_string),
+                finding: finding.clone(),
+            });
+            continue;
+        }
         match stance {
             Stance::Observe => note_with(rule, "observe", "watched", bash, finding, excerpt),
             Stance::Advise => {
@@ -814,6 +848,32 @@ fn on_bash(bash: &Bash) -> Decision {
                     Once::Unrecorded => advise.push(text),
                 },
             },
+        }
+    }
+    // `secret-read` advice is spoken, and its path marked told, only when no
+    // rule refuses the command: a refusal drops every advice text.
+    if deny.is_empty() && refused_once.is_empty() {
+        let rule = &rules::secret_read::RULE;
+        for pending in secret_pending {
+            let excerpt = pending.excerpt.as_deref();
+            if first_telling(
+                rule,
+                &bash.session,
+                &pending.key,
+                &bash.cwd,
+                &bash.permission_mode,
+            ) {
+                note_with(rule, "advise", "advised", bash, &pending.finding, excerpt);
+                advise.push(pending.text);
+            } else {
+                note(
+                    rule,
+                    "unconfirmed",
+                    "this agent was told about this path",
+                    bash,
+                    &pending.finding,
+                );
+            }
         }
     }
     // The way through a refuse-once refusal is the same command again; it
@@ -1558,6 +1618,29 @@ fn on_file(op: &crate::payload::FileOp) -> Decision {
             }
         }
     }
+    // A secret's bytes land in the result whatever the window, so this block
+    // ignores `op.window` and the rest of the Read's state.
+    // Last, and only when nothing here refuses the Read: a refusal drops the
+    // advice, and the path must not be marked told for advice nobody saw.
+    let secret = if deny.is_empty() {
+        rules::secret_read::secret_file(&op.path)
+    } else {
+        None
+    };
+    if let Some(label) = secret {
+        let rule = &rules::secret_read::RULE;
+        let stance = crate::stance::resolve(rule).min(Stance::Advise);
+        let excerpt = rules::secret_read::excerpt(label, &shown);
+        let key = secret_key(&op.path, op.agent_id.as_deref());
+        let mut first =
+            |key: &str| first_telling(rule, &op.session, key, &op.cwd, &op.permission_mode);
+        if let Some(text) = secret_advice(stance, &shown, label, &key, &mut first) {
+            note_file(rule, stance, op, &excerpt);
+            advise.push(text);
+        } else if stance == Stance::Observe {
+            note_file(rule, stance, op, &excerpt);
+        }
+    }
     if !deny.is_empty() {
         Decision::Deny(deny.join("\n\n"))
     } else if !advise.is_empty() {
@@ -1565,6 +1648,68 @@ fn on_file(op: &crate::payload::FileOp) -> Decision {
     } else {
         Decision::Silent
     }
+}
+
+/// The key a secret path is told under, shared by Bash, Read and Grep so one
+/// path is advised once per agent whichever tool reads it first.
+fn secret_key(path: &std::path::Path, agent_id: Option<&str>) -> String {
+    format!(
+        "secret-read {} @{}",
+        crate::lsp::normal(path).display(),
+        agent_id.unwrap_or("main")
+    )
+}
+
+/// The advice for a read of a secret, or `None` when the stance is observe
+/// (nothing is told or marked) or `first` says `key` was told before. Never a
+/// refusal: the rule's ceiling is advise, and a stance above it speaks as one.
+fn secret_advice(
+    stance: Stance,
+    shown: &str,
+    label: &str,
+    key: &str,
+    first: &mut dyn FnMut(&str) -> bool,
+) -> Option<String> {
+    if stance == Stance::Observe || !first(key) {
+        return None;
+    }
+    let (reason, remedy) = rules::secret_read::phrase(shown, label, false);
+    Some(decision::phrase(
+        rules::secret_read::RULE.id,
+        &reason,
+        &remedy,
+    ))
+}
+
+/// A Grep tool call that prints the lines of one secret file.
+fn secret_grep(op: &crate::payload::GrepOp) -> Decision {
+    if op.output_mode.as_deref() != Some("content") {
+        return Decision::Silent;
+    }
+    let Some(path) = &op.path else {
+        return Decision::Silent;
+    };
+    let Some(label) = rules::secret_read::secret_file(path) else {
+        return Decision::Silent;
+    };
+    let rule = &rules::secret_read::RULE;
+    let stance = crate::stance::resolve(rule).min(Stance::Advise);
+    let shown = path.to_string_lossy().into_owned();
+    let key = secret_key(path, op.agent_id.as_deref());
+    let mut first = |key: &str| first_telling(rule, &op.session, key, &op.cwd, &op.permission_mode);
+    let advice = secret_advice(stance, &shown, label, &key, &mut first);
+    if advice.is_some() || stance == Stance::Observe {
+        journal::record(&journal::Entry {
+            rule: rule.id,
+            stance: stance.as_str(),
+            outcome: outcome_of(stance),
+            session: &op.session,
+            repo: &repo_name(&op.cwd),
+            mode: &op.permission_mode,
+            excerpt: &rules::secret_read::excerpt(label, &shown),
+        });
+    }
+    advice.map_or(Decision::Silent, Decision::Advise)
 }
 
 /// Every write rule's verdict on one Write, Edit or MultiEdit, collected:
@@ -2096,10 +2241,16 @@ fn grep_telling(
     }
 }
 
-/// A Grep tool call about to run: the tool's half of `symbol-grep-not-lsp`.
+/// A Grep tool call about to run: `secret-read`'s half and
+/// `symbol-grep-not-lsp`'s, each advising on its own.
+fn on_grep(op: &crate::payload::GrepOp) -> Decision {
+    combine([secret_grep(op), symbol_grep(op)])
+}
+
+/// The tool's half of `symbol-grep-not-lsp`.
 /// The pure tests come first; the world is asked only about a symbol search
 /// over code.
-fn on_grep(op: &crate::payload::GrepOp) -> Decision {
+fn symbol_grep(op: &crate::payload::GrepOp) -> Decision {
     use rules::symbol_grep_not_lsp as sg;
     if op.output_mode.as_deref() == Some("count") || !sg::symbol(&op.pattern) {
         return Decision::Silent;
@@ -3224,5 +3375,55 @@ mod child_checkout_tests {
             shell_quoted(std::path::Path::new("/a b/it's")),
             "'/a b/it'\\''s'"
         );
+    }
+}
+
+#[cfg(test)]
+mod secret_read_tests {
+    use super::*;
+
+    #[test]
+    fn the_same_secret_path_twice_gives_one_advise_and_never_a_deny() {
+        let seen = std::cell::RefCell::new(std::collections::HashSet::<String>::new());
+        let mut first = |key: &str| seen.borrow_mut().insert(key.to_string());
+        let key = secret_key(std::path::Path::new("/h/.netrc"), None);
+        for stance in [Stance::Advise, Stance::Deny] {
+            seen.borrow_mut().clear();
+            let told = secret_advice(stance, "~/.netrc", "netrc", &key, &mut first);
+            let text = told.expect("the first read is advised, even at a stance above advise");
+            assert!(text.contains("secret-read"), "{text}");
+            assert!(text.contains("will still run"), "{text}");
+            assert_eq!(
+                secret_advice(stance, "~/.netrc", "netrc", &key, &mut first),
+                None,
+                "the second read of the same path is silent"
+            );
+        }
+    }
+
+    #[test]
+    fn the_key_is_per_path_and_per_agent_and_shared_by_every_tool() {
+        let path = std::path::Path::new("/h/.netrc");
+        assert_eq!(secret_key(path, None), secret_key(path, None));
+        assert_ne!(secret_key(path, None), secret_key(path, Some("a1")));
+        assert_ne!(
+            secret_key(path, None),
+            secret_key(std::path::Path::new("/h/.npmrc"), None)
+        );
+        assert!(secret_key(path, Some("a1")).starts_with("secret-read /"));
+    }
+
+    #[test]
+    fn an_observing_rule_tells_nothing_and_marks_nothing() {
+        let mut marked = false;
+        let mut first = |_: &str| {
+            marked = true;
+            true
+        };
+        assert_eq!(
+            secret_advice(Stance::Observe, "~/.netrc", "netrc", "k", &mut first),
+            None
+        );
+        assert!(!marked, "an observing rule must not use up the one telling");
     }
 }

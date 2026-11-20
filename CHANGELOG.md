@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- New advise-only rule `secret-read` (max stance advise, so `graduate` cannot raise
+  it): a `cat`, `grep`, `cp` and the like of a secret file (`~/.netrc`,
+  `~/.ssh/id_*`, `.env`, cloud credentials, private keys), a Read of one, or a
+  Grep that prints its lines, is advised once per path and agent, and still
+  runs. `curl -n`, `ssh`, `ls`, quiet greps and public keys stay silent. The
+  journal keeps the kind and the path, never the command.
 - The inbox notice at session start stays quiet when its only lines are in a
   take a live session is filing: it no longer prints `holds 0 lines unfiled`.
   The journal line still counts them (session-boundaries t17).
