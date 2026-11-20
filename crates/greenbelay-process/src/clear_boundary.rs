@@ -1602,6 +1602,12 @@ fn refused(what: &str, failure: BoundedFailure) -> RepoCheck {
     }
 }
 
+/// The reasons [`check_one`] gives besides a git refusal, named once: a
+/// fixture's `per_directory` reason is checked against the same consts.
+const UNCOMMITTED_CHANGES: &str = "uncommitted changes";
+const NO_BASE_TO_COMPARE_WITH: &str = "no upstream or base to compare with";
+const UNPUSHED_OUTSIDE_PLANS: &str = "unpushed commits outside docs/plans/";
+
 fn check_one(top: &Path, deadline: Instant) -> RepoCheck {
     let head = match run_text(top, &["rev-parse", "HEAD"], deadline) {
         Ok(head) => head,
@@ -1613,7 +1619,7 @@ fn check_one(top: &Path, deadline: Instant) -> RepoCheck {
         Err(failure) => return refused("status", failure),
     };
     if !status.is_empty() {
-        return RepoCheck::NotClean("uncommitted changes".to_string());
+        return RepoCheck::NotClean(UNCOMMITTED_CHANGES.to_string());
     }
     let names = match unpushed_names(top, "@{upstream}..HEAD", deadline) {
         Ok(names) => names,
@@ -1623,7 +1629,7 @@ fn check_one(top: &Path, deadline: Instant) -> RepoCheck {
                 return if Instant::now() >= deadline {
                     RepoCheck::TimedOut
                 } else {
-                    RepoCheck::NotClean("no upstream or base to compare with".to_string())
+                    RepoCheck::NotClean(NO_BASE_TO_COMPARE_WITH.to_string())
                 };
             };
             match unpushed_names(top, &format!("{base}..HEAD"), deadline) {
@@ -1633,7 +1639,7 @@ fn check_one(top: &Path, deadline: Instant) -> RepoCheck {
         }
     };
     if names.iter().any(|name| !name.starts_with("docs/plans/")) {
-        return RepoCheck::NotClean("unpushed commits outside docs/plans/".to_string());
+        return RepoCheck::NotClean(UNPUSHED_OUTSIDE_PLANS.to_string());
     }
     RepoCheck::Clean(head)
 }
@@ -2433,9 +2439,9 @@ pub(crate) enum FrozenRepositories {
 /// The reasons [`check_one`] gives besides a git refusal; a fixture reason
 /// outside them (a typo) is refused rather than frozen as dirty.
 const NOT_CLEAN_REASONS: [&str; 3] = [
-    "uncommitted changes",
-    "no upstream or base to compare with",
-    "unpushed commits outside docs/plans/",
+    UNCOMMITTED_CHANGES,
+    NO_BASE_TO_COMPARE_WITH,
+    UNPUSHED_OUTSIDE_PLANS,
 ];
 
 /// A reason [`refused`] gives: `git <command> failed`.
@@ -3548,10 +3554,13 @@ mod tests {
             stop_hook_active: false,
             transcript: None,
         };
-        assert_eq!(
-            StopView::of(&stop).home,
-            home_from(std::env::var_os("HOME"))
-        );
+        // Against `$HOME` itself, not `home_from`: the same call as the code
+        // under test could not catch it reading another variable.
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let Some(home) = home.filter(|home| home.is_absolute()) else {
+            return; // the test host sets no absolute $HOME: nothing to compare
+        };
+        assert_eq!(StopView::of(&stop).home, Some(home));
     }
 
     #[test]
