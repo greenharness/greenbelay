@@ -3514,9 +3514,10 @@ mod secret_read_tests {
     }
 
     fn advice(decision: &Decision) -> Option<&str> {
-        match decision {
-            Decision::Advise(text) => Some(text),
-            _ => None,
+        if let Decision::Advise(text) = decision {
+            Some(text)
+        } else {
+            None
         }
     }
 

@@ -416,6 +416,7 @@ fn read_operands<'a>(cmd: &'a Simple, program: &str) -> Vec<&'a Word> {
 
 /// What the command does with the reader's standard output: nothing
 /// (`> /dev/null`), a file of its own (`> /tmp/k`), or leaves it alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Stdout {
     Untouched,
     Discarded,
