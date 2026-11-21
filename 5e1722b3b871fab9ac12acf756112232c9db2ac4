@@ -1,0 +1,20 @@
+greengate-provenance-v1
+commit 5e1722b3b871fab9ac12acf756112232c9db2ac4
+tree 411ae016ca3ddbd0dd129b704ecbf579aadea98f
+canon 1ad57126cf5a1d2721a3b3515d8e4c3632c37c4d
+patch eebf4272fc505ab567f4c8cf33852ae33f3c0f78
+plan docs/plans/2026-11-20-push-browser-check.md e96e561d320e68b8017961366a4f325f90f3c274f7253b9a2be79a3b6f3650a7
+review reviewed 7b8feb6c2198e3cbe355ea67e3ab929c44cd38a1a5575283d9800a46ca1dae83
+code-review backend carried 4f34b72c3c86eabfa3a518b908521518aec3c9b6a52669b8e88943c949d88b97
+code-review lang:rust carried 4f34b72c3c86eabfa3a518b908521518aec3c9b6a52669b8e88943c949d88b97
+code-review unix carried 4f34b72c3c86eabfa3a518b908521518aec3c9b6a52669b8e88943c949d88b97
+code-review tui reviewed 7b8feb6c2198e3cbe355ea67e3ab929c44cd38a1a5575283d9800a46ca1dae83
+preview not-required
+producer greenbelay 6.5.0
+
+-----BEGIN SSH SIGNATURE-----
+U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg7UOvJ8myo4dhW907VFty7T/bUV
+RFQerK+MWJ4bjChwcAAAAUZ3JlZW5nYXRlLXByb3ZlbmFuY2UAAAAAAAAABnNoYTUxMgAA
+AFMAAAALc3NoLWVkMjU1MTkAAABAleoNbM9Tnkbr5GULogTsaGV1RQn7vY+iKnkeUtQHRM
+urBOTSK6/ilLnWrnJXCuKl9YedS/oRzA7Q19Lw1sZjCQ==
+-----END SSH SIGNATURE-----
