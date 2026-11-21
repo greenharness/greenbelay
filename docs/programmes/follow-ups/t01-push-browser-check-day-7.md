@@ -35,11 +35,11 @@ what did the rule say on UI pushes, and does that meet the plan's bars?
   satisfy). Beside them, the number of `remember-failed` lines: each is a
   tree a later session had to check again because the store could not be
   written.
-- `greenbelay corpus` (read-only: the `push-browser-check` row should read 17
-  reviewed, 9 negative, above the 12/4 floor) and `greenbelay corpus check`
-  (replays every reviewed judgement). `graduate` itself has no dry mode: when
-  the corpus passes it moves the rule at once, so it is run only in the
-  answer below, after the bars are met.
+- `greenbelay corpus check` (read-only: it prints every rule's row, where
+  `push-browser-check` should read 17 reviewed, 9 negative, above the 12/4
+  floor, and replays every reviewed judgement). `graduate` itself has no dry
+  mode: when the corpus passes it moves the rule at once, so it is run only
+  in the answer below, after the bars are met.
 
 ## Answer looks like
 
@@ -50,7 +50,9 @@ what did the rule say on UI pushes, and does that meet the plan's bars?
   `greenbelay graduate push-browser-check --to deny`. Exit 0: record the
   figures in the rule's `Evidence` and the plan's Outcome, set the plan
   `status: done`. Exit 2 with `refusing to move` on stderr: the corpus does
-  not carry it; stay at advise, record its lines, never `--force`.
+  not carry it; stay at advise, record its lines, never `--force`. Any other
+  non-zero exit (`could not record the stance`, a usage error): stay at
+  advise, record its stderr, do not set done, never `--force`.
 - >30% of advices `unreachable` → `greenbelay demote push-browser-check`:
   the rule rests at `observe` (journalled, silent, no questions asked), with
   the reason in the plan's Outcome.
