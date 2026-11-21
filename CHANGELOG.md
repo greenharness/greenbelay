@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- New `tools/measure_fingerprint.py`, a stdlib helper that fingerprints the
+  recipe of a dated measure (script blob, tool version, source, schema,
+  filters, window) in a sidecar JSON file and refuses a run whose recipe
+  differs unless `--rebaseline` keeps both. `tools/read-rate.py` gains
+  `--fingerprint FILE` and `--rebaseline` (exit 3 on a refusal); without
+  them its output is unchanged.
+
 ## v6.6.0
 
 greenbelay 6.6.0 adds the `push-browser-check` gate (a UI push carries a
