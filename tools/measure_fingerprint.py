@@ -14,25 +14,31 @@ from `sys.path`):
 
     recipe(script, tool_version, source, schema, filters, window) -> dict
     canonical(recipe) -> str        fingerprint(recipe) -> "sha256:<hex>"
-    check(path, recipe, coverage, rebaseline=False, now=None) -> dict
+    check(path, recipe, coverage, now=None) -> Baseline | Recorded
+    rebaseline(path, recipe, coverage, now=None) -> Baseline | Recorded | Rebaselined
     stamp(path, recipe, coverage, now=None) -> None
-    compare(paths, rebaseline=False) -> list of groups
+    compare(paths) -> list of groups       group_stamps(paths) -> list of groups
+    accept_command(argv=None) -> str
 
-`Refused` (a different recipe) carries the changed keys with old and new
-values and the sidecar path; `SidecarError` (a sidecar that is missing,
-unreadable, not JSON, inconsistent or not writable) carries the file and the
-cause. Both are for the caller to turn into an exit code.
+`check` raises `RecipeRefused` (nothing written) when the recipe differs from
+the sidecar's; `compare` raises `StampsRefused` when the stamps hold more than
+one recipe. Both are `Refused`, carry the changed keys with old and new values,
+and render the message. `SidecarError` (a sidecar or stamp that is missing,
+unreadable, not JSON, inconsistent, not lockable or not writable) carries the
+file and the cause. The caller turns them into exit codes.
 
     measure_fingerprint.py compare FILE... [--rebaseline]
     measure_fingerprint.py --self-test
 
 `compare` reads stamps written by `stamp()`: one fingerprint passes; mixed
 fingerprints are refused, and with `--rebaseline` each group's fingerprint,
-files and full recipe are printed on stdout.
+files and full recipe are printed on stdout. The script has no `--version`:
+its version is its git blob id, which a recipe records.
 
-Exit codes: 0 done; 1 a stamp or sidecar is missing, unreadable, not JSON or
-inconsistent (its stored fingerprint does not match its recipe, even with
-`--rebaseline`); 2 usage error; 3 fingerprints differ (refused).
+Exit codes: 0 done (also when stdout is closed early, as by `| head`); 1 a
+stamp or sidecar is missing, unreadable, not JSON or inconsistent (its stored
+fingerprint does not match its recipe, even with `--rebaseline`); 2 usage
+error; 3 fingerprints differ (refused).
 
 Sidecar writes take `fcntl.flock` on `<sidecar>.lock`; `fcntl` is Unix-only,
 so this helper is too.
@@ -49,6 +55,14 @@ import subprocess
 import sys
 import tempfile
 import time
+from typing import NamedTuple
+
+__all__ = [
+    "Baseline", "Recorded", "Rebaselined", "Refused", "RecipeRefused",
+    "StampsRefused", "SidecarError", "accept_command", "blob_id", "canonical",
+    "check", "compare", "fingerprint", "group_stamps", "rebaseline", "recipe",
+    "stamp",
+]
 
 LOCK_WAIT_SECONDS = 30.0
 LOCK_POLL_SECONDS = 0.05
@@ -56,44 +70,43 @@ WIDTH = 80
 RECIPE_KEYS = ("script", "tool_version", "source", "schema", "filters", "window")
 
 
+class Baseline(NamedTuple):
+    """No sidecar existed: this run is its baseline, run 1."""
+    path: str
+
+
+class Recorded(NamedTuple):
+    """Same recipe: run number `run` was appended."""
+    path: str
+    run: int
+
+
+class Rebaselined(NamedTuple):
+    """A changed recipe was accepted: both kept, run number `run` appended."""
+    path: str
+    run: int
+    keys: list
+
+
 class Refused(Exception):
-    """The recipe differs from the recorded one.
+    """A recipe differs from the one it is compared with. `changes` is a list
+    of (key, old, new); `render(accept)` is the message for the person."""
 
-    `changes` is a list of (key, old, new); `path` is the sidecar (or the
-    stamps' directory-less description for `compare`); `groups` is set by
-    `compare`: a list of {"fingerprint", "files", "recipe"}.
-    """
-
-    def __init__(self, changes, path=None, groups=None, old_fp=None, new_fp=None):
+    def __init__(self, changes: list):
         super().__init__("fingerprint refused")
         self.changes = changes
-        self.path = path
-        self.groups = groups
-        self.old_fp = old_fp
-        self.new_fp = new_fp
 
-    def render(self, accept=None) -> str:
-        lines = []
-        if self.groups is not None:
-            lines.append(
-                f"fingerprints differ: {len(self.groups)} recipes in "
-                f"{sum(len(g['files']) for g in self.groups)} files"
-            )
-            for group in self.groups:
-                lines.append(f"  {_short(group['fingerprint'])}")
-                for name in group["files"]:
-                    # Never cut: the name tells the pieces apart (a day).
-                    lines.append(f"    {name}")
-        else:
-            lines.append(
-                f"fingerprint refused: recipe changed "
-                f"({_short(self.old_fp)} → {_short(self.new_fp)})"
-            )
+    def _header(self) -> list:
+        raise NotImplementedError
+
+    def _footer(self) -> list:
+        return []
+
+    def render(self, accept: str | None = None) -> str:
+        lines = self._header()
         for key, old, new in self.changes:
             lines.extend(_change_lines(key, old, new))
-        if self.path is not None:
-            # Never cut: a path is copied, like the accept command below.
-            lines.append(f"sidecar: {self.path}")
+        lines.extend(self._footer())
         if accept is not None:
             lines.append("to accept the new recipe, run:")
             lines.append(f"  {accept}")
@@ -103,6 +116,47 @@ class Refused(Exception):
         return self.render()
 
 
+class RecipeRefused(Refused):
+    """`check`: the sidecar at `path` records another recipe."""
+
+    def __init__(self, changes: list, path: str, old_fp: str, new_fp: str):
+        super().__init__(changes)
+        self.path = path
+        self.old_fp = old_fp
+        self.new_fp = new_fp
+
+    def _header(self) -> list:
+        return [
+            f"fingerprint refused: recipe changed "
+            f"({_short(self.old_fp)} → {_short(self.new_fp)})"
+        ]
+
+    def _footer(self) -> list:
+        # Never cut: a path is copied, like the accept command.
+        return [f"sidecar: {self.path}"]
+
+
+class StampsRefused(Refused):
+    """`compare`: the stamps hold more than one recipe; `groups` is a list of
+    {"fingerprint", "files", "recipe"}."""
+
+    def __init__(self, changes: list, groups: list):
+        super().__init__(changes)
+        self.groups = groups
+
+    def _header(self) -> list:
+        lines = [
+            f"fingerprints differ: {len(self.groups)} recipes in "
+            f"{sum(len(g['files']) for g in self.groups)} files"
+        ]
+        for group in self.groups:
+            lines.append(f"  {_short(group['fingerprint'])}")
+            for name in group["files"]:
+                # Never cut: the name tells the pieces apart (a day).
+                lines.append(f"    {name}")
+        return lines
+
+
 class SidecarError(Exception):
     def __init__(self, path, cause):
         super().__init__(f"{path}: {cause}")
@@ -110,7 +164,7 @@ class SidecarError(Exception):
         self.cause = str(cause)
 
 
-def accept_command(argv=None) -> str:
+def accept_command(argv: list | None = None) -> str:
     """The caller's own argv plus `--rebaseline`, to accept a refusal.
 
     By default the running command: the interpreter, its flags (`-I` kept,
@@ -168,10 +222,11 @@ def _plain(value):
         return [_plain(item) for item in value]
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
-    raise TypeError(f"recipe value is not JSON: {type(value).__name__}")
+    raise TypeError(f"recipe or coverage value is not JSON: {type(value).__name__}")
 
 
-def recipe(script, tool_version, source, schema, filters, window) -> dict:
+def recipe(script, tool_version: str, source: str, schema: str, filters: dict,
+           window: str) -> dict:
     with open(script, "rb") as handle:
         blob = blob_id(handle.read())
     return _plain(
@@ -186,13 +241,13 @@ def recipe(script, tool_version, source, schema, filters, window) -> dict:
     )
 
 
-def canonical(recipe_dict) -> str:
+def canonical(recipe_dict: dict) -> str:
     return json.dumps(
         _plain(recipe_dict), sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )
 
 
-def fingerprint(recipe_dict) -> str:
+def fingerprint(recipe_dict: dict) -> str:
     return "sha256:" + hashlib.sha256(canonical(recipe_dict).encode("utf-8")).hexdigest()
 
 
@@ -223,12 +278,12 @@ def _read_json(path):
     try:
         with open(path, encoding="utf-8") as handle:
             return json.load(handle)
-    except FileNotFoundError:
-        raise SidecarError(path, "no such file") from None
+    except FileNotFoundError as err:
+        raise SidecarError(path, "no such file") from err
     except (OSError, UnicodeDecodeError) as err:
-        raise SidecarError(path, f"cannot be read ({err})") from None
+        raise SidecarError(path, f"cannot be read ({err})") from err
     except ValueError as err:
-        raise SidecarError(path, f"is not JSON ({err})") from None
+        raise SidecarError(path, f"is not JSON ({err})") from err
 
 
 def _verified(path, doc, required):
@@ -242,7 +297,7 @@ def _verified(path, doc, required):
     try:
         expected = fingerprint(doc["recipe"])
     except TypeError as err:
-        raise SidecarError(path, f"recipe is not canonical ({err})") from None
+        raise SidecarError(path, f"recipe is not canonical ({err})") from err
     if doc["fingerprint"] != expected:
         raise SidecarError(path, "stored fingerprint does not match its recipe")
     return doc
@@ -262,6 +317,8 @@ def _load_stamp(path):
 
 
 def _write_atomic(path, doc):
+    """Temp file in the same directory, fsync, rename, fsync the directory;
+    an existing file keeps its mode (mkstemp makes 0600)."""
     directory = os.path.dirname(os.path.abspath(path))
     name = os.path.basename(path)
     temp = None
@@ -272,10 +329,19 @@ def _write_atomic(path, doc):
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
+        try:
+            os.chmod(temp, os.stat(path).st_mode & 0o7777)
+        except FileNotFoundError:
+            os.chmod(temp, 0o644)
         os.replace(temp, path)
         temp = None
+        folder = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(folder)
+        finally:
+            os.close(folder)
     except OSError as err:
-        raise SidecarError(path, f"cannot be written ({err})") from None
+        raise SidecarError(path, f"cannot be written ({err})") from err
     finally:
         if temp is not None:
             try:
@@ -291,57 +357,51 @@ class _Locked:
 
     def __enter__(self):
         try:
-            self.handle = open(self.lock_path, "a")
+            self.handle = open(self.lock_path, "ab")
         except OSError as err:
-            raise SidecarError(self.lock_path, f"cannot be opened ({err})") from None
+            raise SidecarError(self.lock_path, f"cannot be opened ({err})") from err
         deadline = time.monotonic() + LOCK_WAIT_SECONDS
         while True:
             try:
                 fcntl.flock(self.handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 return self
-            except OSError:
+            except BlockingIOError as err:  # held by another run: wait, bounded
                 if time.monotonic() >= deadline:
                     self.handle.close()
                     raise SidecarError(
                         self.lock_path, f"still locked after {LOCK_WAIT_SECONDS:.0f} s"
-                    ) from None
+                    ) from err
                 time.sleep(LOCK_POLL_SECONDS)
+            except OSError as err:  # not contention: say what it is, at once
+                self.handle.close()
+                raise SidecarError(self.lock_path, f"cannot be locked ({err})") from err
 
     def __exit__(self, *exc):
         self.handle.close()
         return False
 
 
-def check(path, recipe_dict, coverage, rebaseline=False, now=None) -> dict:
-    """Record a run against `path`'s baseline.
-
-    Returns {"kind": "baseline" | "run" | "rebaseline", "run": N, "keys": [...]}.
-    Raises Refused (nothing written) when the recipe differs and not `rebaseline`.
-    """
+def _record(path, recipe_dict, coverage, now, accept_change):
     path = str(path)
     recipe_dict = _plain(recipe_dict)
+    coverage = _plain(coverage)
     new_fp = fingerprint(recipe_dict)
     stamp_time = _now(now)
+    run = {"at": stamp_time, "coverage": coverage}
     with _Locked(path):
         if not os.path.exists(path):
-            doc = {
-                "fingerprint": new_fp,
-                "recipe": recipe_dict,
-                "runs": [{"at": stamp_time, "coverage": coverage}],
-                "rebaselines": [],
-            }
+            doc = {"fingerprint": new_fp, "recipe": recipe_dict, "runs": [run],
+                   "rebaselines": []}
             _write_atomic(path, doc)
-            return {"kind": "baseline", "run": 1, "keys": []}
+            return Baseline(path)
         doc = _load_sidecar(path)
         if doc["fingerprint"] == new_fp:
-            doc["runs"].append({"at": stamp_time, "coverage": coverage})
+            doc["runs"].append(run)
             _write_atomic(path, doc)
-            return {"kind": "run", "run": len(doc["runs"]), "keys": []}
+            return Recorded(path, len(doc["runs"]))
         changes = _changes(doc["recipe"], recipe_dict)
-        if not rebaseline:
-            raise Refused(
-                changes, path=path, old_fp=doc["fingerprint"], new_fp=new_fp
-            )
+        if not accept_change:
+            raise RecipeRefused(changes, path, doc["fingerprint"], new_fp)
         doc["rebaselines"].append(
             {
                 "at": stamp_time,
@@ -351,31 +411,39 @@ def check(path, recipe_dict, coverage, rebaseline=False, now=None) -> dict:
         )
         doc["fingerprint"] = new_fp
         doc["recipe"] = recipe_dict
-        doc["runs"].append({"at": stamp_time, "coverage": coverage})
+        doc["runs"].append(run)
         _write_atomic(path, doc)
-        return {
-            "kind": "rebaseline",
-            "run": len(doc["runs"]),
-            "keys": [key for key, _, _ in changes],
-        }
+        return Rebaselined(path, len(doc["runs"]), [key for key, _, _ in changes])
 
 
-def stamp(path, recipe_dict, coverage, now=None) -> None:
+def check(path, recipe_dict: dict, coverage: dict, now: str | None = None):
+    """Record a run against `path`'s baseline: Baseline or Recorded. A changed
+    recipe raises RecipeRefused and writes nothing."""
+    return _record(path, recipe_dict, coverage, now, accept_change=False)
+
+
+def rebaseline(path, recipe_dict: dict, coverage: dict, now: str | None = None):
+    """As `check`, but a changed recipe is accepted: both recipes are kept in
+    `rebaselines` and Rebaselined is returned."""
+    return _record(path, recipe_dict, coverage, now, accept_change=True)
+
+
+def stamp(path, recipe_dict: dict, coverage: dict, now: str | None = None) -> None:
     """Write one run's sidecar, for a measure captured in pieces."""
     path = str(path)
     recipe_dict = _plain(recipe_dict)
     doc = {
         "fingerprint": fingerprint(recipe_dict),
         "recipe": recipe_dict,
-        "coverage": coverage,
+        "coverage": _plain(coverage),
         "at": _now(now),
     }
     with _Locked(path):
         _write_atomic(path, doc)
 
 
-def compare(paths, rebaseline=False) -> list:
-    """Group stamps by fingerprint; raise Refused when mixed unless `rebaseline`."""
+def group_stamps(paths: list) -> list:
+    """The stamps grouped by fingerprint, first seen first; never refuses."""
     groups = {}
     for path in paths:
         doc = _load_stamp(str(path))
@@ -384,14 +452,19 @@ def compare(paths, rebaseline=False) -> list:
             {"fingerprint": doc["fingerprint"], "files": [], "recipe": doc["recipe"]},
         )
         group["files"].append(str(path))
-    ordered = list(groups.values())
-    if len(ordered) > 1 and not rebaseline:
+    return list(groups.values())
+
+
+def compare(paths: list) -> list:
+    """The stamps' single group; StampsRefused when they hold more than one."""
+    ordered = group_stamps(paths)
+    if len(ordered) > 1:
         changes = []
         for other in ordered[1:]:
             for change in _changes(ordered[0]["recipe"], other["recipe"]):
                 if change not in changes:
                     changes.append(change)
-        raise Refused(changes, groups=ordered)
+        raise StampsRefused(changes, ordered)
     return ordered
 
 
@@ -419,19 +492,32 @@ def _cli(argv) -> int:
     if args.command != "compare" or not args.files:
         ap.error("usage: compare FILE... [--rebaseline]")
     try:
-        groups = compare(args.files, args.rebaseline)
+        if args.rebaseline:
+            _print_groups(group_stamps(args.files))
+        else:
+            compare(args.files)
     except Refused as refused:
-        print(
-            refused.render(accept_command()),
-            file=sys.stderr,
-        )
+        print(refused.render(accept_command()), file=sys.stderr)
         return 3
     except SidecarError as err:
         print(f"measure_fingerprint: {err}", file=sys.stderr)
         return 1
-    if args.rebaseline:
-        _print_groups(groups)
     return 0
+
+
+def _main(argv) -> int:
+    try:
+        code = _cli(argv)
+        sys.stdout.flush()
+        return code
+    except BrokenPipeError:
+        # The reader went away (`| head`). Point stdout at the null device so
+        # the interpreter's exit flush does not raise again, and leave quietly.
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except OSError:
+            pass  # stdout is already unusable; exit 0 is still right
+        return 0
 
 
 class _SelfTestFailure(Exception):
@@ -504,11 +590,12 @@ def _self_cases(directory):
     coverage = {"files": 2}
 
     first = check(at("s.json"), base, coverage, now="t1")
-    _expect(first["kind"] == "baseline", "baseline kind")
+    _expect(isinstance(first, Baseline), "baseline kind")
     doc = json.loads(read_bytes("s.json"))
     _expect(len(doc["runs"]) == 1 and doc["runs"][0]["at"] == "t1", "baseline is run 1")
     _expect(doc["rebaselines"] == [], "no rebaselines yet")
-    _expect(check(at("s.json"), base, coverage, now="t2")["run"] == 2, "same fp run 2")
+    _expect(check(at("s.json"), base, coverage, now="t2") == Recorded(at("s.json"), 2),
+            "same fp run 2")
 
     before = read_bytes("s.json")
     refusal = _raises(Refused, "refusal", check, at("s.json"), changed, coverage, now="t3")
@@ -534,8 +621,9 @@ def _self_cases(directory):
     )
     _expect("interpreter changed" in interp.render(), "interpreter changed")
 
-    rebased = check(at("s.json"), changed, coverage, rebaseline=True, now="t4")
-    _expect(rebased["kind"] == "rebaseline" and rebased["keys"] == ["filters.ext"], "rebaseline")
+    _raises(RecipeRefused, "refusal is a RecipeRefused", check, at("s.json"), changed, coverage)
+    rebased = rebaseline(at("s.json"), changed, coverage, now="t4")
+    _expect(rebased == Rebaselined(at("s.json"), 3, ["filters.ext"]), f"rebaseline: {rebased}")
     doc = json.loads(read_bytes("s.json"))
     _expect(doc["fingerprint"] == fingerprint(changed), "new baseline")
     _expect(len(doc["rebaselines"]) == 1 and len(doc["runs"]) == 3, "rebaseline appended")
@@ -601,8 +689,7 @@ def _self_cases(directory):
     doc["recipe"]["window"] = "edited by hand"
     write_text("s-edited.json", json.dumps(doc))
     _raises(
-        SidecarError, "edited sidecar", check, at("s-edited.json"), changed, coverage,
-        rebaseline=True,
+        SidecarError, "edited sidecar", rebaseline, at("s-edited.json"), changed, coverage,
     )
 
     write_text("bad.json", "{")
@@ -621,6 +708,24 @@ def _self_cases(directory):
     names = os.listdir(directory)
     _expect(not any(n.endswith(".tmp") for n in names), "no temp left after failures")
 
+    _raises(TypeError, "non-JSON coverage", stamp, at("c.fp.json"), base, {"x": object()})
+    _expect(json.loads(read_bytes("a.fp.json"))["coverage"] == coverage, "coverage kept")
+    mode = os.stat(at("s.json")).st_mode & 0o777
+    os.chmod(at("s.json"), 0o640)
+    check(at("s.json"), changed, coverage)
+    _expect(os.stat(at("s.json")).st_mode & 0o777 == 0o640, f"mode kept (was {mode:o})")
+    _raises(StampsRefused, "mixed stamps", compare, [at("a.fp.json"), at("b.fp.json")])
+    _expect(len(group_stamps([at("a.fp.json"), at("b.fp.json")])) == 2, "group_stamps")
+    piped = subprocess.run(
+        f"{shlex.quote(sys.executable)} -I {shlex.quote(os.path.abspath(__file__))} "
+        # 3,000 names print well past a pipe buffer, so `head` closing early
+        # really raises EPIPE in the writer.
+        f"compare {' '.join([shlex.quote(at('a.fp.json'))] * 3000)} "
+        f"{shlex.quote(at('b.fp.json'))} --rebaseline | head -c 1 >/dev/null",
+        shell=True, capture_output=True, text=True, timeout=60,
+    )
+    _expect("Traceback" not in piped.stderr, f"closed stdout: {piped.stderr[-200:]}")
+
 
 if __name__ == "__main__":
-    sys.exit(_cli(sys.argv[1:]))
+    sys.exit(_main(sys.argv[1:]))

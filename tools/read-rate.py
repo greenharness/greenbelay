@@ -72,6 +72,9 @@ def week_of(stamp: str):
 
 
 def load_fingerprint_helper():
+    """tools/measure_fingerprint.py beside this script, loaded by path
+    (`python3 -I` keeps this directory off `sys.path`). OSError when it is
+    missing or unreadable."""
     path = pathlib.Path(__file__).resolve().with_name("measure_fingerprint.py")
     spec = importlib.util.spec_from_file_location("measure_fingerprint", path)
     module = importlib.util.module_from_spec(spec)
@@ -171,21 +174,28 @@ def run() -> int:
     if not args.root.is_dir():
         print(f"read-rate: no transcripts under {args.root}", file=sys.stderr)
         return 1
+    helper = None
+    if args.fingerprint is not None:
+        try:  # before the scan, so a missing helper fails at once
+            helper = load_fingerprint_helper()
+        except OSError as err:
+            print(f"read-rate: cannot load the fingerprint helper ({err})",
+                  file=sys.stderr)
+            return 1
     calls, hits, chars, seen, unreadable = scan(args.root, args.threshold)
     weeks = sorted(calls)
     if args.weeks > 0:
         weeks = weeks[-args.weeks:]
-    if args.fingerprint is not None:
-        helper = load_fingerprint_helper()
+    if helper is not None:
         coverage = {
             "files_seen": seen,
             "files_unreadable": unreadable,
             "weeks_printed": len(weeks),
         }
+        record = helper.rebaseline if args.rebaseline else helper.check
         try:
-            outcome = helper.check(
-                args.fingerprint, counting_recipe(helper, args.threshold),
-                coverage, rebaseline=args.rebaseline,
+            outcome = record(
+                args.fingerprint, counting_recipe(helper, args.threshold), coverage
             )
         except helper.Refused as refused:
             accept = helper.accept_command()
@@ -194,14 +204,14 @@ def run() -> int:
         except helper.SidecarError as err:
             print(f"read-rate: {err}", file=sys.stderr)
             return 1
-        where = args.fingerprint
-        if outcome["kind"] == "baseline":
-            note = f"baseline written to {where}"
-        elif outcome["kind"] == "run":
-            note = f"run {outcome['run']} recorded in {where}"
-        else:
-            note = (f"rebaselined (keys {', '.join(outcome['keys'])}), "
-                    f"both recipes kept in {where}")
+        match outcome:
+            case helper.Baseline(path):
+                note = f"baseline written to {path}"
+            case helper.Recorded(path, run):
+                note = f"run {run} recorded in {path}"
+            case helper.Rebaselined(path, run, keys):
+                note = (f"rebaselined (keys {', '.join(keys)}), "
+                        f"both recipes kept in {path}")
         print(f"fingerprint: {note}", file=sys.stderr)
     print(f"{'week':<9} {'calls':>8} {'unbounded':>10} {'per 1000':>9} {'chars':>12}")
     for w in weeks:

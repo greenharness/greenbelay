@@ -89,7 +89,7 @@ greenbelay's `tools/read-rate.py` are the first two users.
   separators=(",", ":"), ensure_ascii=False)`; `fingerprint(recipe)` is
   `sha256:<hex>` of its UTF-8 bytes.
 - `check(path, recipe, coverage, rebaseline=False)`:
-  - no file: writes `{"fingerprint", "recipe", "runs": [], "rebaselines": []}`
+  - no file: writes `{"fingerprint", "recipe", "runs": [run 1], "rebaselines": []}`
     as the baseline;
   - same fingerprint: appends `{"at", "coverage"}` to `runs`;
   - different and no `rebaseline`: raises `Refused`, whose message names

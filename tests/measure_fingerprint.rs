@@ -23,7 +23,7 @@ fn stderr(out: &Output) -> String {
 
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("measure-fp-{name}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir); // absent on a first run; create_dir_all below is the check
     fs::create_dir_all(&dir).expect("temp dir");
     dir
 }
@@ -77,7 +77,7 @@ fn compare_refuses_mixed_recipes_and_rejects_bad_input() {
 
     let usage = python(&[HELPER]);
     assert_eq!(usage.status.code(), Some(2), "{}", stderr(&usage));
-    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir); // best-effort temp cleanup; the asserts above are the test
 }
 
 #[test]
@@ -122,7 +122,40 @@ fn read_rate_refuses_a_changed_threshold_and_leaves_the_sidecar() {
     assert!(refused.stdout.is_empty(), "the table was printed");
     assert_eq!(fs::read(&sidecar).unwrap(), before, "sidecar changed");
 
+    let accepted = python(&[
+        READ_RATE,
+        "--root",
+        root_arg,
+        "--fingerprint",
+        sidecar_arg,
+        "--threshold",
+        "8192",
+        "--rebaseline",
+    ]);
+    assert_eq!(accepted.status.code(), Some(0), "{}", stderr(&accepted));
+    let kept = fs::read_to_string(&sidecar).unwrap();
+    assert!(
+        kept.contains("\"rebaselines\": [\n    {") && kept.contains("\"threshold\": 16384"),
+        "both recipes are kept: {kept}"
+    );
+
+    let corrupt = dir.join("corrupt.json");
+    fs::write(&corrupt, "{").unwrap();
+    let broken = python(&[
+        READ_RATE,
+        "--root",
+        root_arg,
+        "--fingerprint",
+        corrupt.to_str().unwrap(),
+    ]);
+    assert_eq!(broken.status.code(), Some(1), "{}", stderr(&broken));
+    assert!(
+        !stderr(&broken).contains("Traceback"),
+        "{}",
+        stderr(&broken)
+    );
+
     let usage = python(&[READ_RATE, "--root", root_arg, "--rebaseline"]);
     assert_eq!(usage.status.code(), Some(2), "{}", stderr(&usage));
-    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir); // best-effort temp cleanup; the asserts above are the test
 }
