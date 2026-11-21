@@ -452,10 +452,26 @@ pub struct Review {
     pub candidates: Reviewed,
 }
 
+/// The reviews of the session's side transcripts (`<session>/subagents/*.jsonl`:
+/// the agents it started, which run their own reviews), then of its main
+/// transcript. Side transcripts come first, so a caller that takes the last
+/// matching review prefers the main transcript's for the same tree. An
+/// unreadable main transcript is an error; an unreadable side transcript is
+/// skipped, since it is only more evidence.
 pub fn reviews(transcript: &Path) -> std::io::Result<Vec<Review>> {
-    let file = std::fs::File::open(transcript)?;
-    let reader = std::io::BufReader::new(file);
-    Ok(completed_agents_resumable(reader, AGENT)
+    let main = std::fs::File::open(transcript)?;
+    let mut out = Vec::new();
+    for side in crate::plan_review::side_transcripts(transcript) {
+        if let Ok(file) = std::fs::File::open(&side) {
+            out.extend(reviews_in(std::io::BufReader::new(file)));
+        }
+    }
+    out.extend(reviews_in(std::io::BufReader::new(main)));
+    Ok(out)
+}
+
+fn reviews_in(reader: impl std::io::BufRead) -> Vec<Review> {
+    completed_agents_resumable(reader, AGENT)
         .into_iter()
         .flat_map(|c: Completed| {
             let verdict = verdict_of(&c.result);
@@ -471,7 +487,7 @@ pub fn reviews(transcript: &Path) -> std::io::Result<Vec<Review>> {
                     candidates: candidates.clone(),
                 })
         })
-        .collect())
+        .collect()
 }
 
 // ---------------------------------------------------------------- the store
@@ -774,14 +790,23 @@ pub struct ProfileReview {
 /// exactly one `Profile:` line naming that profile. The review blocks it binds
 /// are read from the same header. A resumed round inherits the profile of its
 /// launch and may omit the line; one that names another profile counts for
-/// nothing.
+/// nothing. Like [`reviews`], it reads the side transcripts first and the
+/// main transcript last, skipping an unreadable side transcript.
 pub fn profile_reviews(transcript: &Path) -> std::io::Result<Vec<ProfileReview>> {
-    let bytes = std::fs::read(transcript)?;
-    let mut completed = completed_agents_resumable(bytes.as_slice(), "code-review-");
-    completed.extend(completed_agents_resumable(
-        bytes.as_slice(),
-        "interface-review",
-    ));
+    let main = std::fs::read(transcript)?;
+    let mut out = Vec::new();
+    for side in crate::plan_review::side_transcripts(transcript) {
+        if let Ok(bytes) = std::fs::read(&side) {
+            out.extend(profile_reviews_in(&bytes));
+        }
+    }
+    out.extend(profile_reviews_in(&main));
+    Ok(out)
+}
+
+fn profile_reviews_in(bytes: &[u8]) -> Vec<ProfileReview> {
+    let mut completed = completed_agents_resumable(bytes, "code-review-");
+    completed.extend(completed_agents_resumable(bytes, "interface-review"));
     let mut launched: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut out = Vec::new();
     for c in completed {
@@ -822,7 +847,7 @@ pub fn profile_reviews(transcript: &Path) -> std::io::Result<Vec<ProfileReview>>
                 }),
         );
     }
-    Ok(out)
+    out
 }
 
 fn profile_pass_file(profile: &str, repo: &str, sha: &str) -> Option<PathBuf> {
@@ -2923,6 +2948,107 @@ mod tests {
             ]),
             "88a9c5d4a7b3892be98a8492631b3c436954c2000a038b5d641bd054e76e19e0"
         );
+    }
+
+    /// One foreground launch of `agent` with `prompt`, completed with `result`,
+    /// as two transcript lines.
+    fn foreground(id: &str, agent: &str, prompt: &str, result: &str) -> String {
+        let launch = serde_json::json!({
+            "type": "assistant",
+            "message": {"role": "assistant", "content": [{
+                "type": "tool_use", "id": id, "name": "Agent",
+                "input": {"subagent_type": agent, "description": "review", "prompt": prompt}
+            }]}
+        });
+        let done = serde_json::json!({
+            "type": "user",
+            "toolUseResult": {"status": "completed", "agentType": agent, "agentId": format!("a-{id}")},
+            "message": {"role": "user", "content": [{
+                "type": "tool_result", "tool_use_id": id,
+                "content": [{"type": "text", "text": result}]
+            }]}
+        });
+        format!("{launch}\n{done}\n")
+    }
+
+    #[test]
+    fn a_review_run_by_an_agent_of_the_session_counts_for_its_tree() {
+        // A programme ticket agent runs its own implementation review and a
+        // declared profile; both live in its side transcript, none in the
+        // session's main transcript (2026-11-15: such pushes were refused).
+        let root = std::env::temp_dir().join(format!("greenbelay-ir-side-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root); // a leftover of an earlier run, or none
+        let tree = "a".repeat(64);
+        let block = format!("<<<TREE repo=greenbelay sha={tree}>>>");
+        let side = foreground(
+            "toolu_ir",
+            AGENT,
+            &format!("{block}\nRound 1."),
+            "Verdict: approve\n",
+        ) + &foreground(
+            "toolu_be",
+            "code-review-backend",
+            &format!("{block}\nRound 1.\nProfile: backend"),
+            "Verdict: approve\n",
+        );
+        let write = |rel: &str, text: &str| {
+            let file = root.join(rel);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(&file, text).unwrap();
+        };
+        write("p/abc.jsonl", "");
+        write("p/abc/subagents/a.jsonl", &side);
+        write("p/xyz.jsonl", "");
+        write("p/xyz-other/subagents/a.jsonl", &side);
+
+        let main = root.join("p/abc.jsonl");
+        let found = reviews(&main).unwrap();
+        assert_eq!(found.len(), 1, "the side transcript's review is read");
+        assert_eq!(
+            (found[0].sha.as_str(), found[0].verdict),
+            (tree.as_str(), Some(Verdict::Approve))
+        );
+        let profiles = profile_reviews(&main).unwrap();
+        assert_eq!(
+            profiles.len(),
+            1,
+            "the side transcript's profile review is read"
+        );
+        assert_eq!(
+            (
+                profiles[0].profile.as_str(),
+                profiles[0].sha.as_str(),
+                profiles[0].verdict
+            ),
+            ("backend", tree.as_str(), Some(Verdict::Approve))
+        );
+
+        // Another session's agents never count for this one.
+        let other = root.join("p/xyz.jsonl");
+        assert!(reviews(&other).unwrap().is_empty());
+        assert!(profile_reviews(&other).unwrap().is_empty());
+
+        // The main transcript is read last: a caller taking the last match
+        // prefers its verdict over a side transcript's for the same tree.
+        write(
+            "p/abc.jsonl",
+            &foreground(
+                "toolu_main",
+                AGENT,
+                &format!("{block}\nRound 1."),
+                "Verdict: rework\n",
+            ),
+        );
+        let found = reviews(&main).unwrap();
+        assert_eq!(
+            found.iter().map(|r| r.verdict).collect::<Vec<_>>(),
+            vec![Some(Verdict::Approve), Some(Verdict::Rework)]
+        );
+
+        // An unreadable main transcript is still an error.
+        assert!(reviews(&root.join("p/missing.jsonl")).is_err());
+        assert!(profile_reviews(&root.join("p/missing.jsonl")).is_err());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn reviews_of(text: &str) -> Vec<(String, Option<Verdict>)> {

@@ -12,6 +12,14 @@
   `version` whose matchers counted. Only an `exact` row is the rule's weekly
   count; the others read 0 or count unconfirmed shape matches. See
   `docs/measuring.md`.
+- The `implementation-review` push check also reads the session's side
+  transcripts (`<session>/subagents/*.jsonl`), as `push-browser-check`
+  already does: a review, a declared profile's review or a rework an agent of
+  the session ran itself now counts for the tree it binds. A programme ticket
+  agent can therefore review and push its own work (on 2026-11-15 such
+  pushes were refused). Side transcripts are read before the main one, so a
+  main-transcript verdict for the same tree wins; another session's agents
+  never count; an unreadable main transcript is still an error.
 - New `tools/measure_fingerprint.py` (Unix only), a stdlib helper that fingerprints the
   recipe of a dated measure (script blob, tool version, source, schema,
   filters, window) in a sidecar JSON file and refuses a run whose recipe
