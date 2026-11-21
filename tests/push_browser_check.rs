@@ -500,7 +500,9 @@ fn only_the_hook_writes_a_pass_file() {
         other => panic!("expected a refusal, got {other:?}"),
     }
     assert!(!file.exists());
-    let said = world.push_cmd(&repo, None, &format!("echo '{{}}' > {}", file.display()));
+    // Quoted as a session writes it: an unquoted Windows path's backslashes
+    // are shell escapes.
+    let said = world.push_cmd(&repo, None, &format!("echo '{{}}' > '{}'", file.display()));
     match said {
         Said::Deny(text) => assert!(text.contains("push-browser-check"), "{text}"),
         other => panic!("expected a refusal, got {other:?}"),
@@ -662,21 +664,30 @@ fn a_push_of_another_worktree_names_that_worktrees_tree() {
     let said = world.push_cmd(
         &repo,
         Some(&empty),
-        &format!("git -C {} push -u origin feat/y", other.display()),
+        // Quoted as a session writes it: an unquoted Windows path's backslashes
+        // are shell escapes.
+        &format!("git -C '{}' push -u origin feat/y", other.display()),
     );
     let text = advised(&said);
     let block = world.block(&other);
     assert!(text.lines().any(|l| l == block), "{block}: {text}");
     assert!(!text.contains(&world.tree(&repo)), "{text}");
-    assert!(
-        text.contains(&format!(
-            "tree-sha --block -C {} {}",
-            // The hook names the worktree by its resolved path.
-            std::fs::canonicalize(&other).unwrap().display(),
-            git(&other, &["rev-parse", "HEAD"])
-        )),
-        "{text}"
-    );
+    let rev = git(&other, &["rev-parse", "HEAD"]);
+    if cfg!(windows) {
+        // `canonicalize` spells the path `\\?\C:\…` there and `shell_word`
+        // quotes a backslashed word: check the shape, not the spelling.
+        assert!(text.contains("tree-sha --block -C "), "{text}");
+        assert!(text.contains(&format!(" {rev}`")), "{text}");
+    } else {
+        assert!(
+            text.contains(&format!(
+                "tree-sha --block -C {} {rev}",
+                // The hook names the worktree by its resolved path.
+                std::fs::canonicalize(&other).unwrap().display()
+            )),
+            "{text}"
+        );
+    }
 }
 
 #[test]
