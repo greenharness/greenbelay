@@ -237,6 +237,31 @@ regular expression. Against the Rust lexer it overcounts by about 6% (1,551
 against 1,461 on 2026-10-07), so `backtest --rule publish-without-skill` remains
 the count of matches. Run it again two weeks after a release.
 
+### Fingerprinting a dated measure
+
+A count that is re-run over weeks and compared to an earlier number is only
+comparable if the recipe is the same. `tools/measure_fingerprint.py` hashes
+the recipe, never the data: the script's git blob id, the tool version, the
+source, the schema marker, the filters and the window rule. Coverage (files
+seen, files unreadable, weeks printed) is stored beside the fingerprint, not
+in it.
+
+```sh
+tools/read-rate.py --fingerprint ~/.local/state/read-rate.fp.json
+```
+
+The first run writes the sidecar file as the baseline; later runs with the
+same recipe append a run. A different recipe is refused before the table is
+printed (exit 3), naming the changed keys with old and new values and the
+exact command to accept it. `--rebaseline` accepts it and records both
+recipes in the sidecar's `rebaselines`. A sidecar whose stored fingerprint
+does not match its recipe is corrupt: exit 1, even with `--rebaseline`.
+
+A measure captured in pieces (a day each) writes one stamp per piece with
+`stamp()`; `measure_fingerprint.py compare FILE... [--rebaseline]` refuses
+mixed recipes when the pieces are summed. A relais ticket's front matter
+refuses a `fingerprint` key, so the ticket body names the sidecar file.
+
 ## 4b. Harness review - which part still earns its place on this model?
 
 `greenbelay harness-review` (ADR-0042, `harness.retire-on-evidence`) prints
