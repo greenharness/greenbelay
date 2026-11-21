@@ -59,7 +59,9 @@
 
 Two more checks run after a command rather than before it, on `PostToolUse`:
 `push-landed` and `push-published` verify what a push that reported success
-actually did. See [the assertions](assertions.md).
+actually did, and `home-fingerprint-drift` (advise) says which watched home or
+repository config file a test or build run changed. See
+[the assertions](assertions.md).
 
 `greenbelay rules` prints this with each rule's measured firing rate, and
 with the stance in force on this machine rather than the shipped one: a rule

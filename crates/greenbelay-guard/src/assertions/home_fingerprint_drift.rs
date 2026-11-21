@@ -1,0 +1,382 @@
+//! A test or build command ran. Did it change a home file it had no business
+//! touching?
+//!
+//! 2026-11-15: a leaky test run migrated the real home: it rewrote
+//! `~/.config/git/config` and the Claude plugin files, and nothing failed. On
+//! 2026-11-11 a migrating binary's tests, run by hand, touched the live
+//! repository. Neither command's exit status said so. This assertion takes a
+//! fingerprint of the watched set
+//! ([`crate::home_print`]) before such a command and compares it after, so the
+//! change is a fact in front of the model while the command is still on
+//! screen.
+//!
+//! It advises only, by construction: an assertion cannot refuse, and the
+//! person decided this net warns and never blocks. A file the person edited
+//! while the command ran shows too, and the advice says so.
+
+use crate::assertions::{Assertion, Claim, Verdict};
+use crate::home_print;
+use crate::payload::Bash;
+use crate::rules::heavy_build_unqueued::is_heavy;
+use crate::rules::test_output_trimmed::{exempt_words, is_check_run};
+use crate::rules::{Context, Evidence, Stance, Trend};
+use crate::shell::{Parsed, Simple};
+
+pub const ASSERTION: Assertion = Assertion {
+    id: "home-fingerprint-drift",
+    prevents:
+        "A test or build command that changed a home or repository config file going unnoticed",
+    irreversible: false,
+    default_stance: Stance::Advise,
+    // The rate is how often the claim is MADE (a test or build command ran),
+    // not how often a home file changed: 1,221 of 32,123 Bash calls,
+    // `greenbelay backtest --rule home-fingerprint-drift --since 2026-11-13`.
+    // Each costs about 3 ms of hook time on each side (measured at load 266).
+    evidence: Evidence {
+        per_1000: 38.0,
+        measured: "2026-11-20",
+        trend: Trend::Routine,
+    },
+    examine,
+    verify,
+};
+
+/// The first clause that runs tests, a build, or a binary out of `target/`.
+fn trigger(parsed: &Parsed) -> Option<&Simple> {
+    parsed.judgeable().find(|cmd| triggers(cmd))
+}
+
+fn triggers(cmd: &Simple) -> bool {
+    let Some(program) = cmd.program() else {
+        return false;
+    };
+    if exempt_words(cmd.args()) {
+        return false;
+    }
+    is_check_run(cmd) || is_heavy(program, cmd.args()) || built_binary(program) || queued(cmd)
+}
+
+/// A binary run straight out of a cargo build: `./target/debug/x`.
+fn built_binary(program: &str) -> bool {
+    let normalized = program.replace('\\', "/");
+    ["target/debug/", "target/release/"]
+        .iter()
+        .any(|build_dir| {
+            normalized.starts_with(build_dir) || normalized.contains(&format!("/{build_dir}"))
+        })
+}
+
+/// A run behind a wrapper: `greengate slot run … -- cargo test` (queued, but a
+/// test run all the same) or `greenbelay quiet -- ./target/debug/x`.
+fn queued(cmd: &Simple) -> bool {
+    let Some(program) = cmd.program() else {
+        return false;
+    };
+    let args = cmd.args();
+    let Some(sep) = args.iter().position(|w| !w.quoted && w.text == "--") else {
+        return false;
+    };
+    let mut own = args[..sep]
+        .iter()
+        .filter(|w| !w.quoted && !w.text.starts_with('-'))
+        .map(|w| w.text.as_str());
+    let wraps = if crate::gate::is_gate_program(program) {
+        own.next() == Some("slot") && own.next() == Some("run")
+    } else {
+        crate::names::is_ours_program(program) && own.next() == Some("quiet")
+    };
+    if !wraps {
+        return false;
+    }
+    match args[sep + 1..].split_first() {
+        Some((wrapped, rest)) if !wrapped.quoted => {
+            !exempt_words(rest) && (is_heavy(&wrapped.text, rest) || built_binary(&wrapped.text))
+        }
+        _ => false,
+    }
+}
+
+fn examine(parsed: &Parsed) -> Option<Claim> {
+    let cmd = trigger(parsed)?;
+    Some(Claim {
+        what: "home files unchanged".to_string(),
+        span: cmd.at..cmd.end,
+    })
+}
+
+/// PreToolUse, for a command that is going to run in the foreground: keep
+/// the fingerprint the PostToolUse compares against. Silent and best-effort:
+/// a snapshot that cannot be kept says so on stderr and leaves the assertion
+/// `unverified`.
+pub fn before(bash: &Bash) {
+    if bash.background {
+        return;
+    }
+    let Ok(id) = home_print::RecordId::try_from(bash.tool_use_id.as_str()) else {
+        return;
+    };
+    let parsed = crate::shell::lex(&bash.command);
+    let Some(cmd) = trigger(&parsed) else {
+        return;
+    };
+    let context = Context {
+        platform: None,
+        cwd: &bash.cwd,
+        parsed: &parsed,
+        background: bash.background,
+        timeout_ms: bash.timeout_ms,
+        tool_use_id: &bash.tool_use_id,
+        transcript: None,
+        agent_transcript: None,
+        command: &bash.command,
+        output: None,
+        session: &bash.session,
+        failed: false,
+    };
+    let git_dir = home_print::git_common_dir(&context.cwd_at(cmd.at));
+    let roots = home_print::watched(&|key| std::env::var_os(key), git_dir.as_deref());
+    let snapshot = home_print::snapshot(&roots);
+    let Some(store) = home_print::store() else {
+        eprintln!(concat!(
+            crate::bin!(),
+            ": home-fingerprint-drift: no snapshot was kept: neither CLAUDE_CONFIG_DIR, HOME nor USERPROFILE names a state directory"
+        ));
+        return;
+    };
+    if let Err(e) = home_print::keep(&store, &id, &snapshot) {
+        eprintln!(
+            concat!(
+                crate::bin!(),
+                ": home-fingerprint-drift: could not keep the snapshot: {}"
+            ),
+            e
+        );
+    }
+}
+
+fn verify(context: &Context, claim: &Claim) -> Verdict {
+    let id = match home_print::RecordId::try_from(context.tool_use_id) {
+        Ok(id) => id,
+        Err(why) => return Verdict::Unknown(why),
+    };
+    let Some(store) = home_print::store() else {
+        return Verdict::Unknown("no state directory");
+    };
+    let before = match home_print::take(&store, &id) {
+        home_print::Taken::Kept(snapshot) => snapshot,
+        home_print::Taken::Absent => {
+            return Verdict::Unknown("no snapshot was kept before the command")
+        }
+        home_print::Taken::OtherVersion => {
+            return Verdict::Unknown("the snapshot was kept by another greenbelay version")
+        }
+    };
+    let after = home_print::as_recorded(&home_print::snapshot(&before.roots));
+    let changed = home_print::diff(&before, &after);
+    if changed.is_empty() {
+        return Verdict::Held;
+    }
+    let home = home_print::home(&|key| std::env::var_os(key));
+    Verdict::Broken {
+        reason: reason(context.command, claim, &changed, home.as_deref()),
+        remedy: REMEDY.to_string(),
+    }
+}
+
+/// Starts on its own line: [`reason`] ends with one, and `decision::phrase`
+/// then joins the two without a space. Wrapped under [`COLUMNS`].
+const REMEDY: &str = "Inspect each file (`git config --list --show-origin` for git config);\n\
+the snapshot keeps hashes, not contents, so compare with your dotfiles\n\
+source or a backup. If this command changed them, restore them and rerun\n\
+it with HOME and XDG_CONFIG_HOME set to a scratch directory.";
+
+/// The widest line the advice may print.
+const COLUMNS: usize = 80;
+
+/// How many characters of the command a heading can quote and still fit
+/// [`COLUMNS`] behind the `greenbelay/home-fingerprint-drift: ` prefix:
+/// `{heading} `…` ran:` adds two backticks, a space and ` ran:`.
+fn shown_width(heading: &str) -> usize {
+    let prefix = crate::names::BIN.len() + 1 + ASSERTION.id.len() + 2;
+    COLUMNS.saturating_sub(prefix + heading.chars().count() + " `` ran:".len())
+}
+
+fn reason(
+    command: &str,
+    claim: &Claim,
+    changed: &[(std::path::PathBuf, home_print::Change)],
+    home: Option<&std::path::Path>,
+) -> String {
+    let clause = command
+        .get(claim.span.clone())
+        .unwrap_or(command)
+        .trim()
+        .replace(['\n', '\r'], " ");
+    let heading = if changed.iter().any(|(_, change)| change.is_real()) {
+        "Changed while"
+    } else {
+        "Could not check while"
+    };
+    let width = shown_width(heading).max(2);
+    let shown: String = if clause.chars().count() > width {
+        let mut cut: String = clause.chars().take(width - 1).collect();
+        cut.push('…');
+        cut
+    } else {
+        clause
+    };
+    let mut text = format!("{heading} `{shown}` ran:");
+    for (path, change) in changed {
+        text.push_str(&format!(
+            "\n  {} ({})",
+            home_print::display(path, home),
+            change.as_str()
+        ));
+    }
+    text.push_str("\nAn edit made at the same time, by you or another session, shows too.\n");
+    text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shell::lex;
+
+    fn claims(command: &str) -> bool {
+        examine(&lex(command)).is_some()
+    }
+
+    #[test]
+    fn test_and_build_commands_are_claims() {
+        assert!(claims("cargo test"));
+        assert!(claims("cargo test --workspace --locked"));
+        assert!(claims("cargo build --release"));
+        assert!(claims("pnpm test"));
+        assert!(claims("python3 -m pytest -q"));
+        assert!(claims("make check"));
+        assert!(claims("cd crates/x && cargo nextest run"));
+        assert!(claims("greengate slot run -- cargo test"));
+        assert!(claims("amont run cargo-test"));
+    }
+
+    #[test]
+    fn a_binary_out_of_target_is_a_claim() {
+        assert!(claims("./target/debug/greenbelay migrate"));
+        assert!(claims("target/release/relais run x"));
+        assert!(claims("/Users/me/repo/target/debug/tool --flag"));
+        assert!(claims("greengate slot run -- ./target/debug/tool"));
+    }
+
+    #[test]
+    fn help_listing_and_unrelated_commands_are_not() {
+        assert!(!claims("cargo test --help"));
+        assert!(!claims("cargo test --no-run"));
+        assert!(!claims("cargo nextest list --list"));
+        assert!(!claims("./target/debug/greenbelay --version"));
+        assert!(!claims("cargo fmt"));
+        assert!(!claims("git status"));
+        assert!(!claims("ls target/debug/"));
+        assert!(!claims("echo cargo test"));
+        assert!(!claims("mytarget/debug/x"));
+    }
+
+    #[test]
+    fn the_span_is_the_triggering_clause() {
+        let command = "git status && cargo test -p x";
+        let claim = examine(&lex(command)).expect("a claim");
+        assert_eq!(command[claim.span].trim(), "cargo test -p x");
+    }
+
+    fn path(text: &str) -> std::path::PathBuf {
+        std::path::PathBuf::from(text)
+    }
+
+    #[test]
+    fn the_reason_lists_one_path_per_line_and_says_a_concurrent_edit_shows() {
+        let claim = Claim {
+            what: String::new(),
+            span: 0..10,
+        };
+        let changed = vec![
+            (path("/h/.gitconfig"), home_print::Change::Modified),
+            (path("/r/.git/config"), home_print::Change::Added),
+        ];
+        let text = reason(
+            "cargo test",
+            &claim,
+            &changed,
+            Some(std::path::Path::new("/h")),
+        );
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "Changed while `cargo test` ran:");
+        assert!(lines[1].ends_with(".gitconfig (modified)"), "{text}");
+        assert!(lines[2].ends_with("config (added)"), "{text}");
+        assert!(lines[3].contains("by you or another session"), "{text}");
+        assert!(text.ends_with('\n'), "the remedy starts on its own line");
+    }
+
+    #[test]
+    fn an_unreadable_only_list_is_not_called_a_change() {
+        let claim = Claim {
+            what: String::new(),
+            span: 0..10,
+        };
+        let changed = vec![(path("/h/.netrc"), home_print::Change::Unreadable)];
+        let text = reason("cargo test", &claim, &changed, None);
+        assert!(
+            text.starts_with("Could not check while `cargo test` ran:"),
+            "{text}"
+        );
+    }
+
+    /// Every line of the advice fits 80 columns: the heading with its prefix
+    /// and a long command, and each remedy line.
+    #[test]
+    fn the_advice_fits_80_columns() {
+        let command = "cargo test --workspace --locked -p greenbelay-guard home_print";
+        let claim = Claim {
+            what: String::new(),
+            span: 0..command.len(),
+        };
+        for change in [home_print::Change::Modified, home_print::Change::Unreadable] {
+            let changed = vec![(path("/h/.gitconfig"), change)];
+            let said = crate::decision::phrase(
+                ASSERTION.id,
+                &reason(command, &claim, &changed, Some(std::path::Path::new("/h"))),
+                REMEDY,
+            );
+            let lines: Vec<&str> = said.lines().collect();
+            assert_eq!(lines[0].chars().count(), COLUMNS, "{}", lines[0]);
+            for line in &lines {
+                assert!(
+                    line.chars().count() <= COLUMNS,
+                    "{} columns: {line}",
+                    line.chars().count()
+                );
+            }
+            assert!(lines[3].starts_with("Inspect"), "{said}");
+        }
+    }
+
+    /// The reviewed cases in `tests/corpus/home-fingerprint-drift.cases`
+    /// replay through `examine`: the corpus check covers rules, and this is
+    /// the same file format checked for an assertion.
+    #[test]
+    fn every_reviewed_case_still_holds() {
+        let text = include_str!("../../tests/corpus/home-fingerprint-drift.cases");
+        let cases = crate::corpus::parse(text);
+        let negatives = cases
+            .iter()
+            .filter(|c| c.verdict == crate::corpus::Verdict::NoMatch)
+            .count();
+        assert!(negatives >= 5, "expected negatives: {negatives}");
+        for c in &cases {
+            let want = match c.verdict {
+                crate::corpus::Verdict::Match => true,
+                crate::corpus::Verdict::NoMatch => false,
+                crate::corpus::Verdict::Unreviewed => continue,
+            };
+            assert_eq!(claims(&c.command), want, "line {}: {}", c.line, c.command);
+        }
+    }
+}

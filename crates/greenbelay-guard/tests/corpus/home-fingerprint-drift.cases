@@ -1,0 +1,47 @@
+# amont-agent-cases-v1
+# Reviewed judgements for the home-fingerprint-drift assertion's `examine`:
+# which commands get a home fingerprint before and after. Replayed by the
+# assertion's own test (`every_reviewed_case_still_holds`).
+#
+# match   a fingerprint is taken around this command
+# nomatch no fingerprint: not a test, build or built-binary run
+
+# --- a test or build run ---
+match	cargo test --workspace --locked
+match	cargo test -p greenbelay-guard home_print
+match	cargo clippy --all-targets -- -D warnings
+match	cargo build --release
+match	cd crates/greenbelay-guard && cargo test
+match	pnpm test
+match	npm run test
+match	python3 -m pytest -q tests/
+match	go test ./...
+match	make check
+match	greengate slot run -- cargo test
+match	greengate run cargo-test
+match	amont-agent quiet -- cargo test
+match	greenbelay quiet -- cargo test -q -p greenbelay-guard --lib
+match	amont slot run -- cargo test
+match	amont slot run --weight 2 -- cargo test
+match	greenbelay quiet -- ./target/debug/greenbelay migrate
+
+# --- the 11-11 hand run: a binary straight out of target/ ---
+match	./target/debug/greenpiste migrate --apply
+match	target/release/relais status
+match	HOME=/tmp/x ./target/debug/greenbelay hook
+
+# --- the fingerprint must stay away ---
+nomatch	cargo test --help
+nomatch	cargo test --no-run
+nomatch	./target/debug/greenbelay --version
+nomatch	cargo fmt --all
+nomatch	cargo metadata --format-version 1
+nomatch	git status
+nomatch	ls target/debug/
+nomatch	echo cargo test
+nomatch	rg cargo test
+nomatch	cat target/debug/build.log
+nomatch	greengate rehearse --wait
+nomatch	greenbelay quiet -- cargo test --help
+nomatch	greengate slot run -- ls
+nomatch	greenbelay board -- cargo test

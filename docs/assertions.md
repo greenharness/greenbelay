@@ -14,8 +14,9 @@ Nothing in a command string tells you that the push you just ran reported
 | `push-published` | `git push` to a UI repository | did it publish a new commit, and was it an approved preview? (records only; see [preview approval](preview.md)) |
 | `land-retry` | `amont land`, successful or failed | did the land push the commit the review and preview judged, or a retry nobody judged? Read from the land's receipt, never the tracking ref |
 | `bug-nudge` | a check runner that failed (`PostToolUseFailure`), or printed a failure while exiting 0 | did the agent load `diagnosing-bugs` before it ran more commands? Advise only, once per session |
+| `home-fingerprint-drift` | a test, lint or build run (`cargo test`, `pnpm test`, `cargo build`, …, also behind `amont slot run --` or `greenbelay quiet --`) or a binary run out of `target/debug/` or `target/release/`, successful or failed; `--help`, `--version`, `--list` and `--no-run` are exempt | did it leave the watched home and repository config files as they were? Advise; see below |
 
-## Successful calls, with two exceptions
+## Successful calls, with three exceptions
 
 Claude Code sends a failed tool call to `PostToolUseFailure`. Everything the
 other assertions see claimed to work, which is the whole point: a command that
@@ -34,6 +35,58 @@ repository) with the land's receipt (amont 1.54.0): another sha `landed` is said
 as an unreviewed push, another sha `unverified` or `not-observed` as a possibly
 unreviewed one; a refused, unreachable or interrupted land published nothing.
 No record, no receipt or more than one is journalled as `retry-check skipped`.
+
+`home-fingerprint-drift` is the third: a red test run can change a home file
+as surely as a green one.
+
+## Home fingerprint
+
+Before a command `home-fingerprint-drift` fires on runs in the foreground,
+PreToolUse takes a fingerprint of a few files and keeps it under the
+journal's directory, in `previews/home/<tool_use_id>` (private, pruned after
+24 hours: an interrupted command gets no PostToolUse). The PostToolUse, or
+PostToolUseFailure, of the same call takes it again and names each file that
+changed:
+
+```text
+greenbelay/home-fingerprint-drift: Changed while `cargo test` ran:
+  /Users/me/repo/.git/config (modified)
+An edit made at the same time, by you or another session, shows too.
+Inspect each file (`git config --list --show-origin` for git config);
+the snapshot keeps hashes, not contents, so compare with your dotfiles
+source or a backup. If this command changed them, restore them and rerun
+it with HOME and XDG_CONFIG_HOME set to a scratch directory.
+```
+
+When every entry is `not checked`, the heading reads `Could not check while
+… ran:` instead. A record left by a command that got no PostToolUse (it was
+interrupted, or refused at a prompt) stays up to a day.
+
+The watched set is the one relais watches around a run (its `homeprint.rs`;
+no code is shared): `~/.gitconfig`, `$XDG_CONFIG_HOME/git/config` (else
+`~/.config/git/config`), `~/.netrc` (and `~/_netrc` on Windows),
+`~/.claude/settings*.json`, `~/.claude/plugins/installed_plugins.json` and
+`known_marketplaces.json`, every file under `~/.ssh` but `known_hosts*`, and
+the repository's shared `.git/config` (found on disk as git finds it: the
+nearest `.git`, a `.git` file's `gitdir:`, then `commondir`, so a linked
+worktree watches its main repository's; outside a repository it is not
+watched). `~` is `HOME`, else
+`USERPROFILE`; `~/.claude` is `CLAUDE_CONFIG_DIR` when set. `~/.config` as a
+whole is not watched: caches rewrite it all day.
+
+A fingerprint holds hashes, never contents: sha256, size and (on unix) mode
+bits of each regular file, a symlink by its target (never followed). A file
+over 1 MiB is fingerprinted by its size and modification time, never read. FIFOs,
+sockets and devices are never opened. A directory counts at most 500 files in
+byte order; past that the change list ends with `(not checked: over 500
+files)`, shown only beside a real change. A file readable on one side only
+prints `(not checked: unreadable)`. A record another greenbelay version wrote
+is not compared. Paths under `HOME` print as `~/…` on unix,
+others as absolute paths.
+
+It is advise-only and cannot refuse. It prevents nothing and restores
+nothing: it is the detection net for the 2026-11-15 test run that rewrote the
+real home's git config and Claude plugin files, and nothing failed.
 
 ## An assertion cannot refuse
 
