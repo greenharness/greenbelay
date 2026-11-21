@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 branch: feat/measure-fingerprint
 repos: [greenbelay, decisions, blue-factory]
 adrs: []
@@ -262,5 +262,13 @@ in scratch copies of `~/.local/state/t09-recount`, then live.
 - `daily.py --sum` also refuses a window day with neither file (a failed
   count): scratch showed it summed 6 days silently.
 - `daily.py.prev` stays beside the live one until t09 resolves.
+
+## Implementation review
+
+- implementation-review: approve on 95f34925 (round 1 there), after approve-with-changes on 695172d8 and a delta; fixed: flag args (`check`/`rebaseline`, `compare`/`group_stamps`, an `on_change` policy), `let _` reasons, placeholder names, plan text. 71k + 91k + 26k tokens.
+- backend: approve (delta); fixed: lock errno, helper load exit 1, coverage `_plain`, mode + dir fsync, Rust cases; deliberate: a dir-fsync error after the rename reads "cannot be written" (rare, errs safe). 66k + 81k.
+- lang:python: approve (delta); fixed: typed outcomes (NamedTuple), `RecipeRefused`/`StampsRefused`, `from err`, `__all__`, "ab". 59k + 70k.
+- unix: approve (delta); fixed: BrokenPipe in `compare`, 100755, helper load; deliberate: no `--version`, the version is the blob id a recipe records. 62k + 75k.
+- deliberate (backend, python): read-rate's `match` has no wildcard; the three outcomes are the helper's whole set and a fourth would be a helper change reviewed with its caller.
 
 <!-- panel: repos=greenbelay,decisions,blue-factory reviewers=backend,lang:python,lang:rust,tui,unix,codex body-sha=b107e8d201f8 -->
