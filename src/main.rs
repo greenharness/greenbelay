@@ -1416,14 +1416,17 @@ Where tool output went: the bytes tool results put into session context in
 the window [since, until), by kind of call (ci-log-failed, ci-log,
 ci-status, check, check-quiet, check-git-hook, git, shell, read, search,
 edit, agent, lsp, web, mcp, other-tool, unmatched), apart from subagents,
-beside the token usage the transcripts report, by model.
+beside the token usage the transcripts report, by model. Bash results are
+also broken down by command family (the program, plus the subcommand for
+git, gh, kubectl, cargo, npm, pnpm, docker, brew, greenbelay, greengate,
+relais and amont), for the main conversation and for subagents.
 
 Each result, each agent launch and each message counts once, however many
 times a resumed session copies it. `over 200 B` is the share of passing
 results beyond 200 bytes each: what a one-line quiet summary would not
 carry, a proxy, not a measure. Usage is what the transcripts report: not
 billing and not quota. The output carries counts only, no command or
-result text.
+result text beyond program names.
 
   --since, --until  UTC instants, YYYY-MM-DDTHH:MM:SS[.fff]Z
   --transcripts     a transcript root (repeatable; default: the Claude
@@ -1530,6 +1533,55 @@ fn scaled(count: u64) -> String {
         )
 }
 
+/// The top families of one context by result bytes, then the rest summed.
+fn families_text(
+    title: &str,
+    map: &std::collections::BTreeMap<String, greenbelay_guard::output_audit::Bucket>,
+) -> String {
+    const SHOWN: usize = 15;
+    let total: u64 = map.values().map(|b| b.result_bytes).sum();
+    let mut out = format!("\n{title}, Bash by command family\n");
+    if map.is_empty() {
+        out.push_str("  none\n");
+        return out;
+    }
+    let share = |bytes: u64| {
+        if total == 0 {
+            0.0
+        } else {
+            100.0 * bytes as f64 / total as f64
+        }
+    };
+    out.push_str(&format!(
+        "  {:<26} {:>7} {:>8} {:>6}\n",
+        "family", "calls", "bytes", "share"
+    ));
+    let mut rows: Vec<_> = map.iter().collect();
+    rows.sort_by(|a, b| b.1.result_bytes.cmp(&a.1.result_bytes).then(a.0.cmp(b.0)));
+    for (family, b) in rows.iter().take(SHOWN) {
+        out.push_str(&format!(
+            "  {:<26} {:>7} {:>8} {:>5.1}%\n",
+            family,
+            b.calls,
+            scaled(b.result_bytes),
+            share(b.result_bytes)
+        ));
+    }
+    if rows.len() > SHOWN {
+        let (calls, bytes) = rows[SHOWN..]
+            .iter()
+            .fold((0, 0), |(c, y), (_, b)| (c + b.calls, y + b.result_bytes));
+        out.push_str(&format!(
+            "  {:<26} {:>7} {:>8} {:>5.1}%\n",
+            "other families",
+            calls,
+            scaled(bytes),
+            share(bytes)
+        ));
+    }
+    out
+}
+
 /// The aggregate as tables under 80 columns, largest result bytes first;
 /// exact integers are in `--json`.
 fn output_audit_text(
@@ -1575,6 +1627,12 @@ fn output_audit_text(
                 scaled(b.over_summary)
             ));
         }
+    }
+    for (title, map) in [
+        ("main conversation", &audit.main_families),
+        ("subagents", &audit.sidechain_families),
+    ] {
+        out.push_str(&families_text(title, map));
     }
     out.push_str("\nreported usage by model, tokens (not billing, not quota)\n");
     if audit.usage.is_empty() {
