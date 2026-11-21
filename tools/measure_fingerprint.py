@@ -82,7 +82,8 @@ class Refused(Exception):
             for group in self.groups:
                 lines.append(f"  {_short(group['fingerprint'])}")
                 for name in group["files"]:
-                    lines.append(_fit(f"    {name}"))
+                    # Never cut: the name tells the pieces apart (a day).
+                    lines.append(f"    {name}")
         else:
             lines.append(
                 f"fingerprint refused: recipe changed "
@@ -563,9 +564,18 @@ def _self_cases(directory):
     mixed = _run_cli("compare", at("a.fp.json"), at("b.fp.json"))
     _expect(mixed.returncode == 3 and "filters" in mixed.stderr, "compare mixed exit 3")
     _expect(mixed.stdout == "", "refusal prints nothing on stdout")
+    files = {at("a.fp.json"), at("b.fp.json")}
     _expect(
-        all(len(line) <= WIDTH for line in mixed.stderr.splitlines()[:-1]),
-        "compare refusal fits 80 columns",
+        all(
+            len(line) <= WIDTH
+            for line in mixed.stderr.splitlines()[:-1]
+            if line.strip() not in files
+        ),
+        "compare refusal fits 80 columns, file names aside",
+    )
+    _expect(
+        all(f"    {name}" in mixed.stderr.splitlines() for name in files),
+        "file names are whole",
     )
     _expect("--rebaseline" in mixed.stderr, "compare refusal names the accept command")
     accepted = _run_cli("compare", at("a.fp.json"), at("b.fp.json"), "--rebaseline")
