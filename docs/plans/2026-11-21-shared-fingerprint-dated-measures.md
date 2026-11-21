@@ -262,6 +262,11 @@ in scratch copies of `~/.local/state/t09-recount`, then live.
 - `daily.py --sum` also refuses a window day with neither file (a failed
   count): scratch showed it summed 6 days silently.
 - `daily.py.prev` stays beside the live one until t09 resolves.
+- CI on the first push: Windows failed on `import fcntl` (the helper is
+  Unix only, as its docstring says); the Rust test is now `#![cfg(unix)]`
+  and read-rate reports a missing `fcntl` in one line (exit 1, simulated).
+  Ubuntu failed in `migrate::tests::a_failure_is_attempted_once_by_hooks…`
+  (`Busy` vs `FailedBefore`), a lock-timing test this change does not touch.
 
 ## Implementation review
 
