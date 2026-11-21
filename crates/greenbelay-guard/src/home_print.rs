@@ -912,10 +912,19 @@ mod tests {
             &main,
         );
         git(&["worktree", "add", "-q", "--detach", "../wt"], &main);
+        // Compared as the same directory, not the same spelling: on Windows
+        // the answer keeps the `absolute` form (an 8.3 name such as
+        // `RUNNER~1`), where `canonicalize` gives `\\?\` and the long name.
+        let same_dir =
+            |found: Option<PathBuf>| found.map(|dir| std::fs::canonicalize(dir).unwrap());
         let want = std::fs::canonicalize(main.join(".git")).unwrap();
-        assert_eq!(git_common_dir(&main), Some(want.clone()));
-        assert_eq!(git_common_dir(&main.join("sub")), Some(want.clone()));
-        assert_eq!(git_common_dir(&root.join("wt")), Some(want));
+        assert_eq!(same_dir(git_common_dir(&main)), Some(want.clone()));
+        assert_eq!(
+            same_dir(git_common_dir(&main.join("sub"))),
+            Some(want.clone())
+        );
+        assert_eq!(same_dir(git_common_dir(&root.join("wt"))), Some(want));
+        assert!(git_common_dir(&main).is_some_and(|dir| dir.is_absolute()));
         let outside = Scratch::new("nogit");
         if outside.0.ancestors().all(|dir| !dir.join(".git").exists()) {
             assert_eq!(git_common_dir(&outside.0), None);
