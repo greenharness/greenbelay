@@ -74,7 +74,7 @@ def week_of(stamp: str):
 def load_fingerprint_helper():
     """tools/measure_fingerprint.py beside this script, loaded by path
     (`python3 -I` keeps this directory off `sys.path`). OSError when it is
-    missing or unreadable."""
+    missing or unreadable; ImportError where `fcntl` is absent (Windows)."""
     path = pathlib.Path(__file__).resolve().with_name("measure_fingerprint.py")
     spec = importlib.util.spec_from_file_location("measure_fingerprint", path)
     module = importlib.util.module_from_spec(spec)
@@ -178,7 +178,7 @@ def run() -> int:
     if args.fingerprint is not None:
         try:  # before the scan, so a missing helper fails at once
             helper = load_fingerprint_helper()
-        except OSError as err:
+        except (OSError, ImportError) as err:  # ImportError: no fcntl (Windows)
             print(f"read-rate: cannot load the fingerprint helper ({err})",
                   file=sys.stderr)
             return 1

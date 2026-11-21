@@ -1,6 +1,8 @@
 //! `tools/measure_fingerprint.py` and its first caller, `tools/read-rate.py`,
 //! run with `python3 -I` as the fleet runs them: a sibling `import` fails here
-//! as it would there.
+//! as it would there. Unix only, as the helper is: it locks with `fcntl`.
+
+#![cfg(unix)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
