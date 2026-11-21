@@ -822,16 +822,24 @@ pub fn command_family(command: &str) -> String {
     if known.is_none() && !OWN_TOOLS.contains(&program) {
         return program.to_string();
     }
+    // An own tool's unlisted option may take a value: once one is seen,
+    // the next word is not trusted as a subcommand.
+    let mut after_option = false;
     while let Some(word) = words.next() {
         if word.starts_with('-') {
             if VALUE_OPTIONS.contains(&word) {
                 words.next();
+            } else {
+                after_option = true;
             }
+            continue;
+        }
+        if program == "cargo" && word.starts_with('+') {
             continue;
         }
         let kept = match known {
             Some(list) => list.contains(&word),
-            None => is_subcommand_word(word),
+            None => !after_option && is_subcommand_word(word),
         };
         let subcommand = if kept { word } else { "other" };
         return format!("{program} {subcommand}");
@@ -1121,6 +1129,8 @@ mod tests {
             ("timeout -s KILL 60 cargo test", "cargo test"),
             ("relais status --json", "relais status"),
             ("greengate Prod", "greengate other"),
+            ("relais --state-dir mydir run", "relais other"),
+            ("cargo +nightly test", "cargo test"),
             ("", "other"),
             ("   ", "other"),
         ];
