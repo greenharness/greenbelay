@@ -626,20 +626,117 @@ struct Call {
     family: Option<String>,
 }
 
-/// Programs whose first non-option word is part of the family.
-const SUBCOMMAND_PROGRAMS: [&str; 11] = [
-    "gh",
-    "kubectl",
-    "cargo",
-    "npm",
-    "pnpm",
-    "docker",
-    "brew",
-    "greenbelay",
-    "greengate",
-    "relais",
-    "amont",
-];
+/// The subcommands a third-party program's family may name. A word outside
+/// its list is `<program> other`: an option's value (`kubectl --kubeconfig
+/// prod get`) must never reach the report.
+fn known_subcommands(program: &str) -> Option<&'static [&'static str]> {
+    Some(match program {
+        "git" => &[
+            "add",
+            "am",
+            "apply",
+            "bisect",
+            "blame",
+            "branch",
+            "checkout",
+            "cherry-pick",
+            "clean",
+            "clone",
+            "commit",
+            "config",
+            "describe",
+            "diff",
+            "fetch",
+            "for-each-ref",
+            "grep",
+            "init",
+            "log",
+            "ls-files",
+            "ls-remote",
+            "merge",
+            "merge-base",
+            "mv",
+            "notes",
+            "pull",
+            "push",
+            "rebase",
+            "reflog",
+            "remote",
+            "reset",
+            "restore",
+            "rev-list",
+            "rev-parse",
+            "revert",
+            "rm",
+            "show",
+            "stash",
+            "status",
+            "switch",
+            "tag",
+            "worktree",
+        ],
+        "gh" => &[
+            "api", "auth", "issue", "pr", "release", "repo", "run", "search", "workflow",
+        ],
+        "kubectl" => &[
+            "apply",
+            "auth",
+            "config",
+            "create",
+            "delete",
+            "describe",
+            "diff",
+            "edit",
+            "events",
+            "exec",
+            "explain",
+            "get",
+            "label",
+            "logs",
+            "patch",
+            "port-forward",
+            "rollout",
+            "scale",
+            "top",
+            "wait",
+        ],
+        "cargo" => &[
+            "add", "bench", "build", "check", "clean", "clippy", "doc", "fmt", "install",
+            "metadata", "nextest", "publish", "run", "test", "tree", "update",
+        ],
+        "npm" | "pnpm" => &[
+            "add", "audit", "build", "ci", "dlx", "exec", "install", "i", "lint", "ls", "outdated",
+            "publish", "remove", "run", "test", "update", "view", "why",
+        ],
+        "docker" => &[
+            "build", "compose", "exec", "images", "inspect", "logs", "ps", "pull", "push", "run",
+            "stop",
+        ],
+        "brew" => &[
+            "info",
+            "install",
+            "list",
+            "outdated",
+            "search",
+            "services",
+            "tap",
+            "uninstall",
+            "update",
+            "upgrade",
+        ],
+        _ => return None,
+    })
+}
+
+/// The harness's own tools: their first non-option word is a subcommand,
+/// kept when it is a lowercase word.
+const OWN_TOOLS: [&str; 4] = ["greenbelay", "greengate", "relais", "amont"];
+
+fn is_subcommand_word(word: &str) -> bool {
+    (1..=24).contains(&word.len())
+        && word.starts_with(|c: char| c.is_ascii_lowercase())
+        && word.bytes().all(|b| b.is_ascii_lowercase() || b == b'-')
+}
 
 /// Options whose next word is their value, not a subcommand.
 const VALUE_OPTIONS: [&str; 7] = ["-n", "-C", "-c", "-R", "--namespace", "--repo", "--context"];
@@ -651,14 +748,6 @@ fn is_plain_token(token: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'+' | b'-'))
 }
 
-fn sanitized(token: &str) -> &str {
-    if is_plain_token(token) {
-        token
-    } else {
-        "other"
-    }
-}
-
 fn is_assignment(word: &str) -> bool {
     word.split_once('=').is_some_and(|(name, _)| {
         !name.is_empty()
@@ -668,7 +757,8 @@ fn is_assignment(word: &str) -> bool {
 }
 
 /// The program a Bash command runs, plus its subcommand for git and the
-/// tools in [`SUBCOMMAND_PROGRAMS`]: `git -C /x diff` is `git diff`.
+/// tools with a [`known_subcommands`] list or in [`OWN_TOOLS`]: `git -C /x
+/// diff` is `git diff`, and an unlisted word is `other`.
 ///
 /// Only the first command of a chain counts, after a leading `cd <dir> &&`,
 /// variable assignments and the wrappers `env`, `command`, `time`,
@@ -700,7 +790,11 @@ pub fn command_family(command: &str) -> String {
             }
             "timeout" => {
                 words.next();
-                while words.next_if(|w| w.starts_with('-')).is_some() {}
+                while let Some(flag) = words.next_if(|w| w.starts_with('-')) {
+                    if matches!(flag, "-s" | "-k" | "--signal" | "--kill-after") {
+                        words.next();
+                    }
+                }
                 words.next();
             }
             "nice" => {
@@ -724,7 +818,8 @@ pub fn command_family(command: &str) -> String {
     if !is_plain_token(program) {
         return "other".to_string();
     }
-    if program != "git" && !SUBCOMMAND_PROGRAMS.contains(&program) {
+    let known = known_subcommands(program);
+    if known.is_none() && !OWN_TOOLS.contains(&program) {
         return program.to_string();
     }
     while let Some(word) = words.next() {
@@ -734,7 +829,12 @@ pub fn command_family(command: &str) -> String {
             }
             continue;
         }
-        return format!("{program} {}", sanitized(word));
+        let kept = match known {
+            Some(list) => list.contains(&word),
+            None => is_subcommand_word(word),
+        };
+        let subcommand = if kept { word } else { "other" };
+        return format!("{program} {subcommand}");
     }
     program.to_string()
 }
@@ -1014,6 +1114,13 @@ mod tests {
             ("g\u{e9}n\u{e9}", "other"),
             ("$(evil)", "other"),
             ("git $(evil)", "git other"),
+            ("kubectl --kubeconfig prod get pods", "kubectl other"),
+            ("docker -H myhost ps", "docker other"),
+            ("gh --hostname corp api x", "gh other"),
+            ("git --git-dir secretname status", "git other"),
+            ("timeout -s KILL 60 cargo test", "cargo test"),
+            ("relais status --json", "relais status"),
+            ("greengate Prod", "greengate other"),
             ("", "other"),
             ("   ", "other"),
         ];
