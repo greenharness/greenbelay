@@ -17,25 +17,41 @@ what did the rule say on UI pushes, and does that meet the plan's bars?
 ## Look at
 
 - `~/.claude/greenbelay/journal.log`, the `push-browser-check` lines dated
-  on or after 2026-11-21: `unconfirmed bound` and `unconfirmed declared` are
-  passes; `advise advised … check=missing|stale|unreachable|gap|unknown` are
-  advices; `unconfirmed delete-only|dry-run|no-ui-repository|…` and the
-  `deny denied` lines of a refused store write are neither and stay out of
-  the counts.
+  on or after 2026-11-21, matched on the outcome field exactly:
+  - passes: `unconfirmed bound` (a check in this session), `unconfirmed
+    remembered` (a tree a pass file already covers: a re-push after a
+    push-preview hold, a failed publish or in a later session) and
+    `unconfirmed declared` (the plan's `## Browser check` escape; the
+    separate `- declared` line the rule also writes is the same push, not a
+    second pass);
+  - advices: `advise advised … check=missing|stale|unreachable|unknown`;
+    `check=gap` is a machine without the agent, reported beside the ratio
+    and left out of it;
+  - neither: `unconfirmed delete-only|dry-run|no-ui-repository|no-interface-change|…`
+    and the `deny denied` lines of a refused store write.
+  The ratio is passes over passes plus advices.
 - Among the advices, how many carry `check=unreachable`, and how many pushes
   were advised twice on the same tree (an advise the agent could not
-  satisfy).
-- `greenbelay graduate push-browser-check --to deny` as a dry read of its
-  corpus lines (17 cases, 9 `nomatch`, above the 12/4 floor).
+  satisfy). Beside them, the number of `remember-failed` lines: each is a
+  tree a later session had to check again because the store could not be
+  written.
+- `greenbelay corpus` (read-only: the `push-browser-check` row should read 17
+  reviewed, 9 negative, above the 12/4 floor) and `greenbelay corpus check`
+  (replays every reviewed judgement). `graduate` itself has no dry mode: when
+  the corpus passes it moves the rule at once, so it is run only in the
+  answer below, after the bars are met.
 
 ## Answer looks like
 
-- ≥70% of UI pushes `bound` or `declared` → run
-  `greenbelay graduate push-browser-check --to deny`, record the figures in
-  the rule's `Evidence` and the plan's Outcome, set the plan `status: done`.
-- >30% of advices `unreachable` → `greenbelay demote push-browser-check`,
-  with the reason in the plan's Outcome.
+- ≥70% of UI pushes `bound`, `remembered` or `declared` → first tighten the
+  two `deny`-only hold texts named in the plan's Implementation review (the
+  real repository and sha in the `unknown` hold; the content-id failure
+  wording), as a greenbelay release; then run
+  `greenbelay graduate push-browser-check --to deny`. Exit 0: record the
+  figures in the rule's `Evidence` and the plan's Outcome, set the plan
+  `status: done`. Exit 2 with `refusing to move` on stderr: the corpus does
+  not carry it; stay at advise, record its lines, never `--force`.
+- >30% of advices `unreachable` → `greenbelay demote push-browser-check`:
+  the rule rests at `observe` (journalled, silent, no questions asked), with
+  the reason in the plan's Outcome.
 - Otherwise stay at advise, record why, and set the next date.
-- Before deny, tighten the two `deny`-only hold texts named in the plan's
-  Implementation review (real repository and sha in the `unknown` hold; the
-  content-id failure wording).
