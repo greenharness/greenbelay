@@ -2029,6 +2029,9 @@ fn a_plan_approved_with_evidence_is_recorded_as_preview_evidence() {
     w.commit(&repo, &[(plan_rel, plan)]);
     w.commit(&repo, &[("src/lib.rs", "fn a() { b() }\nfn b() {}\n")]);
     git(&repo, &["config", "greenbelay.push-preview.ui", "true"]);
+    // These tests are about push-preview's record; the browser-check gate's
+    // own gap (no `browser-check` agent here) is another rule's voice.
+    w.set_global("greenbelay.push-browser-check.stance", "observe");
     let head = git(&repo, &["rev-parse", "HEAD"]);
     let shown = greenbelay_command()
         .arg("plan-sha")
@@ -2054,6 +2057,9 @@ fn a_mockup_change_with_an_approval_is_recorded_as_preview_approved() {
     let plan = "---\nstatus: active\n---\n# X\n\n## Preview\n\nevidence: nothing visible is left to judge.\n";
     git(&repo, &["reset", "-q", "--hard", "origin/main"]);
     git(&repo, &["config", "greenbelay.push-preview.ui", "true"]);
+    // These tests are about push-preview's record; the browser-check gate's
+    // own gap (no `browser-check` agent here) is another rule's voice.
+    w.set_global("greenbelay.push-browser-check.stance", "observe");
     w.commit(&repo, &[(plan_rel, plan)]);
     let head = w.commit(
         &repo,
@@ -2098,6 +2104,9 @@ fn a_gated_change_outside_the_interface_is_recorded_as_not_required() {
     let repo = w.repo("app");
     git(&repo, &["reset", "-q", "--hard", "origin/main"]);
     git(&repo, &["config", "greenbelay.push-preview.ui", "true"]);
+    // These tests are about push-preview's record; the browser-check gate's
+    // own gap (no `browser-check` agent here) is another rule's voice.
+    w.set_global("greenbelay.push-browser-check.stance", "observe");
     w.commit(&repo, &[("docs/plans/2026-09-29-x.md", "# X\n")]);
     let head = w.commit(&repo, &[("README.md", "words\n")]);
     reviewed(&w, &repo);
@@ -2111,6 +2120,9 @@ fn a_preview_not_yet_approved_defers_the_record_until_it_is() {
     let repo = w.repo("app");
     git(&repo, &["reset", "-q", "--hard", "origin/main"]);
     git(&repo, &["config", "greenbelay.push-preview.ui", "true"]);
+    // These tests are about push-preview's record; the browser-check gate's
+    // own gap (no `browser-check` agent here) is another rule's voice.
+    w.set_global("greenbelay.push-browser-check.stance", "observe");
     w.commit(&repo, &[("docs/plans/2026-09-29-x.md", "# X\n")]);
     let head = w.commit(&repo, &[("src/lib.rs", "fn a() { b() }\nfn b() {}\n")]);
     let mut t = Transcript::default();
@@ -2720,6 +2732,9 @@ fn a_review_in_the_transcript_is_honoured_with_no_agent_installed() {
     w.commit(&repo, &[(plan_rel, plan)]);
     w.commit(&repo, &[("src/lib.rs", "fn a() { b() }\nfn b() {}\n")]);
     git(&repo, &["config", "greenbelay.push-preview.ui", "true"]);
+    // These tests are about push-preview's record; the browser-check gate's
+    // own gap (no `browser-check` agent here) is another rule's voice.
+    w.set_global("greenbelay.push-browser-check.stance", "observe");
     let head = git(&repo, &["rev-parse", "HEAD"]);
     let shown = greenbelay_command()
         .arg("plan-sha")

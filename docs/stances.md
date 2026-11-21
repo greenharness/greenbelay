@@ -53,6 +53,10 @@ The cap is applied after every configured key, so neither
 `graduate --to deny` refuses a capped rule with the reason. `greenbelay
 rules` prints each rule's ceiling beside its stance.
 
+`push-browser-check` ships at `advise` with a ceiling of `deny`; where the
+`browser-check` agent is not installed, under `deny` it says so as advice
+and holds nothing ([the push browser check](push-browser-check.md)).
+
 ## Raising a stance for named agents
 
 `greenbelay.<id>.denyAgents` lifts one rule from `advise` to `deny` for the

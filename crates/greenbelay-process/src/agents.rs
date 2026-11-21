@@ -20,6 +20,8 @@ pub enum Need {
     PlanPanel,
     /// The `implementation-review` agent.
     ImplementationReview,
+    /// The `browser-check` agent.
+    BrowserCheck,
     /// One code-review profile's agent, by file stem (see [`CODE_REVIEW_AGENTS`]).
     CodeReview(&'static str),
 }
@@ -49,6 +51,7 @@ impl Need {
         match self {
             Need::PlanPanel => stem.starts_with("plan-review-"),
             Need::ImplementationReview => stem == "implementation-review",
+            Need::BrowserCheck => stem == "browser-check",
             Need::CodeReview(agent) => stem == agent,
         }
     }
@@ -59,11 +62,20 @@ pub fn gap_line(need: Need) -> String {
     let what = match need {
         Need::PlanPanel => "no `plan-review-*` agent".to_string(),
         Need::ImplementationReview => "no `implementation-review` agent".to_string(),
+        Need::BrowserCheck => "no `browser-check` agent".to_string(),
         Need::CodeReview(agent) => format!("no `{agent}` agent"),
+    };
+    // The browser check's advice names only greenbelay's own commands and the
+    // agent type (ADR-0073): no installer is named for it.
+    let ending = match need {
+        Need::BrowserCheck => ".",
+        Need::PlanPanel | Need::ImplementationReview | Need::CodeReview(_) => {
+            ": run `grh install workflow`."
+        }
     };
     format!(
         "{what} is installed (looked in the Claude config agents/, .claude/agents/ and installed \
-         plugins), so this check cannot be satisfied here: run `grh install workflow`."
+         plugins), so this check cannot be satisfied here{ending}"
     )
 }
 
@@ -71,11 +83,13 @@ pub fn gap_line(need: Need) -> String {
 /// review, then each code-review profile's), for the repository holding
 /// `project`; none when all are installed.
 pub fn review_gaps(project: &Path) -> Vec<greenbelay_guard::doctor::Finding> {
-    let needs = std::iter::once(Need::ImplementationReview).chain(
-        CODE_REVIEW_AGENTS
-            .iter()
-            .map(|agent| Need::CodeReview(agent)),
-    );
+    let needs = [Need::ImplementationReview, Need::BrowserCheck]
+        .into_iter()
+        .chain(
+            CODE_REVIEW_AGENTS
+                .iter()
+                .map(|agent| Need::CodeReview(agent)),
+        );
     needs
         .filter(|need| !carried(*need, project))
         .map(|need| {

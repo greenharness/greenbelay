@@ -288,13 +288,13 @@ fn base_over_tracking(repo: &Path, t: &Target, tracking: String) -> String {
 
 /// Whether a branch push carries an interface change, or `None` when its
 /// files cannot be listed. Stops at the first file that counts.
-fn carries_ui(repo: &Path, t: &Target) -> Option<bool> {
-    let p = published(repo, t)?;
+pub(crate) fn carries_ui(repo: &Path, target: &Target) -> Option<bool> {
+    let p = published(repo, target)?;
     let mut packages = std::collections::HashMap::new();
     Some(
         p.files
             .iter()
-            .any(|f| counts_as_ui(repo, p.base.as_deref(), t, f, &mut packages)),
+            .any(|f| counts_as_ui(repo, p.base.as_deref(), target, f, &mut packages)),
     )
 }
 
@@ -1882,14 +1882,23 @@ fn plan_approved(sha: &str) -> bool {
 /// the canonical body, the part the person approved; a heading inside a
 /// code fence is text.
 pub fn preview_evidence(text: &str) -> Option<String> {
+    declared_reason(text, "Preview", "evidence:")
+}
+
+/// The reason a plan's `## <section>` declares: the section's first
+/// non-empty line, when it starts with `prefix` and gives one that is not
+/// the template's `<…>` placeholder. [`preview_evidence`] reads it for
+/// (`Preview`, `evidence:`), `push-browser-check` for (`Browser check`,
+/// `none:`).
+pub(crate) fn declared_reason(text: &str, section: &str, prefix: &str) -> Option<String> {
     let body = crate::plan_text::canonical(text);
     let mut fence = crate::plan_text::Fence::default();
     let mut lines = body.lines();
     lines
         .by_ref()
-        .find(|l| fence.h2(l).is_some_and(|t| t == "Preview"))?;
+        .find(|l| fence.h2(l).is_some_and(|t| t == section))?;
     let first = lines.find(|l| !l.trim().is_empty())?;
-    let reason = first.trim().strip_prefix("evidence:")?.trim();
+    let reason = first.trim().strip_prefix(prefix)?.trim();
     (!reason.is_empty() && !reason.starts_with('<')).then(|| reason.to_string())
 }
 
@@ -1935,6 +1944,18 @@ fn first_plan(repo: &Path, from: &str, commit: &str) -> Option<(String, String)>
 /// `evidence`. Any miss is `None`, silent: the approval path
 /// decides, as before.
 fn evidence_of(repo: &Path, commit: &str) -> Option<String> {
+    plan_declares(repo, commit, "Preview", "evidence:")
+}
+
+/// [`evidence_of`] over a (section, prefix) pair: the journal detail of a
+/// pass when the approved plan the branch landed declares a reason in
+/// `## <section>` starting `prefix`.
+pub(crate) fn plan_declares(
+    repo: &Path,
+    commit: &str,
+    section: &str,
+    prefix: &str,
+) -> Option<String> {
     let base = greenbelay_guard::stale::remote_of(repo)
         .and_then(|r| greenbelay_guard::stale::default_base(repo, &r))?;
     let from = git(repo, &["merge-base", &base, commit])?;
@@ -1950,12 +1971,20 @@ fn evidence_of(repo: &Path, commit: &str) -> Option<String> {
     if !plan_approved(&shas.sha) {
         return None;
     }
-    let reason = preview_evidence(&text)?;
-    Some(format!(
-        "{path} commit={} sha={} evidence: {reason}",
-        short(commit),
-        &shas.sha[..12]
+    let reason = declared_reason(&text, section, prefix)?;
+    Some(declaration_detail(
+        &path, commit, &shas.sha, prefix, &reason,
     ))
+}
+
+/// The journal detail of a declared reason: the plan, the commit and the
+/// approved body's sha, then the prefix and the reason.
+fn declaration_detail(path: &str, commit: &str, sha: &str, prefix: &str, reason: &str) -> String {
+    format!(
+        "{path} commit={} sha={} {prefix} {reason}",
+        short(commit),
+        &sha[..12]
+    )
 }
 
 // --- publication ----------------------------------------------------------
@@ -2065,6 +2094,40 @@ pub fn sweep() {
 mod tests {
     use super::*;
     use crate::plan_text::package_is_ui;
+
+    #[test]
+    fn the_evidence_journal_detail_is_unchanged_by_the_generalisation() {
+        let sha = "0123456789abcdef".repeat(4);
+        assert_eq!(
+            declaration_detail(
+                "docs/plans/2026-09-29-x.md",
+                "fedcba9876543210fedcba9876543210fedcba98",
+                &sha,
+                "evidence:",
+                "nothing visible is left to judge."
+            ),
+            "docs/plans/2026-09-29-x.md commit=fedcba9 sha=0123456789ab evidence: nothing visible is left to judge."
+        );
+    }
+
+    #[test]
+    fn a_browser_check_section_declares_none_on_its_first_line() {
+        let plan =
+            "# P\n\n## Browser check\n\nnone: needs a login nobody can script\n\n## Phases\n";
+        assert_eq!(
+            declared_reason(plan, "Browser check", "none:").as_deref(),
+            Some("needs a login nobody can script")
+        );
+        assert_eq!(declared_reason(plan, "Preview", "evidence:"), None);
+        assert_eq!(
+            declared_reason(
+                "# P\n\n## Browser check\n\nnone: <reason>\n",
+                "Browser check",
+                "none:"
+            ),
+            None
+        );
+    }
 
     #[test]
     fn a_preview_section_declares_evidence_on_its_first_line() {

@@ -22,6 +22,7 @@ pub const RULES: &[Rule] = &[
     crate::rules::clear_at_boundary::RULE,
     crate::rules::plan_phases_open::RULE,
     crate::implementation_review_rule::RULE,
+    greenbelay_process::push_browser_check::RULE,
     crate::rules::ask_unopened_page::RULE,
     crate::rules::foreground_poll::RULE,
     crate::rules::unbounded_background_push::RULE,
@@ -166,17 +167,19 @@ mod tests {
         }
     }
 
-    /// The table holds every rule, in its place: 56 rules, which are the 45
+    /// The table holds every rule, in its place: 57 rules, which are the 46
     /// left after the workspace split and the observe-rule retirements, plus
-    /// `relais-run-forks`, `screenshot-in-main-session`, `work-overlap`, `ask-unopened-page`,
-    /// `suppressions-override`, `plan-names-no-paths`, `chain-with-and`,
-    /// `block-reinstate`, `land-detached` and `secret-read`, with `push-preview` between
-    /// `push-preflight` and `plan-review-panel`, and `implementation-review` after
-    /// `plan-phases-open`. A rule a crate stopped listing would vanish here.
+    /// `relais-run-forks`, `screenshot-in-main-session`, `work-overlap`,
+    /// `ask-unopened-page`, `suppressions-override`, `plan-names-no-paths`,
+    /// `chain-with-and`, `block-reinstate`, `land-detached`, `secret-read` and
+    /// `push-browser-check`, with `push-preview` between `push-preflight` and
+    /// `plan-review-panel`, `implementation-review` after `plan-phases-open`,
+    /// and `push-browser-check` after that. A rule a crate stopped listing
+    /// would vanish here.
     #[test]
     fn the_table_holds_every_rule_in_its_place() {
         let ids: Vec<&str> = RULES.iter().map(|r| r.id).collect();
-        assert_eq!(ids.len(), 56, "{ids:?}");
+        assert_eq!(ids.len(), 57, "{ids:?}");
         let at = |id: &str| {
             ids.iter()
                 .position(|x| *x == id)
@@ -185,5 +188,6 @@ mod tests {
         assert_eq!(at("push-preview"), at("push-preflight") + 1);
         assert_eq!(at("plan-review-panel"), at("push-preview") + 1);
         assert_eq!(at("implementation-review"), at("plan-phases-open") + 1);
+        assert_eq!(at("push-browser-check"), at("implementation-review") + 1);
     }
 }

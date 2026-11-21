@@ -244,6 +244,10 @@ const EMBEDDED: &[(&str, &str)] = &[
         include_str!("../tests/corpus/push-preview.cases"),
     ),
     (
+        "push-browser-check",
+        include_str!("../tests/corpus/push-browser-check.cases"),
+    ),
+    (
         "ask-unopened-page",
         include_str!("../tests/corpus/ask-unopened-page.cases"),
     ),
