@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v6.6.0
+
+greenbelay 6.6.0 adds the `push-browser-check` gate (a UI push carries a
+browser check of its own tree, #305), the `secret-read` advice (#304) and the
+`home-fingerprint-drift` assertion (#306).
+
 - New advise-only assertion `home-fingerprint-drift`: PreToolUse takes a
   fingerprint (hashes only) of `~/.gitconfig`, the XDG git config, `~/.netrc`,
   `~/.ssh` (but `known_hosts*`), `~/.claude/settings*.json`, the Claude plugin
