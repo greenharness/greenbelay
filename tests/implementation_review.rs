@@ -3458,6 +3458,51 @@ fn pushed_at_a(w: &World, repo: &Path, profile_verdict: &str) -> String {
     tree
 }
 
+/// A programme ticket agent reviews and pushes its own work (ADR-0080): the
+/// implementation review and the declared profile's review live only in its
+/// side transcript, `<session>/subagents/*.jsonl`, and the session's main
+/// transcript holds none. The push passes, as one the main session reviewed.
+#[test]
+fn an_agent_of_the_session_reviews_and_pushes_its_own_tree() {
+    let w = World::new("side-transcript");
+    let repo = w.repo("app");
+    declare(&w, &repo, "- app: backend");
+    let tree = w.tree(&repo);
+    let mut side = Transcript::default();
+    side.review(
+        &w,
+        AGENT,
+        &w.block(&repo),
+        "Verdict: approve",
+        Done::Foreground,
+    );
+    side.profile_review(
+        &w,
+        "code-review-backend",
+        &profile_prompt(&w, &repo, "Profile: backend"),
+        "Verdict: approve",
+    );
+    let main = w.transcript("driver", &Transcript::default());
+
+    // Without the agent's transcript, nothing reviewed the tree.
+    assert_ne!(w.push(&repo, "s1", Some(&main)), Said::Silent);
+
+    let dir = w.root.join("driver/subagents");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("agent-a1.jsonl"), side.lines.join("\n") + "\n").unwrap();
+    assert_eq!(w.push(&repo, "s1", Some(&main)), Said::Silent);
+    assert!(
+        w.last_line()
+            .contains(" implementation-review unconfirmed reviewed "),
+        "{}",
+        w.last_line()
+    );
+    assert!(
+        w.pass_file("app", &tree).is_file(),
+        "the hook remembered the pass"
+    );
+}
+
 /// Whether the implementation review of B's tree is in the transcript.
 #[derive(Clone, Copy)]
 enum ImplementationReview {

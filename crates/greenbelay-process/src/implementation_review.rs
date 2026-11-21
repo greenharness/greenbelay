@@ -454,20 +454,38 @@ pub struct Review {
 
 /// The reviews of the session's side transcripts (`<session>/subagents/*.jsonl`:
 /// the agents it started, which run their own reviews), then of its main
-/// transcript. Side transcripts come first, so a caller that takes the last
-/// matching review prefers the main transcript's for the same tree. An
-/// unreadable main transcript is an error; an unreadable side transcript is
-/// skipped, since it is only more evidence.
+/// transcript. Side transcripts come first, oldest write first
+/// ([`side_transcripts_by_time`]), so a caller that takes the last matching
+/// review prefers the newest one and, for the same tree, the main
+/// transcript's. An unreadable main transcript is an error; an unreadable
+/// side transcript is skipped, since it is only more evidence.
 pub fn reviews(transcript: &Path) -> std::io::Result<Vec<Review>> {
     let main = std::fs::File::open(transcript)?;
     let mut out = Vec::new();
-    for side in crate::plan_review::side_transcripts(transcript) {
+    for side in side_transcripts_by_time(transcript) {
         if let Ok(file) = std::fs::File::open(&side) {
             out.extend(reviews_in(std::io::BufReader::new(file)));
         }
     }
     out.extend(reviews_in(std::io::BufReader::new(main)));
     Ok(out)
+}
+
+/// The session's side transcripts, oldest last write first, so that across
+/// agents the review written last comes last. A file whose time cannot be
+/// read sorts first, as the oldest; the sort is stable, so equal times keep
+/// the name order of [`crate::plan_review::side_transcripts`].
+fn side_transcripts_by_time(transcript: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<(Option<std::time::SystemTime>, PathBuf)> =
+        crate::plan_review::side_transcripts(transcript)
+            .into_iter()
+            .map(|file| {
+                let written = std::fs::metadata(&file).and_then(|m| m.modified()).ok();
+                (written, file)
+            })
+            .collect();
+    files.sort_by_key(|(written, _)| *written);
+    files.into_iter().map(|(_, file)| file).collect()
 }
 
 fn reviews_in(reader: impl std::io::BufRead) -> Vec<Review> {
@@ -790,12 +808,14 @@ pub struct ProfileReview {
 /// exactly one `Profile:` line naming that profile. The review blocks it binds
 /// are read from the same header. A resumed round inherits the profile of its
 /// launch and may omit the line; one that names another profile counts for
-/// nothing. Like [`reviews`], it reads the side transcripts first and the
-/// main transcript last, skipping an unreadable side transcript.
+/// nothing. Like [`reviews`], it reads the side transcripts first, oldest
+/// write first, and the main transcript last, skipping an unreadable side
+/// transcript. Each file is read on its own: a resumed round counts only in
+/// the transcript that holds its launch.
 pub fn profile_reviews(transcript: &Path) -> std::io::Result<Vec<ProfileReview>> {
     let main = std::fs::read(transcript)?;
     let mut out = Vec::new();
-    for side in crate::plan_review::side_transcripts(transcript) {
+    for side in side_transcripts_by_time(transcript) {
         if let Ok(bytes) = std::fs::read(&side) {
             out.extend(profile_reviews_in(&bytes));
         }
@@ -3048,7 +3068,45 @@ mod tests {
         // An unreadable main transcript is still an error.
         assert!(reviews(&root.join("p/missing.jsonl")).is_err());
         assert!(profile_reviews(&root.join("p/missing.jsonl")).is_err());
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&root); // this test's scratch: best effort
+    }
+
+    #[test]
+    fn across_agents_the_review_written_last_comes_last() {
+        // Two agents of one session reviewed the same tree. File names are
+        // agent ids, with no order in time: `b` approved first, `a` asked for
+        // rework later. The rework must be the last match, whatever the names.
+        let root = std::env::temp_dir().join(format!("greenbelay-ir-order-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root); // a leftover of an earlier run, or none
+        let tree = "b".repeat(64);
+        let prompt = format!("<<<TREE repo=greenbelay sha={tree}>>>\nRound 1.");
+        let side = root.join("p/abc/subagents");
+        std::fs::create_dir_all(&side).unwrap();
+        std::fs::write(root.join("p/abc.jsonl"), "").unwrap();
+        let write_at = |name: &str, result: &str, secs: u64| {
+            let file = side.join(name);
+            std::fs::write(
+                &file,
+                foreground(&format!("toolu_{name}"), AGENT, &prompt, result),
+            )
+            .unwrap();
+            let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+            std::fs::File::options()
+                .write(true)
+                .open(&file)
+                .unwrap()
+                .set_modified(at)
+                .unwrap();
+        };
+        write_at("b.jsonl", "Verdict: approve\n", 1_000);
+        write_at("a.jsonl", "Verdict: rework\n", 2_000);
+        let found = reviews(&root.join("p/abc.jsonl")).unwrap();
+        assert_eq!(
+            found.iter().map(|r| r.verdict).collect::<Vec<_>>(),
+            vec![Some(Verdict::Approve), Some(Verdict::Rework)],
+            "the later write is the last match"
+        );
+        let _ = std::fs::remove_dir_all(&root); // this test's scratch: best effort
     }
 
     fn reviews_of(text: &str) -> Vec<(String, Option<Verdict>)> {
