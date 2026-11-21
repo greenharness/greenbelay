@@ -1,0 +1,20 @@
+greengate-provenance-v1
+commit fd910c79a2fd5287134eacd997f36b72b9ca1a1e
+tree 439d5e7581922acaa3f28054a85b81e8ab946085
+canon ffcbee3858cc99008dc0d5f780a51651aa94e5d2
+patch 5f2604fa082a66ffd3ae701a6d9fc0df1f674203
+plan docs/plans/2026-11-20-home-fingerprint-warns.md 82dc2b7a3907a2ff39e10600c5745de95ead02588a4239aee7bf4050ebe43b4b
+review reviewed 0d28ad0e1a3c71f465ab622d34b923c77f3568e872146ad336920c5f0e0aeddd
+code-review backend carried 430a34161190a8e84ea3b63c92f0aa48d7a7a5f78e615af13b4a12934983d772
+code-review lang:rust carried 433b29adc6164b96fdc074a737d87c4d4e2e29b4392bb1407c40c75e6d82f6e4
+code-review unix carried 65a73c1147207d572dececefc2694d03819afe96a860375ffa708ab36c629eb8
+code-review tui reviewed 0d28ad0e1a3c71f465ab622d34b923c77f3568e872146ad336920c5f0e0aeddd
+preview not-required
+producer greenbelay 6.5.0
+
+-----BEGIN SSH SIGNATURE-----
+U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg7UOvJ8myo4dhW907VFty7T/bUV
+RFQerK+MWJ4bjChwcAAAAUZ3JlZW5nYXRlLXByb3ZlbmFuY2UAAAAAAAAABnNoYTUxMgAA
+AFMAAAALc3NoLWVkMjU1MTkAAABAhuiFcIZldtszTHBeZgNsYQA+od3uv7xEaRfx2982jN
+GDcRNg/FFJcSZlJ4smzguojU94BKmyuzQdMMedOaYPBQ==
+-----END SSH SIGNATURE-----
