@@ -88,13 +88,14 @@ greenbelay's `tools/read-rate.py` are the first two users.
 - `canonical(recipe)` is `json.dumps(sort_keys=True,
   separators=(",", ":"), ensure_ascii=False)`; `fingerprint(recipe)` is
   `sha256:<hex>` of its UTF-8 bytes.
-- `check(path, recipe, coverage, rebaseline=False)`:
+- `check(path, recipe, coverage)`, and `rebaseline(path, recipe, coverage)`
+  for the accepting case (no flag argument):
   - no file: writes `{"fingerprint", "recipe", "runs": [run 1], "rebaselines": []}`
     as the baseline;
   - same fingerprint: appends `{"at", "coverage"}` to `runs`;
-  - different and no `rebaseline`: raises `Refused`, whose message names
+  - different, through `check`: raises `RecipeRefused`, whose message names
     the changed recipe keys with old → new values, then the sidecar path and the exact command to accept it (the same argv plus `--rebaseline`). Nothing is written;
-  - different with `rebaseline`: appends `{"at", "from": {fp, recipe},
+  - different, through `rebaseline`: appends `{"at", "from": {fp, recipe},
     "to": {fp, recipe}}` to `rebaselines`, makes the new recipe the
     baseline, appends the run.
   - writes go through `tempfile.mkstemp` in the sidecar's directory, then
@@ -113,12 +114,12 @@ greenbelay's `tools/read-rate.py` are the first two users.
 - before `check` or `compare` trusts a sidecar, its stored fingerprint
   must equal `fingerprint(recipe)`; a mismatch is corruption, exit 1, even
   with `--rebaseline`.
-- `compare(paths, rebaseline=False)` reads several stamps: one
-  fingerprint passes; mixed fingerprints raise `Refused` naming each
+- `compare(paths)` reads several stamps: one
+  fingerprint passes; mixed fingerprints raise `StampsRefused` naming each
   fingerprint, its files and the changed recipe keys (within 80 columns:
   fingerprints cut to 12 hex, one file per line, long values as indented
-  `was:`/`now:` lines), unless `rebaseline`,
-  which lets them through and prints each group's fingerprint, files and
+  `was:`/`now:` lines); `group_stamps(paths)` never refuses, and
+  `compare --rebaseline` uses it and prints each group's fingerprint, files and
   full recipe on stdout, so both recipes are on record.
 - CLI: `measure_fingerprint.py compare FILE... [--rebaseline]` exits 0;
   3 on a refusal with the message on stderr; 2 on a usage error (no files

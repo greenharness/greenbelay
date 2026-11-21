@@ -188,10 +188,10 @@ def _fit(line: str) -> str:
     return line[: WIDTH - 1] + "…"
 
 
-def _show(value) -> str:
-    if isinstance(value, str):
-        return value
-    return json.dumps(value, sort_keys=True, ensure_ascii=False)
+def _show(recipe_part) -> str:
+    if isinstance(recipe_part, str):
+        return recipe_part
+    return json.dumps(recipe_part, sort_keys=True, ensure_ascii=False)
 
 
 def _change_lines(key, old, new):
@@ -212,17 +212,19 @@ def blob_id(data: bytes) -> str:
     return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
 
-def _plain(value):
-    if isinstance(value, (set, frozenset)):
-        items = [_plain(item) for item in value]
+def _plain(json_part):
+    """`json_part` (a recipe or coverage, or a piece of one) as plain JSON:
+    sets become sorted lists, tuples lists; anything else non-JSON raises."""
+    if isinstance(json_part, (set, frozenset)):
+        items = [_plain(item) for item in json_part]
         return sorted(items, key=lambda item: json.dumps(item, sort_keys=True))
-    if isinstance(value, dict):
-        return {str(key): _plain(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_plain(item) for item in value]
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    raise TypeError(f"recipe or coverage value is not JSON: {type(value).__name__}")
+    if isinstance(json_part, dict):
+        return {str(key): _plain(item) for key, item in json_part.items()}
+    if isinstance(json_part, (list, tuple)):
+        return [_plain(item) for item in json_part]
+    if json_part is None or isinstance(json_part, (str, int, float, bool)):
+        return json_part
+    raise TypeError(f"recipe or coverage value is not JSON: {type(json_part).__name__}")
 
 
 def recipe(script, tool_version: str, source: str, schema: str, filters: dict,
@@ -381,7 +383,17 @@ class _Locked:
         return False
 
 
-def _record(path, recipe_dict, coverage, now, accept_change):
+def _refuse_change(changes, path, old_fp, new_fp):
+    raise RecipeRefused(changes, path, old_fp, new_fp)
+
+
+def _accept_change(changes, path, old_fp, new_fp):
+    return None  # `rebaseline`: the change is recorded below, both recipes kept
+
+
+def _record(path, recipe_dict, coverage, now, on_change):
+    """The shared body of `check` and `rebaseline`; `on_change` raises to
+    refuse a changed recipe, or returns to accept it."""
     path = str(path)
     recipe_dict = _plain(recipe_dict)
     coverage = _plain(coverage)
@@ -400,8 +412,7 @@ def _record(path, recipe_dict, coverage, now, accept_change):
             _write_atomic(path, doc)
             return Recorded(path, len(doc["runs"]))
         changes = _changes(doc["recipe"], recipe_dict)
-        if not accept_change:
-            raise RecipeRefused(changes, path, doc["fingerprint"], new_fp)
+        on_change(changes, path, doc["fingerprint"], new_fp)
         doc["rebaselines"].append(
             {
                 "at": stamp_time,
@@ -419,13 +430,13 @@ def _record(path, recipe_dict, coverage, now, accept_change):
 def check(path, recipe_dict: dict, coverage: dict, now: str | None = None):
     """Record a run against `path`'s baseline: Baseline or Recorded. A changed
     recipe raises RecipeRefused and writes nothing."""
-    return _record(path, recipe_dict, coverage, now, accept_change=False)
+    return _record(path, recipe_dict, coverage, now, _refuse_change)
 
 
 def rebaseline(path, recipe_dict: dict, coverage: dict, now: str | None = None):
     """As `check`, but a changed recipe is accepted: both recipes are kept in
     `rebaselines` and Rebaselined is returned."""
-    return _record(path, recipe_dict, coverage, now, accept_change=True)
+    return _record(path, recipe_dict, coverage, now, _accept_change)
 
 
 def stamp(path, recipe_dict: dict, coverage: dict, now: str | None = None) -> None:
