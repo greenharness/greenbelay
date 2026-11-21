@@ -193,20 +193,20 @@ t09's daily recount (`~/.local/state/t09-recount/`, outside any repo):
 
 ## Phases
 
-- [ ] Phase 1 — the helper and its self-test, routed through relais:
+- [x] Phase 1 — the helper and its self-test, routed through relais:
   `tools/measure_fingerprint.py`, `tests/measure_fingerprint.rs`
-- [ ] Phase 2 — same PR as Phase 1: read-rate writes and checks a
+- [x] Phase 2 — same PR as Phase 1: read-rate writes and checks a
   fingerprint, plus the measuring doc: `tools/read-rate.py` (docstring gains exit 3),
   `docs/measuring.md`, `CHANGELOG.md`, and a fixture-transcript case in
   `tests/measure_fingerprint.rs` (baseline, then `--threshold 8192`: exit 3,
   `threshold` on stderr, empty stdout, sidecar bytes unchanged)
-- [ ] Phase 3 — t09 by hand, outside any repo: pin the helper and wire
+- [x] Phase 3 — t09 by hand, outside any repo: pin the helper and wire
   `daily.py`, backfill the stamps: `~/.local/state/t09-recount/daily.py`,
   `~/.local/state/t09-recount/measure_fingerprint.py`
-- [ ] Phase 4 — decisions note: the fingerprint file and its refusal in
+- [x] Phase 4 — decisions note: the fingerprint file and its refusal in
   `docs/programmes/session-boundaries/t09-recount.md` (Window and
   capture), one small docs PR
-- [ ] Phase 5 — close blue-factory t19: Resolution, map Handoff
+- [x] Phase 5 — close blue-factory t19: Resolution, map Handoff
   (`docs/programmes/blue-factory/t19-measure-fingerprint-helper.md`,
   `docs/programmes/blue-factory/map.md`)
 
@@ -216,20 +216,50 @@ t09's daily recount (`~/.local/state/t09-recount/`, outside any repo):
 
 ## Verification
 
-| Check | Input | Expected |
-| --- | --- | --- |
-| self-test | `python3 -I tools/measure_fingerprint.py --self-test` | exit 0 |
-| Rust test | `cargo test --test measure_fingerprint` (`python3 -I`, never a bare `python`) | pass |
-| read-rate baseline | `read-rate.py --fingerprint $T/rr.json` | table, file written |
-| read-rate same | same command again | table, 2 runs |
-| refused | `--fingerprint $T/rr.json --threshold 8192` | exit 3, `threshold: 16384 → 8192`, no table, file unchanged |
-| rebaseline | same + `--rebaseline` | table, 1 rebaseline entry with both |
-| compare refused | `measure_fingerprint.py compare a.json b.json` (two recipes) | exit 3, changed keys named, lines ≤ 80 columns |
-| corrupt sidecar | `--fingerprint $T/bad.json` holding `{` | exit 1, file named, no traceback |
-| t09 launchd argv | scratch copy, one day file removed: `/usr/local/bin/python3 -I daily.py` | day recounted, `.txt` + `.fp.json` written |
-| t09 sum | `/usr/local/bin/python3 -I daily.py --sum` on the live dir | totals equal the hand sum of the day `.txt` files (14..18: 8 in 15,544), late days named |
-| t09 refused | scratch copy, one stamp's recipe changed and its fingerprint recomputed, `--sum` | exit 3, `script` named; with `--rebaseline` totals print |
-| t09 never refused | scratch copy, `count-context.py` edited, one day file removed, launchd argv | `.txt` and a stamp with the new fingerprint written, exit 0 |
-| t09 live | next scheduled run after the swap | `launchd.log` ran line, new day stamped |
+Observed 2026-11-21. `$F` is a frozen copy of 40 transcripts (live ones keep
+growing, so two scans of `~/.claude/projects` never match); t09 checks ran
+in scratch copies of `~/.local/state/t09-recount`, then live.
+
+| Check | Input | Expected | Actual |
+| --- | --- | --- | --- |
+| self-test | `python3 -I tools/measure_fingerprint.py --self-test` | exit 0 | exit 0 |
+| Rust test | `cargo test --test measure_fingerprint` (`python3 -I`) | pass | 3 passed |
+| unchanged without flag | old and new `read-rate.py --root $F` | same bytes | `cmp` equal |
+| read-rate baseline | `--root $F --fingerprint S` | table, file written | exit 0, `baseline written` |
+| read-rate same | same command again | table, 2 runs | exit 0, `run 2 recorded` |
+| refused | `--fingerprint S --threshold 8192` | exit 3, `threshold: 16384 → 8192`, no table, file unchanged | exit 3, `filters.threshold: 16384 → 8192`, no table, sha unchanged, accept command printed |
+| rebaseline | same + `--rebaseline` | table, 1 rebaseline entry with both | exit 0, runs 3, rebaselines 1 |
+| compare refused | `compare a.json b.json` (two recipes) | exit 3, changed keys named, ≤ 80 columns | self-test: exit 3, keys named, lines ≤ 80 bar whole file names |
+| corrupt sidecar | `--fingerprint bad.json` holding `{` | exit 1, file named, no traceback | exit 1, `is not JSON`, one line |
+| t09 backfill + sum | launchd argv, then `--sum`, live | totals equal the hand sum | 7 stamped; 8 in 29,641 (hand sum 8 in 29,641; 14..18: 8 in 15,544), late days named |
+| t09 refused | one stamp's script blob changed, fingerprint recomputed, `--sum` | exit 3, `script` named; `--rebaseline` prints totals | exit 3, `script` was/now; with `--rebaseline` exit 0, totals |
+| t09 corrupt stamp | recipe edited, fingerprint not, `--sum --rebaseline` | exit 1 | exit 1, `stored fingerprint does not match its recipe` |
+| t09 unpaired day | one `.fp.json` removed, `--sum`; capture; `--sum` | exit 1, then repaired | exit 1 naming the day and `daily.py`; `stamped`; exit 0 |
+| t09 missing day | one day's `.txt` and stamp removed, `--sum` | exit 1 | exit 1, `not counted (no .txt, no stamp)` |
+| t09 never refused | counter edited, one day removed, launchd argv | `.txt` and a stamp with the new fingerprint | day counted and stamped; `--sum` then refuses on `script` |
+| t09 stamp failure | the stamp's lock path a directory, one day removed, capture | `.txt` lands, error in `.err`, next run stamps | `.txt` landed, `stamp failed` in `.err`, `--sum` exit 1, next run `stamped`, `--sum` exit 0 |
+| t09 live | `launchctl kickstart` of the job after the swap | ran line, exit 0 | `ran 2026-11-21T09:30:01`, last exit code 0 |
+
+## Decision log
+
+- relais ran Phases 1–2 (run-660c47b928e3f-424); its verify
+  (run-660c4f65cb1ea-18160) failed on the `quiet` test step, which passed
+  30/30 but took 1,207 s on a jammed host. The kept candidate was applied by
+  hand and checked here.
+- Fixed by hand after it: a refusal named a changed dict only as `filters`
+  and cut both values, so the change was invisible; `_changes` now walks
+  dicts (`filters.threshold`). Paths in a refusal (sidecar, stamp names) are
+  never cut. The Rust test asserts the changed value, not `--threshold` in
+  the accept command.
+- A second session (0f2c38ac) was started on t19 by the same clear-relay
+  prompt and worked in this worktree; the person chose this session. Its
+  `accept_command` default from `sys.orig_argv` (keeps `-I`) is kept.
+- deliberate: a stamp's `at` is when the stamp was written; when a day was
+  counted is `coverage.counted_at` (null for 11-14..18, with `counted_on`
+  and `late_reason`). `stamp()` has no way to write a null `at`, and this
+  keeps a capture time from ever being invented.
+- `daily.py --sum` also refuses a window day with neither file (a failed
+  count): scratch showed it summed 6 days silently.
+- `daily.py.prev` stays beside the live one until t09 resolves.
 
 <!-- panel: repos=greenbelay,decisions,blue-factory reviewers=backend,lang:python,lang:rust,tui,unix,codex body-sha=b107e8d201f8 -->
