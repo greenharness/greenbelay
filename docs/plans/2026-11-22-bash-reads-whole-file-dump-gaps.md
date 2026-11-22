@@ -89,7 +89,7 @@ relais-review: Read/Grep/Glob/LSP only), so no reviewer exemption is needed.
     regardless, because it is a bug.
   - Record the numbers in the rule's `Evidence` and in this plan's outcome section.
 
-- **Phase 1: (a) judge every dump in a command**
+- **Phase 1: (a) judge every dump in a command** ✅ done 2026-11-22 (relais run-660e3c923aee7-12ead, verified by run-660e456e5476e-5f97)
   Files: `crates/greenbelay-guard/src/rules/whole_file_dump.rs`, `src/hook.rs`, `tests/hook.rs`.
 
 
@@ -194,6 +194,18 @@ dump classes), results over 8 KiB, calls/bytes:
 
 (a) is bounded by about 0.55 MB attributable and 2 MB in all over 13 days, mostly in subagents. (b)
 is about 80 KB, so it is dropped.
+
+### Verification record (Phase 1)
+
+| input | expected | actual |
+|---|---|---|
+| `cargo test --workspace` (relais verify, amont cargo-test) | pass | pass, 718 s |
+| clippy `-D warnings`, `cargo fmt --check` | clean | clean |
+| `greenbelay check 'cat small.md && cat big.rs'` (1 KB + 20 KB) | refuses, names both files and the total | deny: `small.md` (1 KB), `big.rs` (20 KB), "Together 21 KB"; the remedy names `big.rs` |
+| `greenbelay check 'cat a.txt b.txt c.txt'` (4 KB each) | refuses on the sum | deny, "Together 12 KB" |
+| `greenbelay check 'cat big.rs \|\| true'` | refuses on `big.rs` | deny |
+| `greenbelay check 'cat a.txt \|\| cat b.txt'` (4 KB each) | at most advises | silent: each file is under the 4 KiB small floor |
+| repeat passes, subset retry passes, one journal outcome per command | as specified | covered by the new `tests/hook.rs` cases (`at_deny_the_whole_dumps_of_a_command_are_summed`, `at_deny_a_subset_retry_passes`) |
 
 ## Delivery
 

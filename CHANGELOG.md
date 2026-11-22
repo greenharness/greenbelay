@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `whole-file-dump` judges every whole dump in a Bash command, not only the
+  first: the refusal fires when the regular, non-exempt files it dumps
+  (`cat small && cat big`, `cat a b c`) add up to over 8 KiB. The right of
+  `||` is not charged, and a missing operand, a FIFO or a plan, diff or
+  persisted-output file is left out of the sum. The refusal is made once per
+  set of paths, with one told key per path, so repeating the command or a
+  subset of it passes; the journal has one outcome per command. The sentence
+  that promises the repeat now reads "If you need this output in the result,
+  repeat this same command unchanged".
 - `greenbelay output-audit` also breaks Bash file dumps (the `cat`/`sed -n`/
   `head`/`tail` reads `whole-file-dump` judges, read with its own parser) down
   by class: `whole-one`, `whole-many`, `window`, `window-many`, `mixed`, each

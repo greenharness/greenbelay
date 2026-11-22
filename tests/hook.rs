@@ -4276,6 +4276,142 @@ fn at_deny_only_a_large_whole_dump_is_refused() {
     assert_eq!(pipe.stdout, "", "a pipe is not a dump");
 }
 
+/// A file of `bytes` bytes named `name` in the fixture's directory.
+fn dump_file(fixture: &ReadFixture, name: &str, bytes: usize) {
+    let path = fixture.dir.join(name);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("a directory");
+    }
+    std::fs::write(path, "y".repeat(bytes)).expect("a file");
+}
+
+fn denied(reply: &Reply) -> bool {
+    reply.decision().as_deref() == Some("deny")
+}
+
+/// Every whole dump in a command is judged, and the sum of the regular files
+/// decides: a small file beside a big one, or several small ones, are refused
+/// once, with a told key per path.
+#[test]
+fn at_deny_the_whole_dumps_of_a_command_are_summed() {
+    let fixture = ReadFixture::with_size("dump-sum", 20_000);
+    dump_file(&fixture, "small.md", 1_000);
+    let first = dump_as(&fixture, "dsum-01", None, "cat small.md && cat big.rs");
+    assert!(denied(&first), "{}", first.stdout);
+    let said = first.reason();
+    assert!(said.contains("big.rs"), "{said}");
+    assert!(said.contains("Together 21 KB"), "names the total: {said}");
+    assert!(
+        said.contains("If you need this output in the result, repeat"),
+        "{said}"
+    );
+    let remedy = said.split("Together").last().unwrap();
+    assert!(!remedy.contains("small.md"), "{said}");
+    assert_eq!(
+        dump_as(&fixture, "dsum-01", None, "cat small.md && cat big.rs").stdout,
+        "",
+        "the repeat passes"
+    );
+
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        dump_file(&fixture, name, 4_000);
+    }
+    let three = dump_as(&fixture, "dsum-02", None, "cat a.txt b.txt c.txt");
+    assert!(denied(&three), "{}", three.stdout);
+    assert_eq!(
+        dump_as(&fixture, "dsum-02", None, "cat a.txt b.txt c.txt").stdout,
+        ""
+    );
+    let journal = std::fs::read_to_string(home().join("greenbelay").join("journal.log"))
+        .expect("the hook wrote a journal");
+    let allowed = journal
+        .lines()
+        .filter(|l| l.contains("dsum-02") && l.contains("allowed-after-feedback"))
+        .count();
+    assert_eq!(allowed, 1, "one outcome per command: {journal}");
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        let alone = dump_as(&fixture, "dsum-02", None, &format!("cat {name}"));
+        assert!(!denied(&alone), "{name} was told: {}", alone.stdout);
+    }
+}
+
+/// A retry naming a subset of the refused files passes: each path is told.
+#[test]
+fn at_deny_a_subset_retry_passes() {
+    let fixture = ReadFixture::with_size("dump-subset", 20_000);
+    dump_file(&fixture, "small.md", 1_000);
+    assert!(denied(&dump_as(
+        &fixture,
+        "dsub-01",
+        None,
+        "cat big.rs small.md"
+    )));
+    let retry = dump_as(&fixture, "dsub-01", None, "cat big.rs");
+    assert!(!denied(&retry), "{}", retry.stdout);
+}
+
+/// Plans are a deliberate whole read: they only advise, and are left out of
+/// the sum.
+#[test]
+fn at_deny_an_exempt_plan_only_advises() {
+    let fixture = ReadFixture::with_size("dump-plan", 6_000);
+    dump_file(&fixture, "docs/plans/p.md", 20_000);
+    let plan = dump_as(&fixture, "dplan-01", None, "cat docs/plans/p.md");
+    assert!(!denied(&plan), "{}", plan.stdout);
+    assert!(plan.reason().contains("whole-file-dump"), "{}", plan.stdout);
+    let mixed = dump_as(&fixture, "dplan-02", None, "cat docs/plans/p.md big.rs");
+    assert!(!denied(&mixed), "6 KB of the sum: {}", mixed.stdout);
+}
+
+/// A FIFO is never opened, and is not part of the sum; a missing operand is
+/// skipped and the rest summed.
+#[cfg(unix)]
+#[test]
+fn at_deny_a_fifo_and_a_missing_operand_are_left_out() {
+    let fixture = ReadFixture::with_size("dump-fifo", 20_000);
+    dump_file(&fixture, "small.md", 6_000);
+    let made = std::process::Command::new("mkfifo")
+        .arg(fixture.dir.join("pipe"))
+        .status()
+        .expect("mkfifo");
+    assert!(made.success());
+    let advised = dump_as(&fixture, "dfifo-01", None, "cat pipe small.md");
+    assert!(!denied(&advised), "{}", advised.stdout);
+    assert!(
+        advised.reason().contains("whole-file-dump"),
+        "{}",
+        advised.stdout
+    );
+    let refused = dump_as(&fixture, "dfifo-02", None, "cat pipe big.rs");
+    assert!(denied(&refused), "{}", refused.stdout);
+    let missing = dump_as(&fixture, "dfifo-03", None, "cat gone.md big.rs");
+    assert!(denied(&missing), "{}", missing.stdout);
+}
+
+/// The right of `||` may print but is not charged; its left always runs.
+#[test]
+fn at_deny_the_right_of_an_or_is_not_charged() {
+    let fixture = ReadFixture::with_size("dump-or", 20_000);
+    dump_file(&fixture, "a.txt", 5_000);
+    dump_file(&fixture, "b.txt", 5_000);
+    let either = dump_as(&fixture, "dor-01", None, "cat a.txt || cat b.txt");
+    assert!(!denied(&either), "{}", either.stdout);
+    assert!(
+        either.reason().contains("whole-file-dump"),
+        "{}",
+        either.stdout
+    );
+    let fallback = dump_as(&fixture, "dor-02", None, "cat big.rs || true");
+    assert!(denied(&fallback), "{}", fallback.stdout);
+    dump_file(&fixture, "aa", 5_000);
+    dump_file(&fixture, "bb", 5_000);
+    let sum = dump_as(&fixture, "dor-03", None, "cat aa missing || cat bb");
+    assert!(!denied(&sum), "bb is not charged: {}", sum.stdout);
+    dump_file(&fixture, "aa", 9_000);
+    let over = dump_as(&fixture, "dor-04", None, "cat aa missing || cat bb");
+    assert!(denied(&over), "aa alone is over: {}", over.stdout);
+}
+
 // screenshot-in-main-session
 
 const SCREENSHOT_ADVICE: &str = "greenbelay/screenshot-in-main-session: a screenshot here puts \

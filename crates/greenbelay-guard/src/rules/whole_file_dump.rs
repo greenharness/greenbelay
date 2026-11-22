@@ -17,9 +17,10 @@
 //! a whole dump of anything over 4 KB, or a bounded read of a hundred lines
 //! or more, is what this rule is about; a `cat` of a 300-byte config is not.
 
-use crate::rules::dump::{dumps, Extent};
+use crate::rules::dump::{dumps, Dump, Extent};
 use crate::rules::{Confirmed, Context, Evidence, Examine, Finding, Rule, Stance, Trend};
 use crate::shell::Parsed;
+use std::path::{Path, PathBuf};
 
 pub const RULE: Rule = Rule {
     id: "whole-file-dump",
@@ -43,117 +44,294 @@ const SMALL: u64 = 4096;
 /// A bounded read this long is a dump with extra steps.
 const MANY_LINES: u64 = 100;
 
-fn examine(parsed: &Parsed) -> Option<Finding> {
-    let all = dumps(parsed);
-    let d = all.iter().find(|d| match d.extent {
-        Extent::Whole => true,
+/// Whether a dump is what this rule is about; `len` is the file's size when
+/// it is known, and a whole dump of an unknown size counts.
+fn qualifies(extent: Extent, len: Option<u64>) -> bool {
+    match extent {
+        Extent::Whole => len.is_none_or(|len| len >= SMALL),
         Extent::Lines(n) => n >= MANY_LINES,
         Extent::Bytes(n) => n >= 2 * SMALL,
-    })?;
+    }
+}
+
+fn pour_reason(path: &str) -> String {
+    format!(
+        "`{path}` is poured whole into the tool result: no line numbers, no size cap, and \
+         every later turn of this session carries it again. Files opened this way were \
+         31% of all tool-result bytes measured."
+    )
+}
+
+fn pour_remedy(path: &str) -> String {
+    format!(
+        "Open it with the Read tool, with `offset`/`limit` around the part you need — \
+         `grep -n '<anchor>' {path} | head` finds the line first. `cat` is fine inside a pipe \
+         or a heredoc."
+    )
+}
+
+fn examine(parsed: &Parsed) -> Option<Finding> {
+    let all = dumps(parsed);
+    let mut shape = all.iter().filter(|d| qualifies(d.extent, None));
+    let first = shape.next()?;
+    let last = shape.next_back().unwrap_or(first);
     Some(Finding {
-        reason: format!(
-            "`{}` is poured whole into the tool result: no line numbers, no size cap, and \
-             every later turn of this session carries it again. Files opened this way were \
-             31% of all tool-result bytes measured.",
-            d.path
-        ),
-        remedy: format!(
-            "Open it with the Read tool, with `offset`/`limit` around the part you need — \
-             `grep -n '<anchor>' {} | head` finds the line first. `cat` is fine inside a pipe \
-             or a heredoc.",
-            d.path
-        ),
-        span: d.at..d.end,
+        reason: pour_reason(&first.path),
+        remedy: pour_remedy(&first.path),
+        span: first.at..last.end,
     })
 }
 
-/// Past this a whole dump may be refused (once: the hook lets the same
-/// command through when it is repeated); a smaller one, or a bounded read,
-/// only ever advises. The same threshold as `read-unbounded-large`, measured
-/// for the Read tool's whole reads (deliberate-output plan, Phase 3).
+/// Past this the whole dumps of a command may be refused (once: the hook lets
+/// the same command through when it is repeated); a smaller total, or a
+/// bounded read, only ever advises. The same threshold as
+/// `read-unbounded-large`, measured for the Read tool's whole reads
+/// (deliberate-output plan, Phase 3).
 pub const REFUSABLE: u64 = 8 * 1024;
 
-/// The file a finding dumps: where it is, resolved against the directory its
-/// clause runs in, the path as the command wrote it, and how much is read.
-pub struct Target {
-    pub path: std::path::PathBuf,
-    pub shown: String,
-    pub extent: Extent,
-}
-
-/// The [`Target`] of `finding`. Fails when the command no longer holds that
-/// dump, or a `~/` path has no `HOME` to expand against.
-pub fn target(context: &Context, finding: &Finding) -> Result<Target, &'static str> {
-    let cwd = context.cwd_at(finding.span.start);
-    let all = dumps(context.parsed);
-    let Some(dump) = all.into_iter().find(|d| d.at == finding.span.start) else {
-        return Err("the command no longer matches");
-    };
-    let path = if dump.path.starts_with('/') {
-        std::path::PathBuf::from(&dump.path)
+/// The file a dump names: where it is, resolved against `cwd` (the directory
+/// its clause runs in). `None` when a `~/` path has no `HOME` to expand against.
+pub fn resolve(cwd: &Path, dump: &Dump) -> Option<PathBuf> {
+    if dump.path.starts_with('/') {
+        Some(PathBuf::from(&dump.path))
     } else if let Some(rest) = dump.path.strip_prefix("~/") {
-        match std::env::var_os("HOME") {
-            Some(home) => std::path::PathBuf::from(home).join(rest),
-            None => return Err("no home to expand `~` against"),
-        }
+        std::env::var_os("HOME").map(|home| PathBuf::from(home).join(rest))
     } else {
-        cwd.join(&dump.path)
-    };
-    Ok(Target {
-        path,
-        shown: dump.path,
-        extent: dump.extent,
-    })
-}
-
-/// Whether a dump may be refused: a whole read of a regular file over
-/// [`REFUSABLE`]: `regular_len` is its size when it is a regular file,
-/// `None` for a FIFO, a device or a directory. Anything else is held at
-/// advise, whatever the stance.
-fn refusable(extent: Extent, regular_len: Option<u64>) -> bool {
-    matches!(extent, Extent::Whole) && regular_len.is_some_and(|len| len > REFUSABLE)
-}
-
-fn confirm(ctx: &Context, f: &Finding) -> Confirmed {
-    let Target {
-        path,
-        shown,
-        extent,
-    } = match target(ctx, f) {
-        Ok(found) => found,
-        Err(why) => return Confirmed::No(why),
-    };
-    let Ok(meta) = std::fs::metadata(&path) else {
-        return Confirmed::No("the file is not there to read");
-    };
-    if matches!(extent, Extent::Whole) && meta.len() < SMALL {
-        return Confirmed::No("the file is small");
+        Some(cwd.join(&dump.path))
     }
-    let may_refuse = refusable(extent, meta.is_file().then_some(meta.len()));
-    // A dump that may be refused says why this one and not a smaller one.
-    let reason = if may_refuse {
-        format!(
+}
+
+/// A file the refusal is bound to: where it is, and the directory its clause
+/// runs in.
+#[derive(Debug, Clone)]
+pub struct Refusal {
+    pub path: PathBuf,
+    pub cwd: PathBuf,
+}
+
+/// A dump whose file is there to be looked at.
+struct Seen {
+    shown: String,
+    path: PathBuf,
+    cwd: PathBuf,
+    extent: Extent,
+    len: u64,
+    /// A regular file: a FIFO, a device or a directory is never counted, and
+    /// never opened.
+    regular: bool,
+    exempt: bool,
+    /// On the right of `||`: it may print, but is not certain to.
+    alternative: bool,
+}
+
+impl Seen {
+    fn charged(&self) -> bool {
+        matches!(self.extent, Extent::Whole) && self.regular && !self.exempt && !self.alternative
+    }
+}
+
+/// Files a refusal is not made for: plans, diffs and patches, and persisted
+/// tool output. Media is not exempt here, as it is for Read: `cat x.png` pours
+/// raw bytes into the context.
+fn exempt(path: &Path) -> bool {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ext.eq_ignore_ascii_case("diff") || ext.eq_ignore_ascii_case("patch") {
+        return true;
+    }
+    let parts: Vec<_> = path.components().map(|c| c.as_os_str()).collect();
+    if parts
+        .windows(2)
+        .any(|w| w[1] == "plans" && (w[0] == ".claude" || w[0] == "docs"))
+    {
+        return true;
+    }
+    crate::rules::persisted_output_dump::is_persisted(&path.to_string_lossy())
+}
+
+/// The byte spans of every command on the right of a `||`.
+fn alternatives(src: &str) -> Vec<std::ops::Range<usize>> {
+    use crate::analysis::ir::{AndOrOp, Cmd};
+    fn walk(cmd: &Cmd, out: &mut Vec<std::ops::Range<usize>>) {
+        match cmd {
+            Cmd::AndOr { first, rest, .. } => {
+                walk(first, out);
+                for (op, next) in rest {
+                    if *op == AndOrOp::Or {
+                        out.push(next.span());
+                    }
+                    walk(next, out);
+                }
+            }
+            Cmd::Seq { items, .. } => items.iter().for_each(|i| walk(&i.cmd, out)),
+            Cmd::Pipeline { cmds, .. } => cmds.iter().for_each(|c| walk(c, out)),
+            Cmd::If {
+                arms, otherwise, ..
+            } => {
+                for (c, b) in arms {
+                    walk(c, out);
+                    walk(b, out);
+                }
+                if let Some(o) = otherwise {
+                    walk(o, out);
+                }
+            }
+            Cmd::Case { arms, .. } => arms.iter().for_each(|a| walk(&a.body, out)),
+            Cmd::For { body, .. }
+            | Cmd::ArithFor { body, .. }
+            | Cmd::Group { body, .. }
+            | Cmd::Subshell { body, .. }
+            | Cmd::FuncDef { body, .. }
+            | Cmd::Redirected { body, .. } => walk(body, out),
+            Cmd::Loop { cond, body, .. } => {
+                walk(cond, out);
+                walk(body, out);
+            }
+            Cmd::Simple(_) | Cmd::Arith { .. } | Cmd::Cond { .. } | Cmd::Unsupported { .. } => {}
+        }
+    }
+    let mut out = Vec::new();
+    if let Ok(cmd) = crate::analysis::frontend::parse(src) {
+        walk(&cmd, &mut out);
+    }
+    out
+}
+
+/// Every dump of the command whose file is there, looked at with `stat` alone.
+fn seen(ctx: &Context) -> Vec<Seen> {
+    let alternative_spans = alternatives(ctx.command);
+    dumps(ctx.parsed)
+        .into_iter()
+        .filter_map(|dump| {
+            let cwd = ctx.cwd_at(dump.at);
+            let path = resolve(&cwd, &dump)?;
+            let meta = std::fs::metadata(&path).ok()?;
+            Some(Seen {
+                alternative: alternative_spans
+                    .iter()
+                    .any(|span| dump.at < span.end && span.start < dump.end),
+                exempt: exempt(&path),
+                regular: meta.is_file(),
+                len: meta.len(),
+                extent: dump.extent,
+                shown: dump.path,
+                path,
+                cwd,
+            })
+        })
+        .collect()
+}
+
+enum Verdict {
+    /// The whole dumps of regular files, together over [`REFUSABLE`].
+    Refuse(Vec<Seen>),
+    Advise(Seen),
+    Silent(&'static str),
+}
+
+fn judge(ctx: &Context) -> Verdict {
+    let mut all = seen(ctx);
+    if all.is_empty() {
+        return Verdict::Silent("the file is not there to read");
+    }
+    let total: u64 = all.iter().filter(|s| s.charged()).map(|s| s.len).sum();
+    if total > REFUSABLE {
+        all.retain(Seen::charged);
+        return Verdict::Refuse(all);
+    }
+    match all.into_iter().find(|s| qualifies(s.extent, Some(s.len))) {
+        Some(advised) => Verdict::Advise(advised),
+        None => Verdict::Silent("the file is small"),
+    }
+}
+
+/// The files `confirm` refused, for the hook to bind the refuse-once telling
+/// to: empty when the command is not refused.
+pub fn refused(ctx: &Context) -> Vec<Refusal> {
+    match judge(ctx) {
+        Verdict::Refuse(files) => files
+            .into_iter()
+            .map(|s| Refusal {
+                path: s.path,
+                cwd: s.cwd,
+            })
+            .collect(),
+        Verdict::Advise(_) | Verdict::Silent(_) => Vec::new(),
+    }
+}
+
+/// The most files a reason lists by name.
+const LISTED: usize = 5;
+
+fn kilobytes(len: u64) -> u64 {
+    len.div_ceil(1024)
+}
+
+fn refusal_reason(files: &[Seen]) -> String {
+    let total: u64 = files.iter().map(|s| s.len).sum();
+    if let [only] = files {
+        return format!(
             "{} It is {} KB, over the 8 KB past which a whole dump is refused.",
-            f.reason,
-            meta.len().div_ceil(1024)
-        )
-    } else {
-        f.reason.clone()
-    };
+            pour_reason(&only.shown),
+            kilobytes(only.len)
+        );
+    }
+    let mut listed: Vec<String> = files
+        .iter()
+        .take(LISTED)
+        .map(|s| format!("`{}` ({} KB)", s.shown, kilobytes(s.len)))
+        .collect();
+    if files.len() > LISTED {
+        listed.push(format!("and {} more", files.len() - LISTED));
+    }
+    format!(
+        "This command pours whole files into the tool result: {}. Together {} KB, over the \
+         8 KB past which whole dumps are refused: no line numbers, no size cap, and every \
+         later turn of this session carries them again.",
+        listed.join(", "),
+        kilobytes(total)
+    )
+}
+
+fn remedy_for(shown: &str, path: &Path) -> String {
     // Code LSP answers for is found with LSP, not with the grep this
     // rule's remedy names for any other file.
-    let remedy = (crate::lsp::is_code(&shown) && crate::lsp::serves(&path).is_ok()).then(|| {
+    if crate::lsp::is_code(shown) && crate::lsp::serves(path).is_ok() {
         "Ask LSP first (`documentSymbol`, `goToDefinition`), then open the file with \
          the Read tool, with `offset`/`limit` around that line. `cat` is fine inside \
          a pipe or a heredoc."
             .to_string()
-    });
-    Confirmed::YesSaying {
-        floor: None,
-        ceiling: (!may_refuse).then_some(Stance::Advise),
-        reason,
-        excerpt: shown,
-        remedy,
+    } else {
+        pour_remedy(shown)
+    }
+}
+
+fn confirm(ctx: &Context, _finding: &Finding) -> Confirmed {
+    match judge(ctx) {
+        Verdict::Silent(why) => Confirmed::No(why),
+        Verdict::Advise(file) => Confirmed::YesSaying {
+            floor: None,
+            ceiling: Some(Stance::Advise),
+            reason: pour_reason(&file.shown),
+            remedy: Some(remedy_for(&file.shown, &file.path)),
+            excerpt: file.shown,
+        },
+        Verdict::Refuse(files) => {
+            let largest = files
+                .iter()
+                .max_by_key(|s| s.len)
+                .expect("a refusal holds at least one file");
+            Confirmed::YesSaying {
+                floor: None,
+                ceiling: None,
+                reason: refusal_reason(&files),
+                remedy: Some(remedy_for(&largest.shown, &largest.path)),
+                excerpt: files
+                    .iter()
+                    .map(|s| s.shown.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            }
+        }
     }
 }
 
@@ -176,15 +354,15 @@ mod tests {
         assert!(fires("tail -n 300 build.log"));
     }
 
-    /// Only a whole read of a regular file past 8 KiB may be refused; the
-    /// threshold itself, a bounded read and a directory never.
     #[test]
-    fn only_a_whole_read_of_a_large_regular_file_is_refusable() {
-        assert!(!refusable(Extent::Whole, Some(8_192)));
-        assert!(refusable(Extent::Whole, Some(8_193)));
-        assert!(!refusable(Extent::Whole, None), "not a regular file");
-        assert!(!refusable(Extent::Lines(400), Some(20_480)));
-        assert!(!refusable(Extent::Bytes(20_000), Some(20_480)));
+    fn only_the_right_of_an_or_is_an_alternative() {
+        let at = |src: &str, word: &str| src.find(word).unwrap();
+        let src = "cat aa missing || cat bb";
+        let spans = alternatives(src);
+        assert!(spans.iter().any(|s| s.contains(&at(src, "cat bb"))));
+        assert!(!spans.iter().any(|s| s.contains(&0)));
+        let src = "cat a && cat b";
+        assert!(alternatives(src).is_empty());
     }
 
     #[test]
