@@ -307,13 +307,15 @@ fn refusal_reason(files: &[Seen]) -> String {
     )
 }
 
-/// What to do instead, for the dumped `files` (one or more): code LSP answers
-/// for is found with LSP, not with the grep this rule's remedy names for any
-/// other file.
-fn remedy_for(largest: &Seen, several: bool) -> String {
+/// What to do instead, for the dumped `files`, starting with the largest:
+/// code LSP answers for is found with LSP, not with the grep this rule's
+/// remedy names for any other file. `None` when `files` is empty.
+fn remedy_for(files: &[Seen]) -> Option<String> {
+    let largest = largest(files)?;
+    let several = files.len() > 1;
     let lsp = crate::lsp::is_code(&largest.shown) && crate::lsp::serves(&largest.path).is_ok();
     let shown = &largest.shown;
-    match (lsp, several) {
+    Some(match (lsp, several) {
         (true, false) => {
             "Ask LSP first (`documentSymbol`, `goToDefinition`), then open the file with \
              the Read tool, with `offset`/`limit` around that line. `cat` is fine inside \
@@ -333,7 +335,7 @@ fn remedy_for(largest: &Seen, several: bool) -> String {
              `grep -n '<anchor>' {shown} | head` finds the line first. `cat` is fine inside \
              a pipe or a heredoc."
         ),
-    }
+    })
 }
 
 fn largest(files: &[Seen]) -> Option<&Seen> {
@@ -347,23 +349,23 @@ fn confirm(context: &Context, _finding: &Finding) -> Confirmed {
             floor: None,
             ceiling: Some(Stance::Advise),
             reason: pour_reason(&file.shown),
-            remedy: Some(remedy_for(&file, false)),
+            remedy: remedy_for(std::slice::from_ref(&file)),
             excerpt: file.shown,
         },
         Verdict::Refuse(files) => {
-            let Some(biggest) = largest(&files) else {
+            let Some(remedy) = remedy_for(&files) else {
                 return Confirmed::No("no whole dump is charged");
             };
             Confirmed::YesSaying {
                 floor: None,
                 ceiling: None,
                 reason: refusal_reason(&files),
-                remedy: Some(remedy_for(biggest, files.len() > 1)),
+                remedy: Some(remedy),
                 excerpt: excerpt_of(&files),
             }
         }
         Verdict::Unreadable(files) => {
-            let Some(biggest) = largest(&files) else {
+            let Some(remedy) = remedy_for(&files) else {
                 return Confirmed::No("no whole dump is charged");
             };
             Confirmed::YesSaying {
@@ -374,7 +376,7 @@ fn confirm(context: &Context, _finding: &Finding) -> Confirmed {
                      not a refusal.",
                     refusal_reason(&files)
                 ),
-                remedy: Some(remedy_for(biggest, files.len() > 1)),
+                remedy: Some(remedy),
                 excerpt: excerpt_of(&files),
             }
         }

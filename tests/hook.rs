@@ -4335,6 +4335,25 @@ fn at_deny_the_whole_dumps_of_a_command_are_summed() {
     }
 }
 
+/// Files each under 8 KiB are summed: three of 4,000 bytes are refused
+/// together, though none would be alone.
+#[test]
+fn at_deny_small_files_that_add_up_are_refused() {
+    let fixture = ReadFixture::with_size("dump-small-sum", 6_000);
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        dump_file(&fixture, name, 4_000);
+    }
+    let alone = dump_as(&fixture, "dsmall-01", None, "cat a.txt");
+    assert!(!denied(&alone), "one small file: {}", alone.stdout);
+    let three = dump_as(&fixture, "dsmall-02", None, "cat a.txt b.txt c.txt");
+    assert!(denied(&three), "{}", three.stdout);
+    assert!(
+        three.reason().contains("Together 12 KB"),
+        "{}",
+        three.reason()
+    );
+}
+
 /// One path whose told record cannot be kept (a newline in its name) among
 /// paths that can: the command advises, and journals `unrecorded` once.
 #[test]
@@ -4358,7 +4377,9 @@ fn at_deny_a_mixed_told_dump_answer_set_advises_and_journals_unrecorded_once() {
         .expect("the hook wrote a journal");
     let unrecorded = journal
         .lines()
-        .filter(|l| l.contains("whole-file-dump") && l.contains("unrecorded"))
+        .filter(|l| {
+            l.contains("dmix-01") && l.contains("whole-file-dump") && l.contains("unrecorded")
+        })
         .count();
     assert_eq!(unrecorded, 1, "{journal}");
 }
