@@ -477,24 +477,34 @@ pub fn reviews(transcript: &Path) -> std::io::Result<Vec<Review>> {
 }
 
 /// The side transcripts' reviews, file after file, then once more each tree's
-/// last verdict in a file when it is not an approve: across agents, a rework
-/// (or an unread verdict) for a tree is then the last side match unless the
-/// same file approved that tree later. Times are only the files' (see
-/// [`side_transcripts_by_time`]); holding the rework needs none.
+/// last verdict in a file when it is not an approve and another file approved
+/// that tree: across agents, a rework (or an unread verdict) for a tree is
+/// then the last side match unless its own file approved that tree later.
+/// Nothing else moves, so a lookup across trees sees each file's own order.
+/// Times are only the files' (see [`side_transcripts_by_time`]); holding the
+/// rework needs none.
 fn hold_side_reworks<R: Clone, K: PartialEq>(
     files: Vec<Vec<R>>,
     key: impl Fn(&R) -> K,
     verdict: impl Fn(&R) -> Option<Verdict>,
 ) -> Vec<R> {
+    let approves = |r: &R| {
+        matches!(
+            verdict(r),
+            Some(Verdict::Approve | Verdict::ApproveWithChanges)
+        )
+    };
     let mut held = Vec::new();
-    for file in &files {
+    for (index, file) in files.iter().enumerate() {
         for (at, review) in file.iter().enumerate() {
             let last_in_file = !file[at + 1..].iter().any(|later| key(later) == key(review));
-            let approved = matches!(
-                verdict(review),
-                Some(Verdict::Approve | Verdict::ApproveWithChanges)
-            );
-            if last_in_file && !approved {
+            // Only another agent's approve of the same tree can be misordered
+            // by write time; holding every rework would also reorder lookups
+            // across trees (a profile carry takes the newest earlier tree).
+            let approved_elsewhere = files.iter().enumerate().any(|(other, f)| {
+                other != index && f.iter().any(|r| key(r) == key(review) && approves(r))
+            });
+            if last_in_file && !approves(review) && approved_elsewhere {
                 held.push(review.clone());
             }
         }
@@ -3162,6 +3172,27 @@ mod tests {
             last(&main),
             Some(Verdict::Approve),
             "a delta approve in the same file clears it"
+        );
+
+        // One agent's rework of an earlier tree, then its approve of the fixed
+        // tree: with no other agent's approve of the earlier tree, nothing is
+        // held, so the newest review across trees is still the approve.
+        let fixed = "c".repeat(64);
+        let fixed_prompt = format!("<<<TREE repo=greenbelay sha={fixed}>>>\nRound 1.");
+        let one_agent = foreground("toolu_t1", AGENT, &prompt, "Verdict: rework\n")
+            + &foreground("toolu_t2", AGENT, &fixed_prompt, "Verdict: approve\n");
+        std::fs::write(side.join("a.jsonl"), one_agent).unwrap();
+        let found = reviews(&main).unwrap();
+        assert_eq!(
+            found
+                .iter()
+                .map(|r| (r.sha.as_str(), r.verdict))
+                .collect::<Vec<_>>(),
+            vec![
+                (tree.as_str(), Some(Verdict::Rework)),
+                (fixed.as_str(), Some(Verdict::Approve))
+            ],
+            "no row is appended after the fixed tree's approve"
         );
         let _ = std::fs::remove_dir_all(&root); // this test's scratch: best effort
     }
