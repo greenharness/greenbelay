@@ -21,6 +21,9 @@ match	sed -n 1,140p docs/agent-guard.md
 match	sed -n 140,300p crates/amont-runtime/src/live.rs
 match	head -200 /tmp/make-check3.log
 match	cd ~/Developer/Perso/al-wt/storm-canvas && sed -n '1,400p' app/lib/landscapeDoc.ts
+# Several whole dumps in one command: the aggregate is what confirm sums.
+match	cat a.md; cat b.rs
+match	cat a.txt b.txt c.txt
 
 # --- the rule must stay silent ---
 # A window.
@@ -35,3 +38,5 @@ nomatch	cat > /private/tmp/claude-501/x/scratchpad/classify.sh <<'EOF'
 nomatch	sed -i 's/^version = .*/version = "1.28.0"/' Cargo.toml
 nomatch	sed 's/\x1b\[[0-9;]*m//g' /tmp/v2.log | tail -20
 nomatch	cat $DIR/file.ts
+# stderr redirect: not seen as a dump (known gap)
+nomatch	cat docs/big.md >&2

@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- `whole-file-dump` judges every whole dump in a Bash command, not only the
+  first: the refusal fires when the regular, non-exempt files it dumps
+  (`cat small && cat big`, `cat a b c`) add up to over 8 KiB. The right of
+  `||` is not charged, and a missing operand, a FIFO or a plan, diff or
+  persisted-output file is left out of the sum. The refusal is made once per
+  set of paths, with one told key per path, so repeating the command or a
+  subset of it passes; the journal has one outcome per command. The sentence
+  that promises the repeat now reads "If you need this output in the result,
+  repeat this same command unchanged".
+  When the command's `||` structure cannot be read, the refusal is capped at
+  advice and says so. The multi-file remedy names the largest file and says to
+  read the files separately; the sizes and the total in the reason are rounded
+  the same way. The text table of `output-audit` dumps now fits 80 columns
+  (`persisted` stays in `--json` only).
+- `greenbelay output-audit` also breaks Bash file dumps (the `cat`/`sed -n`/
+  `head`/`tail` reads `whole-file-dump` judges, read with its own parser) down
+  by class: `whole-one`, `whole-many`, `window`, `window-many`, `mixed`, each
+  marked `(mixed output)` when another clause also prints. Per class it gives
+  the results over 8 KiB, those with long lines, those the Read tool would
+  have cut, and the hook refusals: `main_dumps` and `sidechain_dumps` in
+  `--json`.
+
 ## v6.7.0
 
 greenbelay 6.7.0 labels each rule's replay in `backtest --json` (#311) and

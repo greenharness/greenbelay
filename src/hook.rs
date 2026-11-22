@@ -832,23 +832,33 @@ fn on_bash(bash: &Bash) -> Decision {
                 // Journalled `unrecorded` where it was found, once.
                 OnceTarget::Unresolved => advise.push(text),
                 // A file this command already dumped earlier was decided there.
-                OnceTarget::File { path, .. } if !settled.insert(crate::lsp::normal(&path)) => {}
-                OnceTarget::File { path, cwd } => match refuse_once_at(
-                    rule,
-                    &bash.session,
-                    bash.agent_id.as_deref(),
-                    &cwd,
-                    &bash.permission_mode,
-                    &path,
-                ) {
-                    Once::Refuse => {
-                        note_with(rule, "deny", "denied", bash, finding, excerpt);
-                        refused_once.push((rule.id, reason.to_string(), remedy.to_string()));
+                OnceTarget::Files(files) => {
+                    let fresh: Vec<_> = files
+                        .into_iter()
+                        .filter(|f| settled.insert(crate::lsp::normal(&f.path)))
+                        .collect();
+                    if !fresh.is_empty() {
+                        match refuse_once_files(
+                            rule,
+                            &bash.session,
+                            bash.agent_id.as_deref(),
+                            &bash.permission_mode,
+                            &fresh,
+                        ) {
+                            Once::Refuse => {
+                                note_with(rule, "deny", "denied", bash, finding, excerpt);
+                                refused_once.push((
+                                    rule.id,
+                                    reason.to_string(),
+                                    remedy.to_string(),
+                                ));
+                            }
+                            // Journalled by `refuse_once_files`.
+                            Once::Allowed => {}
+                            Once::Unrecorded => advise.push(text),
+                        }
                     }
-                    // Journalled by `refuse_once_at`.
-                    Once::Allowed => {}
-                    Once::Unrecorded => advise.push(text),
-                },
+                }
             },
         }
     }
@@ -883,7 +893,7 @@ fn on_bash(bash: &Bash) -> Decision {
     let alone = deny.is_empty();
     for (id, reason, remedy) in refused_once {
         let through = if alone {
-            "If you need the whole file in the result, repeat this same command unchanged: it \
+            "If you need this output in the result, repeat this same command unchanged: it \
              will be allowed."
         } else {
             "Repeated unchanged, this rule lets the command through; the other refusal here \
@@ -2548,6 +2558,84 @@ fn refuse_once_at(
     once
 }
 
+/// [`refuse_once_at`] for every file one command dumps: each path has its own
+/// told key, every key is recorded on the first call (no short-circuit), and
+/// the command is refused when any of them was new. The command's repeat, or
+/// a retry naming only some of the files, passes. One journal line per
+/// command, not per path.
+fn refuse_once_files(
+    rule: &Rule,
+    session: &str,
+    agent_id: Option<&str>,
+    mode: &str,
+    files: &[rules::whole_file_dump::Refusal],
+) -> Once {
+    let repo = files.first().map(|f| repo_name(&f.cwd)).unwrap_or_default();
+    let shown = |agent: &str, why: Option<&str>| {
+        let mut paths: Vec<String> = files
+            .iter()
+            .take(rules::whole_file_dump::LISTED)
+            .map(|f| {
+                let text = f.path.display().to_string();
+                if text.contains(char::is_whitespace) {
+                    shell_quoted(&f.path)
+                } else {
+                    text
+                }
+            })
+            .collect();
+        if files.len() > rules::whole_file_dump::LISTED {
+            paths.push(format!(
+                "+{} more",
+                files.len() - rules::whole_file_dump::LISTED
+            ));
+        }
+        match why {
+            Some(why) => format!("{} @{agent} ({why})", paths.join(" ")),
+            None => format!("{} @{agent}", paths.join(" ")),
+        }
+    };
+    let record = |outcome: &'static str, excerpt: &str| {
+        journal::record(&journal::Entry {
+            rule: rule.id,
+            stance: Stance::Deny.as_str(),
+            outcome,
+            session,
+            repo: &repo,
+            mode,
+            excerpt,
+        });
+    };
+    let Some(agent) = crate::lsp::agent_key(agent_id) else {
+        record("unrecorded", &shown("?", None));
+        return Once::Unrecorded;
+    };
+    let answers: Vec<crate::lsp::Told> = files
+        .iter()
+        .map(|f| {
+            let key = format!(
+                "{} {} @{agent}",
+                rule.id,
+                crate::lsp::normal(&f.path).display()
+            );
+            crate::lsp::told(session, &key)
+        })
+        .collect();
+    let first_unrecorded = answers.iter().find_map(|answer| match answer {
+        crate::lsp::Told::Unrecorded(why) => Some(*why),
+        crate::lsp::Told::First | crate::lsp::Told::Before => None,
+    });
+    if let Some(why) = first_unrecorded {
+        record("unrecorded", &shown(&agent, Some(why)));
+        Once::Unrecorded
+    } else if answers.iter().any(|a| matches!(a, crate::lsp::Told::First)) {
+        Once::Refuse
+    } else {
+        record("allowed-after-feedback", &shown(&agent, None));
+        Once::Allowed
+    }
+}
+
 /// Whether a rule about to speak has not yet told this session about `key`.
 /// A record that could not be kept is journalled, and the rule speaks: being
 /// told twice costs less than never being told.
@@ -2933,14 +3021,11 @@ fn context<'a>(bash: &'a Bash, parsed: &'a Parsed) -> Context<'a> {
 enum OnceTarget {
     /// Nothing: the rule refuses every time, as rules always have.
     Always,
-    /// The file a refuse-once rule's dump names (`whole-file-dump`,
-    /// deliberate-output plan Phase 3), with the directory its clause runs
-    /// in: the first whole dump of it by this agent is refused, the same
+    /// The files a refuse-once rule's command dumps (`whole-file-dump`,
+    /// deliberate-output plan Phase 3), each with the directory its clause
+    /// runs in: the first refusal naming any new one is made, the same
     /// command repeated passes.
-    File {
-        path: std::path::PathBuf,
-        cwd: std::path::PathBuf,
-    },
+    Files(Vec<rules::whole_file_dump::Refusal>),
     /// A refuse-once dump whose file could not be resolved again, journalled
     /// `unrecorded`: never refuse what cannot be promised to pass again.
     Unresolved,
@@ -2950,18 +3035,21 @@ fn once_target(rule: &Rule, finding: &Finding, bash: &Bash, parsed: &Parsed) -> 
     if rule.id != rules::whole_file_dump::RULE.id {
         return OnceTarget::Always;
     }
-    let context = context(bash, parsed);
-    match rules::whole_file_dump::target(&context, finding) {
-        Ok(target) => OnceTarget::File {
-            path: target.path,
-            cwd: context.cwd_at(finding.span.start),
-        },
-        // `confirm` resolved this same dump a moment ago, so only `HOME`
-        // changing in between gets here.
-        Err(why) => {
-            note_with(rule, "deny", "unrecorded", bash, finding, Some(why));
-            OnceTarget::Unresolved
-        }
+    let files = rules::whole_file_dump::refused(&context(bash, parsed));
+    if files.is_empty() {
+        // `confirm` refused these same files a moment ago, so only a file
+        // or `HOME` changing in between gets here.
+        note_with(
+            rule,
+            "deny",
+            "unrecorded",
+            bash,
+            finding,
+            Some("the command no longer matches"),
+        );
+        OnceTarget::Unresolved
+    } else {
+        OnceTarget::Files(files)
     }
 }
 

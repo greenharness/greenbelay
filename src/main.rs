@@ -1419,7 +1419,14 @@ edit, agent, lsp, web, mcp, other-tool, unmatched), apart from subagents,
 beside the token usage the transcripts report, by model. Bash results are
 also broken down by command family (the program, plus the subcommand for
 git, gh, kubectl, cargo, npm, pnpm, docker, brew, greenbelay, greengate,
-relais and amont), for the main conversation and for subagents.
+relais and amont), for the main conversation and for subagents. Bash file
+dumps (`cat`, `sed -n`, `head`, `tail`, read as `whole-file-dump` reads
+them) are broken down by class: one or many whole files, one or many
+windows, or mixed, marked `(mixed output)` when another clause also prints,
+with the results over 8 KiB, those with long lines (average over 400 B),
+those the Read tool would have cut (over 2,000 B) and the hook refusals.
+(`long`, `cuts` and `refus` head the text table; `persisted`, the results too
+large to return, is reported in --json only.)
 
 Each result, each agent launch and each message counts once, however many
 times a resumed session copies it. `over 200 B` is the share of passing
@@ -1533,6 +1540,40 @@ fn scaled(count: u64) -> String {
         )
 }
 
+/// One context's Bash dumps by class: how many results passed 8 KiB, how
+/// many of those had long lines, and how many Read would have cut.
+fn dumps_text(
+    title: &str,
+    map: &std::collections::BTreeMap<
+        greenbelay_guard::output_audit::DumpClass,
+        greenbelay_guard::output_audit::DumpBucket,
+    >,
+) -> String {
+    let mut out = format!("\n{title}, Bash file dumps by class\n");
+    if map.is_empty() {
+        out.push_str("  none\n");
+        return out;
+    }
+    out.push_str(&format!(
+        "  {:<26} {:>5} {:>6} {:>9} {:>9} {:>9} {:>5}\n",
+        "class", "calls", "bytes", ">8KiB", "long", "cuts", "refus"
+    ));
+    let pair = |calls: u64, bytes: u64| format!("{calls}/{}", scaled(bytes));
+    for (class, bucket) in map {
+        out.push_str(&format!(
+            "  {:<26} {:>5} {:>6} {:>9} {:>9} {:>9} {:>5}\n",
+            class.to_string(),
+            bucket.calls,
+            scaled(bucket.result_bytes),
+            pair(bucket.large, bucket.large_bytes),
+            pair(bucket.long_lines, bucket.long_lines_bytes),
+            pair(bucket.cut_by_read, bucket.cut_by_read_bytes),
+            bucket.refused
+        ));
+    }
+    out
+}
+
 /// The top families of one context by result bytes, then the rest summed.
 fn families_text(
     title: &str,
@@ -1633,6 +1674,12 @@ fn output_audit_text(
         ("subagents", &audit.sidechain_families),
     ] {
         out.push_str(&families_text(title, map));
+    }
+    for (title, map) in [
+        ("main conversation", &audit.main_dumps),
+        ("subagents", &audit.sidechain_dumps),
+    ] {
+        out.push_str(&dumps_text(title, map));
     }
     out.push_str("\nreported usage by model, tokens (not billing, not quota)\n");
     if audit.usage.is_empty() {
@@ -3916,5 +3963,45 @@ mod migration_mode_tests {
             migration_mode(&Sub::Install, &args(&["--write"])),
             MigrationMode::Capped(_)
         ));
+    }
+
+    #[test]
+    fn the_dumps_table_fits_80_columns() {
+        use greenbelay_guard::output_audit::{DumpBucket, DumpClass, DumpOutput, DumpShape};
+        let bucket = DumpBucket {
+            calls: 12_345,
+            result_bytes: 2_000_000_000,
+            large: 234,
+            large_bytes: 90_000_000,
+            long_lines: 23,
+            long_lines_bytes: 9_000_000,
+            cut_by_read: 12,
+            cut_by_read_bytes: 900_000,
+            refused: 99,
+            ..DumpBucket::default()
+        };
+        let map: std::collections::BTreeMap<DumpClass, DumpBucket> = [
+            DumpShape::WholeOne,
+            DumpShape::WholeMany,
+            DumpShape::Window,
+            DumpShape::WindowMany,
+            DumpShape::Mixed,
+        ]
+        .into_iter()
+        .map(|shape| {
+            (
+                DumpClass {
+                    shape,
+                    output: DumpOutput::Mixed,
+                },
+                bucket.clone(),
+            )
+        })
+        .collect();
+        let table = dumps_text("main conversation", &map);
+        for line in table.lines() {
+            assert!(line.chars().count() <= 80, "{} wide: {line}", line.len());
+        }
+        assert!(table.contains("window-many (mixed output)"), "{table}");
     }
 }
