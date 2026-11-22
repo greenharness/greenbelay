@@ -7,6 +7,11 @@
   the main conversation and subagents: `main_families` and `sidechain_families`
   in `--json`, the top 15 per context in the text. Only sanitized program names
   are emitted.
+- `backtest --json` labels each rule with `replay` (`exact` or `none`) and
+  `replay_why` (`not-shell`, `live`, `confirm`, `verify`), and names the
+  `version` whose matchers counted. Only an `exact` row is the rule's weekly
+  count; the others read 0 or count unconfirmed shape matches. See
+  `docs/measuring.md`.
 - New `tools/measure_fingerprint.py` (Unix only), a stdlib helper that fingerprints the
   recipe of a dated measure (script blob, tool version, source, schema,
   filters, window) in a sidecar JSON file and refuses a run whose recipe
