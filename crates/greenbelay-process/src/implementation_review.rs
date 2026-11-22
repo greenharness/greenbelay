@@ -442,6 +442,7 @@ pub fn verdict_of(result: &str) -> Option<Verdict> {
 /// The reviews this session completed, in launch order: what each bound
 /// and what it said. A reviewer resumed with `SendMessage` on a new block is
 /// a review of its own ([`completed_agents_resumable`]).
+#[derive(Clone)]
 pub struct Review {
     pub repo: String,
     pub sha: String,
@@ -457,18 +458,50 @@ pub struct Review {
 /// transcript. Side transcripts come first, oldest write first
 /// ([`side_transcripts_by_time`]), so a caller that takes the last matching
 /// review prefers the newest one and, for the same tree, the main
-/// transcript's. An unreadable main transcript is an error; an unreadable
-/// side transcript is skipped, since it is only more evidence.
+/// transcript's. A file's write time is when its agent last wrote anything,
+/// not when it reviewed, so the order alone could let an older side approve
+/// outrank a later side rework: [`hold_side_reworks`] fails that closed. An
+/// unreadable main transcript is an error; an unreadable side transcript is
+/// skipped, since it is only more evidence.
 pub fn reviews(transcript: &Path) -> std::io::Result<Vec<Review>> {
     let main = std::fs::File::open(transcript)?;
-    let mut out = Vec::new();
+    let mut files = Vec::new();
     for side in side_transcripts_by_time(transcript) {
         if let Ok(file) = std::fs::File::open(&side) {
-            out.extend(reviews_in(std::io::BufReader::new(file)));
+            files.push(reviews_in(std::io::BufReader::new(file)));
         }
     }
+    let mut out = hold_side_reworks(files, |r| (r.repo.clone(), r.sha.clone()), |r| r.verdict);
     out.extend(reviews_in(std::io::BufReader::new(main)));
     Ok(out)
+}
+
+/// The side transcripts' reviews, file after file, then once more each tree's
+/// last verdict in a file when it is not an approve: across agents, a rework
+/// (or an unread verdict) for a tree is then the last side match unless the
+/// same file approved that tree later. Times are only the files' (see
+/// [`side_transcripts_by_time`]); holding the rework needs none.
+fn hold_side_reworks<R: Clone, K: PartialEq>(
+    files: Vec<Vec<R>>,
+    key: impl Fn(&R) -> K,
+    verdict: impl Fn(&R) -> Option<Verdict>,
+) -> Vec<R> {
+    let mut held = Vec::new();
+    for file in &files {
+        for (at, review) in file.iter().enumerate() {
+            let last_in_file = !file[at + 1..].iter().any(|later| key(later) == key(review));
+            let approved = matches!(
+                verdict(review),
+                Some(Verdict::Approve | Verdict::ApproveWithChanges)
+            );
+            if last_in_file && !approved {
+                held.push(review.clone());
+            }
+        }
+    }
+    let mut out: Vec<R> = files.into_iter().flatten().collect();
+    out.extend(held);
+    out
 }
 
 /// The session's side transcripts, oldest last write first, so that across
@@ -794,6 +827,7 @@ pub fn branch_ref(repo: &Path) -> Option<String> {
 
 /// A completed review by one code-review profile's agent (ADR-0052), bound
 /// to the profile its launch prompt named.
+#[derive(Clone)]
 pub struct ProfileReview {
     pub repo: String,
     pub sha: String,
@@ -814,12 +848,17 @@ pub struct ProfileReview {
 /// the transcript that holds its launch.
 pub fn profile_reviews(transcript: &Path) -> std::io::Result<Vec<ProfileReview>> {
     let main = std::fs::read(transcript)?;
-    let mut out = Vec::new();
+    let mut files = Vec::new();
     for side in side_transcripts_by_time(transcript) {
         if let Ok(bytes) = std::fs::read(&side) {
-            out.extend(profile_reviews_in(&bytes));
+            files.push(profile_reviews_in(&bytes));
         }
     }
+    let mut out = hold_side_reworks(
+        files,
+        |r| (r.repo.clone(), r.sha.clone(), r.profile.clone()),
+        |r| r.verdict,
+    );
     out.extend(profile_reviews_in(&main));
     Ok(out)
 }
@@ -3098,13 +3137,31 @@ mod tests {
                 .set_modified(at)
                 .unwrap();
         };
+        let main = root.join("p/abc.jsonl");
+        let last = |main: &Path| reviews(main).unwrap().last().and_then(|r| r.verdict);
+
         write_at("b.jsonl", "Verdict: approve\n", 1_000);
         write_at("a.jsonl", "Verdict: rework\n", 2_000);
-        let found = reviews(&root.join("p/abc.jsonl")).unwrap();
+        assert_eq!(last(&main), Some(Verdict::Rework), "the later write wins");
+
+        // `b` approved, then went on writing: its file is now the newer one.
+        // A write time is not a review time, so the rework is held anyway.
+        write_at("b.jsonl", "Verdict: approve\n", 3_000);
         assert_eq!(
-            found.iter().map(|r| r.verdict).collect::<Vec<_>>(),
-            vec![Some(Verdict::Approve), Some(Verdict::Rework)],
-            "the later write is the last match"
+            last(&main),
+            Some(Verdict::Rework),
+            "a side rework outlasts a side approve of the same tree"
+        );
+
+        // The same agent's later round approves: that clears its own rework.
+        let rounds = foreground("toolu_r1", AGENT, &prompt, "Verdict: rework\n")
+            + &foreground("toolu_r2", AGENT, &prompt, "Verdict: approve\n");
+        std::fs::write(side.join("a.jsonl"), rounds).unwrap();
+        std::fs::remove_file(side.join("b.jsonl")).unwrap();
+        assert_eq!(
+            last(&main),
+            Some(Verdict::Approve),
+            "a delta approve in the same file clears it"
         );
         let _ = std::fs::remove_dir_all(&root); // this test's scratch: best effort
     }
