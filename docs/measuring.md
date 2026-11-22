@@ -73,6 +73,30 @@ its own does not need a `deny`; the model is already correcting. A flat line
 over weeks is a habit that will not correct itself, and that is what promotion
 is for.
 
+A replay counts what a rule's `examine` matches in Bash calls, and that is a
+rule's live count only for some rules. `--json` labels each rule:
+
+- `"replay": "exact"`: the replay counts what the hook would have counted;
+- `"replay": "none"`, with `replay_why`:
+  - `not-shell`: the rule fires on another tool or event, which the replay
+    does not read, so it shows 0;
+  - `live`: only the live session decides, so it shows 0;
+  - `confirm` or `verify`: the hook checks the world at the time, so the
+    replay counts every shape match, confirmed or not.
+
+Only an `exact` row is a weekly count. To recount one week of one rule, give
+the week's Monday (UTC):
+
+```sh
+greenbelay backtest --rule pipe-to-tail --since 2026-11-09 --json \
+  | jq -r '.version as $v | .rules[] | select(.replay=="exact") | .id as $r
+      | .weeks[] | select(.week=="2026-11-09")
+      | "\(.week) \($r) \(.fires) \(.calls) \(.per_1000) v\($v)"'
+```
+
+The matchers are today's (`version`): the same week recounted after a
+release may differ.
+
 ## 2. Explain — look at the actual matches
 
 A rate is only trustworthy if the matches behind it are real. `explain` prints

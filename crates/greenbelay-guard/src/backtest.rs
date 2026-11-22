@@ -79,6 +79,22 @@ impl Subject {
         }
     }
 
+    /// Whether a replay's count is the count the hook made live, and if not,
+    /// why. A weekly Target built on a replay that cannot see the rule's
+    /// firings reads 0 while it fires, or reads the noise `confirm` exists to
+    /// drop, so the label rides every row of the JSON.
+    pub fn replay(&self) -> Replay {
+        match self {
+            Subject::Assertion(_) => Replay::None("verify"),
+            Subject::Rule(r) if NOT_SHELL.contains(&r.id) => Replay::None("not-shell"),
+            Subject::Rule(r) if matches!(r.examine, crate::rules::Examine::Live(_)) => {
+                Replay::None("live")
+            }
+            Subject::Rule(r) if r.confirm.is_some() => Replay::None("confirm"),
+            Subject::Rule(_) => Replay::Exact,
+        }
+    }
+
     /// Whether `examine` matches this command, through the same dispatch as
     /// [`run`]: the command is lexed here, a transcript's shell being unknown.
     pub fn fires_on(&self, command: &str) -> bool {
@@ -102,6 +118,63 @@ impl Subject {
         }
     }
 }
+
+/// What a replay's count of one rule is worth ([`Subject::replay`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Replay {
+    /// `examine` alone decides on a Bash command: the replay counts what the
+    /// hook would have counted.
+    Exact,
+    /// The replay cannot count it, for the reason named:
+    /// - `not-shell`: it fires on another tool or event (Read, Write,
+    ///   ExitPlanMode, Stop, …), or on one beside Bash, and the replay reads
+    ///   Bash calls only;
+    /// - `live`: the verdict is the live session's (`Examine::Live`), so the
+    ///   replay counts 0;
+    /// - `confirm` / `verify`: the hook checks the world at the time, which
+    ///   has moved, so the replay counts every shape match, confirmed or not.
+    None(&'static str),
+}
+
+impl Replay {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Replay::Exact => "exact",
+            Replay::None(_) => "none",
+        }
+    }
+
+    pub fn why(self) -> &'static str {
+        match self {
+            Replay::Exact => "",
+            Replay::None(why) => why,
+        }
+    }
+}
+
+/// The rules judged on another tool or event than a Bash call, or on one
+/// beside it, whose `examine` over a command is a no-op or only half the rule.
+/// Each entry names its rule's constant, so a renamed or removed rule fails
+/// the build. A new rule that lives on another tool belongs here: the
+/// replay would otherwise label its 0 `exact`.
+pub const NOT_SHELL: &[&str] = &[
+    rules::plan_review_panel::RULE.id,
+    rules::plan_names_no_paths::RULE.id,
+    rules::clear_at_boundary::RULE.id,
+    rules::plan_phases_open::RULE.id,
+    rules::ask_unopened_page::RULE.id,
+    rules::persisted_output_dump::RULE.id,
+    rules::file_reread::RULE.id,
+    rules::read_unbounded_large::RULE.id,
+    rules::code_read_not_lsp::RULE.id,
+    rules::screenshot_in_main_session::RULE.id,
+    rules::relais_run_forks::RULE.id,
+    rules::lint_suppression_added::RULE.id,
+    rules::agent_guidance_written::RULE.id,
+    rules::agent_guidance_shape::RULE.id,
+    rules::work_overlap::RULE.id,
+    rules::adr_lint_written::RULE.id,
+];
 
 pub struct Report {
     pub rules: Vec<Subject>,
@@ -363,12 +436,17 @@ impl Report {
                     json::string_field("id", r.id()),
                     json::int_field("total", i64::from(self.totals[i])),
                     json::string_field("stance", r.default_stance().as_str()),
+                    json::string_field("replay", r.replay().as_str()),
+                    json::string_field("replay_why", r.replay().why()),
                     json::string_field("p95_per_1000", &format!("{:.1}", p95(&self.series(i)))),
                     format!("\"weeks\":{}", json::array(&weeks)),
                 ])
             })
             .collect();
         json::object(&[
+            // The matchers are today's: a recount with another version may
+            // count the same week differently.
+            json::string_field("version", env!("CARGO_PKG_VERSION")),
             json::string_array_field(
                 "transcripts",
                 &roots
@@ -401,4 +479,92 @@ pub fn p95(series: &[f64]) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let idx = (((v.len() - 1) as f64) * 0.95).round() as usize;
     v[idx]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rule(r: &'static Rule) -> Subject {
+        Subject::Rule(r)
+    }
+
+    #[test]
+    fn a_shell_rule_with_no_confirm_replays_exactly() {
+        assert_eq!(rule(&rules::pipe_to_tail::RULE).replay(), Replay::Exact);
+        assert_eq!(
+            rule(&rules::test_output_trimmed::RULE).replay(),
+            Replay::Exact
+        );
+    }
+
+    #[test]
+    fn a_live_rule_does_not_replay() {
+        assert_eq!(
+            rule(&rules::cd_carries_over::RULE).replay(),
+            Replay::None("live")
+        );
+    }
+
+    #[test]
+    fn a_confirmed_rule_does_not_replay() {
+        assert_eq!(
+            rule(&rules::sed_in_place::RULE).replay(),
+            Replay::None("confirm")
+        );
+    }
+
+    #[test]
+    fn a_rule_on_another_tool_does_not_replay() {
+        assert_eq!(
+            rule(&rules::plan_review_panel::RULE).replay(),
+            Replay::None("not-shell")
+        );
+        assert_eq!(
+            rule(&rules::file_reread::RULE).replay(),
+            Replay::None("not-shell")
+        );
+    }
+
+    #[test]
+    fn an_assertion_does_not_replay() {
+        let a = Subject::Assertion(&crate::assertions::ASSERTIONS[0]);
+        assert_eq!(a.replay(), Replay::None("verify"));
+    }
+
+    #[test]
+    fn the_json_labels_each_rule_and_names_the_version() {
+        let mut weeks = BTreeMap::new();
+        weeks.insert(
+            crate::civil::days_from_civil(2026, 11, 9),
+            Bucket {
+                calls: 1000,
+                fires: vec![3, 0],
+            },
+        );
+        let report = Report {
+            rules: vec![
+                rule(&rules::pipe_to_tail::RULE),
+                rule(&rules::cd_carries_over::RULE),
+            ],
+            weeks,
+            totals: vec![3, 0],
+            samples: vec![Vec::new(), Vec::new()],
+            stats: Stats::default(),
+            opaque: 0,
+            partly: 0,
+        };
+        let roots = transcript::Roots {
+            dirs: Vec::new(),
+            how: transcript::Discovery::HomeDefault,
+        };
+        let v: serde_json::Value = serde_json::from_str(&report.to_json(&roots)).unwrap();
+        assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(v["rules"][0]["replay"], "exact");
+        assert_eq!(v["rules"][0]["replay_why"], "");
+        assert_eq!(v["rules"][0]["weeks"][0]["week"], "2026-11-09");
+        assert_eq!(v["rules"][0]["weeks"][0]["fires"], 3);
+        assert_eq!(v["rules"][1]["replay"], "none");
+        assert_eq!(v["rules"][1]["replay_why"], "live");
+    }
 }
