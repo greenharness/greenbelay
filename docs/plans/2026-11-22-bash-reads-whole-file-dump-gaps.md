@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 branch: feat/bash-read-dumps
 repos: [greenbelay]
 adrs: []
@@ -178,6 +178,23 @@ relais-review: Read/Grep/Glob/LSP only), so no reviewer exemption is needed.
   refuse, so nothing would be saved. The carried items that belong to Phase 2 (3, 4, 8, 9, 10) go
   with it.
 
+- 2026-11-22, `Evidence` stays at its 2026-09-09 measure: it counts the rule's fires per 1,000 calls,
+  and Phase 0 measured result bytes by dump class, a different quantity. The counted target below
+  carries the new measure.
+- 2026-11-22, the refusal text keeps "8 KB" (deliberate, tui#4): every other greenbelay refusal and
+  `read-unbounded-large` say KB, and 8 KB there means 8,192 bytes too.
+
+## Target (ADR-0079)
+
+- Cause: `whole-file-dump`, the dumps this change starts refusing: `whole-many` and `mixed` Bash dump
+  results over 8 KiB (`output-audit` dump classes, `large`, main + subagents).
+- Baseline, complete week 2026-11-09..2026-11-16: 55 events (2 main, 53 subagents) in 4,749 dump
+  results. Rows saved: `~/.claude/greenbelay/attestations/bash-read-dumps-baseline/2026-W46.json`.
+- Ships in week 2026-11-23 (excluded from the comparison).
+- Recount: `greenbelay output-audit --since <week start>Z --until <week end>Z --json` over complete
+  weeks from 2026-12-07, summing `large` over the `whole-many*` and `mixed*` keys of `main_dumps`
+  and `sidechain_dumps`.
+
 ## Outcome
 
 Phase 0 (`greenbelay output-audit --since 2026-11-09T00:00:00Z --until 2026-11-22T00:00:00Z`, the
@@ -206,6 +223,14 @@ is about 80 KB, so it is dropped.
 | `greenbelay check 'cat big.rs \|\| true'` | refuses on `big.rs` | deny |
 | `greenbelay check 'cat a.txt \|\| cat b.txt'` (4 KB each) | at most advises | silent: each file is under the 4 KiB small floor |
 | repeat passes, subset retry passes, one journal outcome per command | as specified | covered by the new `tests/hook.rs` cases (`at_deny_the_whole_dumps_of_a_command_are_summed`, `at_deny_a_subset_retry_passes`) |
+
+## Implementation review
+
+- implementation-review: approve (round 3, after 2 rework passes). Fixed: names, two flag arguments, an out-parameter, two tests that could not fail, aggregate corpus cases, target line. Deliberate: no `Unreadable` test (a miss, never a wrong refusal). ~58–97k per round.
+- backend: approve-with-changes. Fixed: an unread `||` caps at advice, a capped and quoted journal excerpt, a mixed told-set test. Deliberate: `Unreadable` untested, keys spent on a mixed set (panel-accepted), two test-id nits.
+- lang:rust: approve. Fixed: no `expect`, typed `DumpClass`, private `resolve`, `Seen` keeps the charged length, `remedy_for` takes the files. Deliberate: `seen`'s tuple bool, a test's module, `Display` padding.
+- tui: approve. Fixed: an 80-column table, a multi-file remedy naming the largest file, consistent rounding, `persisted` noted as JSON only. Deliberate: KB wording, the `refus` header, "+N"/"and N more".
+- unix: approve, no findings (pass carried by ancestry after the rebase delta).
 
 ## Delivery
 
