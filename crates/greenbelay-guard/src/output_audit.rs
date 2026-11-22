@@ -22,7 +22,11 @@
 //!   what a one-line quiet summary would not have carried. It is a proxy for
 //!   avoidable output, not a measure of it.
 //!
-//! Output carries no command text and no result text: only counts.
+//! - **Families** break Bash results down by program (plus the subcommand
+//!   for the tools that have them), see [`command_family`].
+//!
+//! Output carries no command text and no result text beyond sanitized
+//! program names: only counts.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -255,6 +259,20 @@ pub struct Bucket {
     pub non_text: u64,
 }
 
+impl Bucket {
+    fn add(&mut self, bytes: u64, non_text: bool, failed: bool) {
+        self.calls += 1;
+        self.result_bytes += bytes;
+        self.non_text += u64::from(non_text);
+        if failed {
+            self.failed += 1;
+        } else {
+            self.ok += 1;
+            self.over_summary += bytes.saturating_sub(SUMMARY_BYTES);
+        }
+    }
+}
+
 /// Token usage as the assistant messages report it.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Usage {
@@ -299,6 +317,10 @@ pub struct Audit {
     /// Results inside subagents (`isSidechain`): their context, not the
     /// parent's.
     pub sidechain: BTreeMap<Kind, Bucket>,
+    /// The main conversation's Bash results, by command family.
+    pub main_families: BTreeMap<String, Bucket>,
+    /// Bash results inside subagents, by command family.
+    pub sidechain_families: BTreeMap<String, Bucket>,
     pub usage: BTreeMap<String, Usage>,
 }
 
@@ -419,7 +441,7 @@ impl Scan<'_> {
         };
         self.audit.coverage.files_scanned += 1;
         // The calls of this file: tool_use id → kind.
-        let mut calls: HashMap<String, Kind> = HashMap::new();
+        let mut calls: HashMap<String, Call> = HashMap::new();
         let mut reader = BufReader::new(file);
         loop {
             let raw = match next_line(&mut reader) {
@@ -440,14 +462,14 @@ impl Scan<'_> {
                 self.audit.coverage.bad_lines += 1;
                 continue;
             };
-            for (id, kind) in calls_in(&entry) {
-                calls.insert(id, kind);
+            for (id, call) in calls_in(&entry) {
+                calls.insert(id, call);
             }
             self.entry(&entry, &calls);
         }
     }
 
-    fn entry(&mut self, entry: &serde_json::Value, calls: &HashMap<String, Kind>) {
+    fn entry(&mut self, entry: &serde_json::Value, calls: &HashMap<String, Call>) {
         let Some(at) = entry
             .get("timestamp")
             .and_then(serde_json::Value::as_str)
@@ -500,7 +522,7 @@ impl Scan<'_> {
         &mut self,
         block: &serde_json::Value,
         context: Context,
-        calls: &HashMap<String, Kind>,
+        calls: &HashMap<String, Call>,
     ) {
         let Some(id) = block.get("tool_use_id").and_then(serde_json::Value::as_str) else {
             return;
@@ -509,26 +531,32 @@ impl Scan<'_> {
             self.audit.coverage.duplicate_results += 1;
             return;
         }
-        let kind = calls.get(id).copied().unwrap_or(Kind::Unmatched);
+        let (kind, family) = match calls.get(id) {
+            Some(call) => (call.kind, call.family.as_deref()),
+            None => (Kind::Unmatched, None),
+        };
         let (bytes, non_text) =
             result_size(block.get("content").unwrap_or(&serde_json::Value::Null));
         let failed = block
             .get("is_error")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
-        let buckets = match context {
-            Context::Subagent => &mut self.audit.sidechain,
-            Context::Main => &mut self.audit.main,
+        let (buckets, families) = match context {
+            Context::Subagent => (
+                &mut self.audit.sidechain,
+                &mut self.audit.sidechain_families,
+            ),
+            Context::Main => (&mut self.audit.main, &mut self.audit.main_families),
         };
-        let bucket = buckets.entry(kind).or_default();
-        bucket.calls += 1;
-        bucket.result_bytes += bytes;
-        bucket.non_text += u64::from(non_text);
-        if failed {
-            bucket.failed += 1;
-        } else {
-            bucket.ok += 1;
-            bucket.over_summary += bytes.saturating_sub(SUMMARY_BYTES);
+        buckets
+            .entry(kind)
+            .or_default()
+            .add(bytes, non_text, failed);
+        if let Some(family) = family {
+            families
+                .entry(family.to_string())
+                .or_default()
+                .add(bytes, non_text, failed);
         }
     }
 
@@ -591,9 +619,237 @@ fn content(entry: &serde_json::Value) -> &[serde_json::Value] {
         .map_or(&[], Vec::as_slice)
 }
 
+/// What a result needs to know of its call.
+struct Call {
+    kind: Kind,
+    /// Set for Bash calls only.
+    family: Option<String>,
+}
+
+/// The subcommands a third-party program's family may name. A word outside
+/// its list is `<program> other`: an option's value (`kubectl --kubeconfig
+/// prod get`) must never reach the report.
+fn known_subcommands(program: &str) -> Option<&'static [&'static str]> {
+    Some(match program {
+        "git" => &[
+            "add",
+            "am",
+            "apply",
+            "bisect",
+            "blame",
+            "branch",
+            "checkout",
+            "cherry-pick",
+            "clean",
+            "clone",
+            "commit",
+            "config",
+            "describe",
+            "diff",
+            "fetch",
+            "for-each-ref",
+            "grep",
+            "init",
+            "log",
+            "ls-files",
+            "ls-remote",
+            "merge",
+            "merge-base",
+            "mv",
+            "notes",
+            "pull",
+            "push",
+            "rebase",
+            "reflog",
+            "remote",
+            "reset",
+            "restore",
+            "rev-list",
+            "rev-parse",
+            "revert",
+            "rm",
+            "show",
+            "stash",
+            "status",
+            "switch",
+            "tag",
+            "worktree",
+        ],
+        "gh" => &[
+            "api", "auth", "issue", "pr", "release", "repo", "run", "search", "workflow",
+        ],
+        "kubectl" => &[
+            "apply",
+            "auth",
+            "config",
+            "create",
+            "delete",
+            "describe",
+            "diff",
+            "edit",
+            "events",
+            "exec",
+            "explain",
+            "get",
+            "label",
+            "logs",
+            "patch",
+            "port-forward",
+            "rollout",
+            "scale",
+            "top",
+            "wait",
+        ],
+        "cargo" => &[
+            "add", "bench", "build", "check", "clean", "clippy", "doc", "fmt", "install",
+            "metadata", "nextest", "publish", "run", "test", "tree", "update",
+        ],
+        "npm" | "pnpm" => &[
+            "add", "audit", "build", "ci", "dlx", "exec", "install", "i", "lint", "ls", "outdated",
+            "publish", "remove", "run", "test", "update", "view", "why",
+        ],
+        "docker" => &[
+            "build", "compose", "exec", "images", "inspect", "logs", "ps", "pull", "push", "run",
+            "stop",
+        ],
+        "brew" => &[
+            "info",
+            "install",
+            "list",
+            "outdated",
+            "search",
+            "services",
+            "tap",
+            "uninstall",
+            "update",
+            "upgrade",
+        ],
+        _ => return None,
+    })
+}
+
+/// The harness's own tools: their first non-option word is a subcommand,
+/// kept when it is a lowercase word.
+const OWN_TOOLS: [&str; 4] = ["greenbelay", "greengate", "relais", "amont"];
+
+fn is_subcommand_word(word: &str) -> bool {
+    (1..=24).contains(&word.len())
+        && word.starts_with(|c: char| c.is_ascii_lowercase())
+        && word.bytes().all(|b| b.is_ascii_lowercase() || b == b'-')
+}
+
+/// Options whose next word is their value, not a subcommand.
+const VALUE_OPTIONS: [&str; 7] = ["-n", "-C", "-c", "-R", "--namespace", "--repo", "--context"];
+
+fn is_plain_token(token: &str) -> bool {
+    (1..=40).contains(&token.len())
+        && token
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'+' | b'-'))
+}
+
+fn is_assignment(word: &str) -> bool {
+    word.split_once('=').is_some_and(|(name, _)| {
+        !name.is_empty()
+            && !name.starts_with(|c: char| c.is_ascii_digit())
+            && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    })
+}
+
+/// The program a Bash command runs, plus its subcommand for git and the
+/// tools with a [`known_subcommands`] list or in [`OWN_TOOLS`]: `git -C /x
+/// diff` is `git diff`, and an unlisted word is `other`.
+///
+/// Only the first command of a chain counts, after a leading `cd <dir> &&`,
+/// variable assignments and the wrappers `env`, `command`, `time`,
+/// `timeout <n>` and `nice`. Every token is sanitized to
+/// `[A-Za-z0-9._+-]{1,40}` or becomes `other`, so no argument text leaks.
+pub fn command_family(command: &str) -> String {
+    let mut rest = command.trim_start();
+    rest = rest.strip_prefix('(').map_or(rest, str::trim_start);
+    while let Some(after_cd) = rest.strip_prefix("cd ") {
+        let cut = [
+            after_cd.find("&&").map(|at| (at, 2)),
+            after_cd.find(';').map(|at| (at, 1)),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
+        let Some((at, width)) = cut else { break };
+        rest = after_cd[at + width..].trim_start();
+    }
+    let first = rest
+        .split(['|', '&', ';', '\n', ')'])
+        .next()
+        .unwrap_or_default();
+    let mut words = first.split_whitespace().peekable();
+    while let Some(word) = words.peek().copied() {
+        match word {
+            "env" | "command" | "time" => {
+                words.next();
+            }
+            "timeout" => {
+                words.next();
+                while let Some(flag) = words.next_if(|w| w.starts_with('-')) {
+                    if matches!(flag, "-s" | "-k" | "--signal" | "--kill-after") {
+                        words.next();
+                    }
+                }
+                words.next();
+            }
+            "nice" => {
+                words.next();
+                if words.next_if(|w| *w == "-n").is_some() {
+                    words.next();
+                } else {
+                    words.next_if(|w| w.starts_with('-'));
+                }
+            }
+            _ if is_assignment(word) => {
+                words.next();
+            }
+            _ => break,
+        }
+    }
+    let Some(program_word) = words.next() else {
+        return "other".to_string();
+    };
+    let program = program_word.rsplit('/').next().unwrap_or_default();
+    if !is_plain_token(program) {
+        return "other".to_string();
+    }
+    let known = known_subcommands(program);
+    if known.is_none() && !OWN_TOOLS.contains(&program) {
+        return program.to_string();
+    }
+    // An own tool's unlisted option may take a value: once one is seen,
+    // the next word is not trusted as a subcommand.
+    let mut after_option = false;
+    while let Some(word) = words.next() {
+        if word.starts_with('-') {
+            if VALUE_OPTIONS.contains(&word) {
+                words.next();
+            } else {
+                after_option = true;
+            }
+            continue;
+        }
+        if program == "cargo" && word.starts_with('+') {
+            continue;
+        }
+        let kept = match known {
+            Some(list) => list.contains(&word),
+            None => !after_option && is_subcommand_word(word),
+        };
+        let subcommand = if kept { word } else { "other" };
+        return format!("{program} {subcommand}");
+    }
+    program.to_string()
+}
+
 /// The calls a line makes, whatever its time: a result in the window may
 /// answer a call made just before it.
-fn calls_in(entry: &serde_json::Value) -> Vec<(String, Kind)> {
+fn calls_in(entry: &serde_json::Value) -> Vec<(String, Call)> {
     content(entry)
         .iter()
         .filter(|block| block.get("type").and_then(serde_json::Value::as_str) == Some("tool_use"))
@@ -608,7 +864,14 @@ fn calls_in(entry: &serde_json::Value) -> Vec<(String, Kind)> {
                 .and_then(|input| input.get("command"))
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("");
-            Some((id.to_string(), Kind::of(tool, command)))
+            let family = (tool == "Bash").then(|| command_family(command));
+            Some((
+                id.to_string(),
+                Call {
+                    kind: Kind::of(tool, command),
+                    family,
+                },
+            ))
         })
         .collect()
 }
@@ -622,6 +885,23 @@ impl Audit {
                     .map(|(kind, b)| {
                         (
                             kind.as_str().to_string(),
+                            serde_json::json!({
+                                "calls": b.calls, "ok": b.ok, "failed": b.failed,
+                                "result_bytes": b.result_bytes,
+                                "over_summary_bytes": b.over_summary,
+                                "non_text_results": b.non_text,
+                            }),
+                        )
+                    })
+                    .collect(),
+            )
+        };
+        let family_buckets = |map: &BTreeMap<String, Bucket>| {
+            serde_json::Value::Object(
+                map.iter()
+                    .map(|(family, b)| {
+                        (
+                            family.clone(),
                             serde_json::json!({
                                 "calls": b.calls, "ok": b.ok, "failed": b.failed,
                                 "result_bytes": b.result_bytes,
@@ -673,6 +953,8 @@ impl Audit {
             "agent_launches": self.agent_launches,
             "main": buckets(&self.main),
             "sidechain": buckets(&self.sidechain),
+            "main_families": family_buckets(&self.main_families),
+            "sidechain_families": family_buckets(&self.sidechain_families),
             "usage_by_model": usage,
         })
     }
@@ -814,6 +1096,71 @@ mod tests {
         assert_eq!(audit.coverage.bad_lines, 2);
         assert_eq!((audit.coverage.files_scanned, audit.sessions), (2, 1));
         assert!(audit.coverage.complete());
+        let _ = fs::remove_dir_all(dir); // best effort: a temp dir
+    }
+
+    #[test]
+    fn command_families_name_the_program_and_subcommand_only() {
+        let cases = [
+            ("ls -la", "ls"),
+            ("git status", "git status"),
+            ("git -C /repo log --oneline", "git log"),
+            ("git -C /x diff --stat", "git diff"),
+            ("cd /x && git diff", "git diff"),
+            ("(cd /x && cargo test -p y)", "cargo test"),
+            ("FOO=1 timeout 60 pnpm exec vitest", "pnpm exec"),
+            ("gh run view 1 --log-failed", "gh run"),
+            ("gh pr view 3", "gh pr"),
+            ("kubectl -n ns get pods", "kubectl get"),
+            (
+                "/usr/local/bin/greenbelay board --repo r",
+                "greenbelay board",
+            ),
+            ("cat a | head", "cat"),
+            ("echo hi && ls", "echo"),
+            ("env X=1 nice cargo build", "cargo build"),
+            ("g\u{e9}n\u{e9}", "other"),
+            ("$(evil)", "other"),
+            ("git $(evil)", "git other"),
+            ("kubectl --kubeconfig prod get pods", "kubectl other"),
+            ("docker -H myhost ps", "docker other"),
+            ("gh --hostname corp api x", "gh other"),
+            ("git --git-dir secretname status", "git other"),
+            ("timeout -s KILL 60 cargo test", "cargo test"),
+            ("relais status --json", "relais status"),
+            ("greengate Prod", "greengate other"),
+            ("relais --state-dir mydir run", "relais other"),
+            ("cargo +nightly test", "cargo test"),
+            ("", "other"),
+            ("   ", "other"),
+        ];
+        for (command, family) in cases {
+            assert_eq!(command_family(command), family, "{command:?}");
+        }
+    }
+
+    #[test]
+    fn bash_results_land_in_family_buckets_and_a_duplicate_counts_once() {
+        let lines = vec![
+            call("2026-11-01T01:00:00Z", "a", "Bash", "git -C /r status"),
+            result("2026-11-01T01:00:01Z", "a", "1234", Ended::Passed),
+            call("2026-11-01T01:01:00Z", "b", "Bash", "gh pr view 3"),
+            result("2026-11-01T01:01:01Z", "b", "12", Ended::Passed),
+            result("2026-11-01T01:01:01Z", "b", "12", Ended::Passed),
+            call("2026-11-01T01:02:00Z", "c", "Read", ""),
+            result("2026-11-01T01:02:01Z", "c", "abc", Ended::Passed),
+        ];
+        let (roots, dir) = roots_with("families", &[&lines]);
+        let audit = audit(&roots, &window());
+        assert_eq!(audit.main_families.len(), 2);
+        let git = audit.main_families.get("git status").unwrap();
+        assert_eq!((git.calls, git.result_bytes), (1, 4));
+        let gh = audit.main_families.get("gh pr").unwrap();
+        assert_eq!((gh.calls, gh.result_bytes), (1, 2));
+        assert!(audit.sidechain_families.is_empty());
+        let json = audit.to_json(&window());
+        assert_eq!(json["main_families"]["gh pr"]["calls"], 1);
+        assert_eq!(json["main"]["git"]["calls"], 1);
         let _ = fs::remove_dir_all(dir); // best effort: a temp dir
     }
 

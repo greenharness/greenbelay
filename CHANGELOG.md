@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `greenbelay output-audit` breaks Bash results down by command family (the
+  program, plus the subcommand for git, gh, kubectl, cargo and the like), for
+  the main conversation and subagents: `main_families` and `sidechain_families`
+  in `--json`, the top 15 per context in the text. Only sanitized program names
+  are emitted.
 - New `tools/measure_fingerprint.py` (Unix only), a stdlib helper that fingerprints the
   recipe of a dated measure (script blob, tool version, source, schema,
   filters, window) in a sidecar JSON file and refuses a run whose recipe
