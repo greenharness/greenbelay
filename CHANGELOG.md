@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v6.7.0
+
+greenbelay 6.7.0 labels each rule's replay in `backtest --json` (#311) and
+breaks `output-audit` down by command family (#310).
+
 - `greenbelay output-audit` breaks Bash results down by command family (the
   program, plus the subcommand for git, gh, kubectl, cargo and the like), for
   the main conversation and subagents: `main_families` and `sidechain_families`
