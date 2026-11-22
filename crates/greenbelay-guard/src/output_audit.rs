@@ -321,6 +321,10 @@ pub struct Audit {
     pub main_families: BTreeMap<String, Bucket>,
     /// Bash results inside subagents, by command family.
     pub sidechain_families: BTreeMap<String, Bucket>,
+    /// The main conversation's Bash dumps, by [`dump_class`].
+    pub main_dumps: BTreeMap<String, DumpBucket>,
+    /// Bash dumps inside subagents, by [`dump_class`].
+    pub sidechain_dumps: BTreeMap<String, DumpBucket>,
     pub usage: BTreeMap<String, Usage>,
 }
 
@@ -531,9 +535,9 @@ impl Scan<'_> {
             self.audit.coverage.duplicate_results += 1;
             return;
         }
-        let (kind, family) = match calls.get(id) {
-            Some(call) => (call.kind, call.family.as_deref()),
-            None => (Kind::Unmatched, None),
+        let (kind, family, dump) = match calls.get(id) {
+            Some(call) => (call.kind, call.family.as_deref(), call.dump.as_deref()),
+            None => (Kind::Unmatched, None, None),
         };
         let (bytes, non_text) =
             result_size(block.get("content").unwrap_or(&serde_json::Value::Null));
@@ -557,6 +561,17 @@ impl Scan<'_> {
                 .entry(family.to_string())
                 .or_default()
                 .add(bytes, non_text, failed);
+        }
+        if let Some(class) = dump {
+            let text = result_text(block.get("content").unwrap_or(&serde_json::Value::Null));
+            let dumps = match context {
+                Context::Subagent => &mut self.audit.sidechain_dumps,
+                Context::Main => &mut self.audit.main_dumps,
+            };
+            dumps
+                .entry(class.to_string())
+                .or_default()
+                .add(&text, failed);
         }
     }
 
@@ -624,6 +639,135 @@ struct Call {
     kind: Kind,
     /// Set for Bash calls only.
     family: Option<String>,
+    /// Set for Bash calls that dump a file: see [`dump_class`].
+    dump: Option<String>,
+}
+
+/// A dump result past this is one `whole-file-dump` may refuse.
+const DUMP_LARGE: u64 = crate::rules::whole_file_dump::REFUSABLE;
+/// A large dump whose average line is longer than this is the long-line
+/// case a bounded window is refused for (the plan's Phase 2).
+const DUMP_LONG_LINE: u64 = 400;
+/// The Read tool cuts a line at this many characters: past it, Read with a
+/// window would have returned less.
+const READ_LINE_CUT: u64 = 2000;
+
+/// Bash results that dump a file, by [`dump_class`]: what sizes
+/// `whole-file-dump`'s gaps (plan 2026-11-22-bash-reads-whole-file-dump-gaps,
+/// Phase 0) from the bytes the results really carried.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct DumpBucket {
+    pub calls: u64,
+    pub result_bytes: u64,
+    /// Results over [`DUMP_LARGE`].
+    pub large: u64,
+    pub large_bytes: u64,
+    /// Large results whose average line is over [`DUMP_LONG_LINE`] bytes.
+    pub long_lines: u64,
+    pub long_lines_bytes: u64,
+    /// Long-line results whose average line is over [`READ_LINE_CUT`]: Read
+    /// would have cut them.
+    pub cut_by_read: u64,
+    pub cut_by_read_bytes: u64,
+    /// Refused by a hook (`is_error`, naming `whole-file-dump`).
+    pub refused: u64,
+    /// Too large for the result: persisted to a file instead.
+    pub persisted: u64,
+}
+
+impl DumpBucket {
+    fn add(&mut self, text: &str, failed: bool) {
+        let bytes = text.len() as u64;
+        self.calls += 1;
+        self.result_bytes += bytes;
+        if failed && text.contains("whole-file-dump") {
+            self.refused += 1;
+            return;
+        }
+        if text.contains("<persisted-output>") {
+            self.persisted += 1;
+            return;
+        }
+        if bytes <= DUMP_LARGE {
+            return;
+        }
+        self.large += 1;
+        self.large_bytes += bytes;
+        let lines = text.lines().count().max(1) as u64;
+        let average = bytes / lines;
+        if average > DUMP_LONG_LINE {
+            self.long_lines += 1;
+            self.long_lines_bytes += bytes;
+        }
+        if average > READ_LINE_CUT {
+            self.cut_by_read += 1;
+            self.cut_by_read_bytes += bytes;
+        }
+    }
+}
+
+/// Clauses that print nothing, so a command made of dumps and these puts
+/// only the dumps' bytes in its result.
+fn quiet(clause: &crate::shell::Simple) -> bool {
+    match clause.words.first() {
+        None => true,
+        Some(first) => {
+            matches!(
+                first.text.as_str(),
+                "cd" | "pushd" | "popd" | "export" | "unset" | "set" | "setopt" | "true" | ":"
+            ) || (clause.words.len() == 1 && first.text.contains('='))
+        }
+    }
+}
+
+/// The class of a Bash command that dumps a file, read with the parser
+/// `whole-file-dump` uses: `whole-one` (one whole file, what the rule judges
+/// today), `whole-many` (several whole files), `window` (one bounded
+/// read), `window-many`, or `mixed`. ` (mixed output)` is appended when the
+/// result is not the dumps' alone: another clause prints, a `||` joins them,
+/// or part of the command could not be read. `None` when nothing is dumped.
+pub fn dump_class(command: &str) -> Option<String> {
+    use crate::rules::dump::{dumps, Extent};
+    use crate::shell::Connector;
+    let parsed = crate::shell::lex(command);
+    let all = dumps(&parsed);
+    if all.is_empty() {
+        return None;
+    }
+    let whole = all.iter().filter(|d| d.extent == Extent::Whole).count();
+    let shape = match (all.len(), whole) {
+        (1, 1) => "whole-one",
+        (_, w) if w == all.len() => "whole-many",
+        (1, 0) => "window",
+        (_, 0) => "window-many",
+        _ => "mixed",
+    };
+    let alone = parsed.fully_read()
+        && parsed.clauses().iter().all(|c| {
+            c.prev != Some(Connector::OrOr)
+                && c.next != Some(Connector::OrOr)
+                && (c.nested.is_some()
+                    || quiet(c)
+                    || all.iter().any(|d| d.at >= c.at && d.at < c.end))
+        });
+    Some(if alone {
+        shape.to_string()
+    } else {
+        format!("{shape} (mixed output)")
+    })
+}
+
+/// The text of a tool result's text blocks.
+fn result_text(content: &serde_json::Value) -> String {
+    match content {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Array(blocks) => blocks
+            .iter()
+            .filter(|b| b.get("type").and_then(serde_json::Value::as_str) == Some("text"))
+            .filter_map(|b| b.get("text").and_then(serde_json::Value::as_str))
+            .collect(),
+        _ => String::new(),
+    }
 }
 
 /// The subcommands a third-party program's family may name. A word outside
@@ -865,11 +1009,17 @@ fn calls_in(entry: &serde_json::Value) -> Vec<(String, Call)> {
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("");
             let family = (tool == "Bash").then(|| command_family(command));
+            let dump = if tool == "Bash" {
+                dump_class(command)
+            } else {
+                None
+            };
             Some((
                 id.to_string(),
                 Call {
                     kind: Kind::of(tool, command),
                     family,
+                    dump,
                 },
             ))
         })
@@ -907,6 +1057,26 @@ impl Audit {
                                 "result_bytes": b.result_bytes,
                                 "over_summary_bytes": b.over_summary,
                                 "non_text_results": b.non_text,
+                            }),
+                        )
+                    })
+                    .collect(),
+            )
+        };
+        let dump_buckets = |map: &BTreeMap<String, DumpBucket>| {
+            serde_json::Value::Object(
+                map.iter()
+                    .map(|(class, b)| {
+                        (
+                            class.clone(),
+                            serde_json::json!({
+                                "calls": b.calls, "result_bytes": b.result_bytes,
+                                "large": b.large, "large_bytes": b.large_bytes,
+                                "long_lines": b.long_lines,
+                                "long_lines_bytes": b.long_lines_bytes,
+                                "cut_by_read": b.cut_by_read,
+                                "cut_by_read_bytes": b.cut_by_read_bytes,
+                                "refused": b.refused, "persisted": b.persisted,
                             }),
                         )
                     })
@@ -955,6 +1125,8 @@ impl Audit {
             "sidechain": buckets(&self.sidechain),
             "main_families": family_buckets(&self.main_families),
             "sidechain_families": family_buckets(&self.sidechain_families),
+            "main_dumps": dump_buckets(&self.main_dumps),
+            "sidechain_dumps": dump_buckets(&self.sidechain_dumps),
             "usage_by_model": usage,
         })
     }
@@ -1097,6 +1269,48 @@ mod tests {
         assert_eq!((audit.coverage.files_scanned, audit.sessions), (2, 1));
         assert!(audit.coverage.complete());
         let _ = fs::remove_dir_all(dir); // best effort: a temp dir
+    }
+
+    #[test]
+    fn dump_classes_follow_the_rules_parser() {
+        let class = |c: &str| dump_class(c);
+        assert_eq!(class("cat a.rs").as_deref(), Some("whole-one"));
+        assert_eq!(
+            class("cd /x && cat a.rs b.rs").as_deref(),
+            Some("whole-many")
+        );
+        assert_eq!(class("cat a.md; cat b.rs").as_deref(), Some("whole-many"));
+        assert_eq!(class("sed -n 1,50p log.jsonl").as_deref(), Some("window"));
+        assert_eq!(
+            class("cat a.rs; sed -n 1,9p b.rs").as_deref(),
+            Some("mixed")
+        );
+        assert_eq!(
+            class("cat a.rs && cargo test").as_deref(),
+            Some("whole-one (mixed output)")
+        );
+        assert_eq!(
+            class("cat a.rs || cat b.rs").as_deref(),
+            Some("whole-many (mixed output)")
+        );
+        assert_eq!(class("cat a.rs | grep x"), None);
+        assert_eq!(class("cat > x.py <<'EOF'\nprint(1)\nEOF\n"), None);
+        assert_eq!(class("ls"), None);
+    }
+
+    #[test]
+    fn a_dump_bucket_sorts_large_long_line_and_refused_results() {
+        let mut b = DumpBucket::default();
+        b.add("short\n", false);
+        b.add(&"x\n".repeat(5000), false); // 10 KB, 2-byte lines
+        b.add(&format!("{}\n", "y".repeat(9000)), false); // one 9 KB line
+        b.add("greenbelay/whole-file-dump: refused", true);
+        b.add("<persisted-output>…</persisted-output>", false);
+        assert_eq!(
+            (b.calls, b.large, b.long_lines, b.cut_by_read),
+            (5, 2, 1, 1)
+        );
+        assert_eq!((b.refused, b.persisted), (1, 1));
     }
 
     #[test]

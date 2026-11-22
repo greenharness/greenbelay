@@ -1419,7 +1419,12 @@ edit, agent, lsp, web, mcp, other-tool, unmatched), apart from subagents,
 beside the token usage the transcripts report, by model. Bash results are
 also broken down by command family (the program, plus the subcommand for
 git, gh, kubectl, cargo, npm, pnpm, docker, brew, greenbelay, greengate,
-relais and amont), for the main conversation and for subagents.
+relais and amont), for the main conversation and for subagents. Bash file
+dumps (`cat`, `sed -n`, `head`, `tail`, read as `whole-file-dump` reads
+them) are broken down by class: one or many whole files, one or many
+windows, or mixed, marked `(mixed output)` when another clause also prints,
+with the results over 8 KiB, those with long lines (average over 400 B),
+those the Read tool would have cut (over 2,000 B) and the hook refusals.
 
 Each result, each agent launch and each message counts once, however many
 times a resumed session copies it. `over 200 B` is the share of passing
@@ -1533,6 +1538,37 @@ fn scaled(count: u64) -> String {
         )
 }
 
+/// One context's Bash dumps by class: how many results passed 8 KiB, how
+/// many of those had long lines, and how many Read would have cut.
+fn dumps_text(
+    title: &str,
+    map: &std::collections::BTreeMap<String, greenbelay_guard::output_audit::DumpBucket>,
+) -> String {
+    let mut out = format!("\n{title}, Bash file dumps by class\n");
+    if map.is_empty() {
+        out.push_str("  none\n");
+        return out;
+    }
+    out.push_str(&format!(
+        "  {:<28} {:>6} {:>7} {:>11} {:>12} {:>11} {:>7}\n",
+        "class", "calls", "bytes", "over 8 KiB", "long lines", "Read cuts", "refused"
+    ));
+    let pair = |calls: u64, bytes: u64| format!("{calls}/{}", scaled(bytes));
+    for (class, b) in map {
+        out.push_str(&format!(
+            "  {:<28} {:>6} {:>7} {:>11} {:>12} {:>11} {:>7}\n",
+            class,
+            b.calls,
+            scaled(b.result_bytes),
+            pair(b.large, b.large_bytes),
+            pair(b.long_lines, b.long_lines_bytes),
+            pair(b.cut_by_read, b.cut_by_read_bytes),
+            b.refused
+        ));
+    }
+    out
+}
+
 /// The top families of one context by result bytes, then the rest summed.
 fn families_text(
     title: &str,
@@ -1633,6 +1669,12 @@ fn output_audit_text(
         ("subagents", &audit.sidechain_families),
     ] {
         out.push_str(&families_text(title, map));
+    }
+    for (title, map) in [
+        ("main conversation", &audit.main_dumps),
+        ("subagents", &audit.sidechain_dumps),
+    ] {
+        out.push_str(&dumps_text(title, map));
     }
     out.push_str("\nreported usage by model, tokens (not billing, not quota)\n");
     if audit.usage.is_empty() {

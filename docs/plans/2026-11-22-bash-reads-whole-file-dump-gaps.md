@@ -72,7 +72,7 @@ relais-review: Read/Grep/Glob/LSP only), so no reviewer exemption is needed.
 
 ## Phases
 
-- **Phase 0: replay with the real parser (gate)**
+- **Phase 0: replay with the real parser (gate)** ✅ done 2026-11-22: (b) dropped, (a) ships
   Files: `crates/greenbelay-guard/src/backtest.rs`.
 
   - Measure with `greenbelay backtest`, using `dumps(parsed)`, charging each call its recorded tool_result byte length (stat only to class whole vs bounded: worktrees of 11-09..11-21 are mostly gone). If backtest
@@ -117,7 +117,7 @@ relais-review: Read/Grep/Glob/LSP only), so no reviewer exemption is needed.
     `cat fifo small.md` only advises and `cat fifo big.rs` refuses on `big.rs`, and the FIFO is never
     opened; a missing operand is skipped and the rest are summed; `cat a b c` repeated passes with all three keys recorded; `cat a || cat b` (each under 8 KiB) only advises; `cat big.rs || true` still refuses on `big.rs`.
 
-- **Phase 2: (b) bounded windows by bytes (only if Phase 0 keeps it)**
+- **Phase 2: (b) bounded windows by bytes (only if Phase 0 keeps it)** ❌ dropped by Phase 0's kill criterion
   Files: `crates/greenbelay-guard/src/rules/dump.rs`, `crates/greenbelay-guard/src/rules/whole_file_dump.rs`, `tests/hook.rs`.
 
   - For `Extent::Lines(n)` and `Extent::Bytes(n)`, and only after `metadata.is_file()` (never open a
@@ -165,6 +165,35 @@ relais-review: Read/Grep/Glob/LSP only), so no reviewer exemption is needed.
 ## Code review
 
 - greenbelay: backend, lang:rust, unix, tui (the refusal text changes)
+
+## Decision log
+
+- 2026-11-22, Phase 0 placement: the replay is a dump class in `greenbelay output-audit`, which already
+  pairs each Bash call with its result, not a `backtest --bytes` flag. Backtest replays `examine`
+  with no results, and the in-flight `feat/backtest-replay-label` branch is editing `backtest.rs`.
+  The parser is the same (`shell::lex` + `rules::dump::dumps`).
+- 2026-11-22, Phase 2 dropped: the long-line windows it would refuse come to about 80 KB in the window,
+  far below the 1 MB bar. The large windows are ordinary short-line reads of 100+ lines. Refusing
+  those would only move them to a Read with the same `limit`, which `read-unbounded-large` does not
+  refuse, so nothing would be saved. The carried items that belong to Phase 2 (3, 4, 8, 9, 10) go
+  with it.
+
+## Outcome
+
+Phase 0 (`greenbelay output-audit --since 2026-11-09T00:00:00Z --until 2026-11-22T00:00:00Z`, the
+dump classes), results over 8 KiB, calls/bytes:
+
+| class | main | subagents |
+|---|---|---|
+| whole-many (attributable) | 0 / 0 | 22 / 325 KB (8 refused) |
+| whole-many (mixed output) | 8 / 89 KB | 62 / 842 KB |
+| mixed whole+window (attributable) | 2 / 21 KB | 15 / 210 KB |
+| mixed whole+window (mixed output) | 10 / 110 KB | 47 / 616 KB |
+| window, long lines (all) | 3 / 45 KB | 3 / 37 KB |
+| window, Read would cut | 0 | 0 |
+
+(a) is bounded by about 0.55 MB attributable and 2 MB in all over 13 days, mostly in subagents. (b)
+is about 80 KB, so it is dropped.
 
 ## Delivery
 

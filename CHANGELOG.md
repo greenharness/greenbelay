@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `greenbelay output-audit` also breaks Bash file dumps (the `cat`/`sed -n`/
+  `head`/`tail` reads `whole-file-dump` judges, read with its own parser) down
+  by class: `whole-one`, `whole-many`, `window`, `window-many`, `mixed`, each
+  marked `(mixed output)` when another clause also prints. Per class it gives
+  the results over 8 KiB, those with long lines, those the Read tool would
+  have cut, and the hook refusals: `main_dumps` and `sidechain_dumps` in
+  `--json`.
+
 ## v6.7.0
 
 greenbelay 6.7.0 labels each rule's replay in `backtest --json` (#311) and

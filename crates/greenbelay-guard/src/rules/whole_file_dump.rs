@@ -71,7 +71,7 @@ fn examine(parsed: &Parsed) -> Option<Finding> {
 /// command through when it is repeated); a smaller one, or a bounded read,
 /// only ever advises. The same threshold as `read-unbounded-large`, measured
 /// for the Read tool's whole reads (deliberate-output plan, Phase 3).
-const REFUSABLE: u64 = 8 * 1024;
+pub const REFUSABLE: u64 = 8 * 1024;
 
 /// The file a finding dumps: where it is, resolved against the directory its
 /// clause runs in, the path as the command wrote it, and how much is read.
