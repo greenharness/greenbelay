@@ -220,6 +220,7 @@ is about 80 KB, so it is dropped.
 | clippy `-D warnings`, `cargo fmt --check` | clean | clean |
 | `greenbelay check 'cat small.md && cat big.rs'` (1 KB + 20 KB) | refuses, names both files and the total | deny: `small.md` (1 KB), `big.rs` (20 KB), "Together 21 KB"; the remedy names `big.rs` |
 | `greenbelay check 'cat a.txt b.txt c.txt'` (4 KB each) | refuses on the sum | deny, "Together 12 KB" |
+| CI `tests (windows-latest)` on PR #314, first push | pass | fail: the symlink test used `std::os::unix`; gated `#[cfg(unix)]` (ff2e974e) |
 | `greenbelay check 'cat big.rs \|\| true'` | refuses on `big.rs` | deny |
 | `greenbelay check 'cat a.txt \|\| cat b.txt'` (4 KB each) | at most advises | silent: each file is under the 4 KiB small floor |
 | repeat passes, subset retry passes, one journal outcome per command | as specified | covered by the new `tests/hook.rs` cases (`at_deny_the_whole_dumps_of_a_command_are_summed`, `at_deny_a_subset_retry_passes`) |
