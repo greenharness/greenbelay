@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v6.8.0
+
+greenbelay 6.8.0 makes `whole-file-dump` judge every dump in a Bash command, so
+small files that add up are refused together, and adds Bash dump classes to
+`output-audit` (#314).
+
 - `whole-file-dump` judges every whole dump in a Bash command, not only the
   first: the refusal fires when the regular, non-exempt files it dumps
   (`cat small && cat big`, `cat a b c`) add up to over 8 KiB. The right of
