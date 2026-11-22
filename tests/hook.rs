@@ -4356,6 +4356,8 @@ fn at_deny_small_files_that_add_up_are_refused() {
 
 /// One path whose told record cannot be kept (a newline in its name) among
 /// paths that can: the command advises, and journals `unrecorded` once.
+/// Unix only: Windows forbids a newline in a file name.
+#[cfg(unix)]
 #[test]
 fn at_deny_a_mixed_told_dump_answer_set_advises_and_journals_unrecorded_once() {
     let fixture = ReadFixture::with_size("dump-mixed-told", 6_000);
