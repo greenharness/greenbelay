@@ -21,6 +21,9 @@ match	sed -n 1,140p docs/agent-guard.md
 match	sed -n 140,300p crates/amont-runtime/src/live.rs
 match	head -200 /tmp/make-check3.log
 match	cd ~/Developer/Perso/al-wt/storm-canvas && sed -n '1,400p' app/lib/landscapeDoc.ts
+# Several whole dumps in one command: the aggregate is what confirm sums.
+match	cat a.md; cat b.rs
+match	cat a.txt b.txt c.txt
 
 # --- the rule must stay silent ---
 # A window.

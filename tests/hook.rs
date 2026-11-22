@@ -4314,7 +4314,7 @@ fn at_deny_the_whole_dumps_of_a_command_are_summed() {
     );
 
     for name in ["a.txt", "b.txt", "c.txt"] {
-        dump_file(&fixture, name, 4_000);
+        dump_file(&fixture, name, 9_000);
     }
     let three = dump_as(&fixture, "dsum-02", None, "cat a.txt b.txt c.txt");
     assert!(denied(&three), "{}", three.stdout);
@@ -4333,6 +4333,34 @@ fn at_deny_the_whole_dumps_of_a_command_are_summed() {
         let alone = dump_as(&fixture, "dsum-02", None, &format!("cat {name}"));
         assert!(!denied(&alone), "{name} was told: {}", alone.stdout);
     }
+}
+
+/// One path whose told record cannot be kept (a newline in its name) among
+/// paths that can: the command advises, and journals `unrecorded` once.
+#[test]
+fn at_deny_a_mixed_told_dump_answer_set_advises_and_journals_unrecorded_once() {
+    let fixture = ReadFixture::with_size("dump-mixed-told", 6_000);
+    dump_file(&fixture, "a.txt", 9_000);
+    dump_file(&fixture, "n\nl.txt", 9_000);
+    // The told key is the canonical path, so a link to a file with a newline
+    // in its name cannot be recorded, while `a.txt` can.
+    std::os::unix::fs::symlink(fixture.dir.join("n\nl.txt"), fixture.dir.join("b.txt"))
+        .expect("a symlink");
+    let command = "cat a.txt b.txt";
+    let reply = dump_as(&fixture, "dmix-01", None, command);
+    assert!(!denied(&reply), "{}", reply.stdout);
+    assert!(
+        reply.reason().contains("whole-file-dump"),
+        "{}",
+        reply.stdout
+    );
+    let journal = std::fs::read_to_string(home().join("greenbelay").join("journal.log"))
+        .expect("the hook wrote a journal");
+    let unrecorded = journal
+        .lines()
+        .filter(|l| l.contains("whole-file-dump") && l.contains("unrecorded"))
+        .count();
+    assert_eq!(unrecorded, 1, "{journal}");
 }
 
 /// A retry naming a subset of the refused files passes: each path is told.

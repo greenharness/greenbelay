@@ -11,6 +11,11 @@
   subset of it passes; the journal has one outcome per command. The sentence
   that promises the repeat now reads "If you need this output in the result,
   repeat this same command unchanged".
+  When the command's `||` structure cannot be read, the refusal is capped at
+  advice and says so. The multi-file remedy names the largest file and says to
+  read the files separately; the sizes and the total in the reason are rounded
+  the same way. The text table of `output-audit` dumps now fits 80 columns
+  (`persisted` stays in `--json` only).
 - `greenbelay output-audit` also breaks Bash file dumps (the `cat`/`sed -n`/
   `head`/`tail` reads `whole-file-dump` judges, read with its own parser) down
   by class: `whole-one`, `whole-many`, `window`, `window-many`, `mixed`, each

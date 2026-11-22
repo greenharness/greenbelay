@@ -91,7 +91,7 @@ pub const REFUSABLE: u64 = 8 * 1024;
 
 /// The file a dump names: where it is, resolved against `cwd` (the directory
 /// its clause runs in). `None` when a `~/` path has no `HOME` to expand against.
-pub fn resolve(cwd: &Path, dump: &Dump) -> Option<PathBuf> {
+fn resolve(cwd: &Path, dump: &Dump) -> Option<PathBuf> {
     if dump.path.starts_with('/') {
         Some(PathBuf::from(&dump.path))
     } else if let Some(rest) = dump.path.strip_prefix("~/") {
@@ -116,18 +116,11 @@ struct Seen {
     cwd: PathBuf,
     extent: Extent,
     len: u64,
-    /// A regular file: a FIFO, a device or a directory is never counted, and
-    /// never opened.
-    regular: bool,
-    exempt: bool,
-    /// On the right of `||`: it may print, but is not certain to.
-    alternative: bool,
-}
-
-impl Seen {
-    fn charged(&self) -> bool {
-        matches!(self.extent, Extent::Whole) && self.regular && !self.exempt && !self.alternative
-    }
+    /// The bytes this dump counts toward a refusal: its length when it is a
+    /// whole dump of a regular file (a FIFO, a device or a directory is never
+    /// counted, and never opened), not exempt, and not on the right of `||`
+    /// (it may print, but is not certain to). `None` when it is not charged.
+    charged: Option<u64>,
 }
 
 /// Files a refusal is not made for: plans, diffs and patches, and persisted
@@ -148,69 +141,84 @@ fn exempt(path: &Path) -> bool {
     crate::rules::persisted_output_dump::is_persisted(&path.to_string_lossy())
 }
 
-/// The byte spans of every command on the right of a `||`.
-fn alternatives(src: &str) -> Vec<std::ops::Range<usize>> {
+/// The byte spans of every command on the right of a `||`; `None` when the
+/// command's `||` structure could not be read.
+fn alternatives(src: &str) -> Option<Vec<std::ops::Range<usize>>> {
     use crate::analysis::ir::{AndOrOp, Cmd};
-    fn walk(cmd: &Cmd, out: &mut Vec<std::ops::Range<usize>>) {
+    fn walk(cmd: &Cmd) -> Vec<std::ops::Range<usize>> {
         match cmd {
             Cmd::AndOr { first, rest, .. } => {
-                walk(first, out);
+                let mut ranges = walk(first);
                 for (op, next) in rest {
                     if *op == AndOrOp::Or {
-                        out.push(next.span());
+                        ranges.push(next.span());
                     }
-                    walk(next, out);
+                    ranges.extend(walk(next));
                 }
+                ranges
             }
-            Cmd::Seq { items, .. } => items.iter().for_each(|i| walk(&i.cmd, out)),
-            Cmd::Pipeline { cmds, .. } => cmds.iter().for_each(|c| walk(c, out)),
+            Cmd::Seq { items, .. } => items.iter().flat_map(|item| walk(&item.cmd)).collect(),
+            Cmd::Pipeline { cmds, .. } => cmds.iter().flat_map(walk).collect(),
             Cmd::If {
                 arms, otherwise, ..
             } => {
-                for (c, b) in arms {
-                    walk(c, out);
-                    walk(b, out);
+                let mut ranges: Vec<_> = arms
+                    .iter()
+                    .flat_map(|(condition, body)| {
+                        let mut both = walk(condition);
+                        both.extend(walk(body));
+                        both
+                    })
+                    .collect();
+                if let Some(otherwise_body) = otherwise {
+                    ranges.extend(walk(otherwise_body));
                 }
-                if let Some(o) = otherwise {
-                    walk(o, out);
-                }
+                ranges
             }
-            Cmd::Case { arms, .. } => arms.iter().for_each(|a| walk(&a.body, out)),
+            Cmd::Case { arms, .. } => arms.iter().flat_map(|arm| walk(&arm.body)).collect(),
             Cmd::For { body, .. }
             | Cmd::ArithFor { body, .. }
             | Cmd::Group { body, .. }
             | Cmd::Subshell { body, .. }
             | Cmd::FuncDef { body, .. }
-            | Cmd::Redirected { body, .. } => walk(body, out),
+            | Cmd::Redirected { body, .. } => walk(body),
             Cmd::Loop { cond, body, .. } => {
-                walk(cond, out);
-                walk(body, out);
+                let mut ranges = walk(cond);
+                ranges.extend(walk(body));
+                ranges
             }
-            Cmd::Simple(_) | Cmd::Arith { .. } | Cmd::Cond { .. } | Cmd::Unsupported { .. } => {}
+            Cmd::Simple(_) | Cmd::Arith { .. } | Cmd::Cond { .. } | Cmd::Unsupported { .. } => {
+                Vec::new()
+            }
         }
     }
-    let mut out = Vec::new();
-    if let Ok(cmd) = crate::analysis::frontend::parse(src) {
-        walk(&cmd, &mut out);
-    }
-    out
+    crate::analysis::frontend::parse(src)
+        .ok()
+        .map(|cmd| walk(&cmd))
 }
 
-/// Every dump of the command whose file is there, looked at with `stat` alone.
-fn seen(ctx: &Context) -> Vec<Seen> {
-    let alternative_spans = alternatives(ctx.command);
-    dumps(ctx.parsed)
+/// Every dump of the command whose file is there, looked at with `stat` alone,
+/// and whether the command's `||` structure could be read.
+fn seen(context: &Context) -> (Vec<Seen>, bool) {
+    let alternative_spans = alternatives(context.command);
+    let readable = alternative_spans.is_some();
+    let alternative_spans = alternative_spans.unwrap_or_default();
+    let files = dumps(context.parsed)
         .into_iter()
         .filter_map(|dump| {
-            let cwd = ctx.cwd_at(dump.at);
+            let cwd = context.cwd_at(dump.at);
             let path = resolve(&cwd, &dump)?;
             let meta = std::fs::metadata(&path).ok()?;
+            let alternative = alternative_spans
+                .iter()
+                .any(|span| dump.at < span.end && span.start < dump.end);
+            let charged = (matches!(dump.extent, Extent::Whole)
+                && meta.is_file()
+                && !exempt(&path)
+                && !alternative)
+                .then_some(meta.len());
             Some(Seen {
-                alternative: alternative_spans
-                    .iter()
-                    .any(|span| dump.at < span.end && span.start < dump.end),
-                exempt: exempt(&path),
-                regular: meta.is_file(),
+                charged,
                 len: meta.len(),
                 extent: dump.extent,
                 shown: dump.path,
@@ -218,25 +226,33 @@ fn seen(ctx: &Context) -> Vec<Seen> {
                 cwd,
             })
         })
-        .collect()
+        .collect();
+    (files, readable)
 }
 
 enum Verdict {
     /// The whole dumps of regular files, together over [`REFUSABLE`].
     Refuse(Vec<Seen>),
+    /// Over [`REFUSABLE`] too, but the command's `||` structure could not be
+    /// read, so which dumps are certain to print is not known: advice only.
+    Unreadable(Vec<Seen>),
     Advise(Seen),
     Silent(&'static str),
 }
 
-fn judge(ctx: &Context) -> Verdict {
-    let mut all = seen(ctx);
+fn judge(context: &Context) -> Verdict {
+    let (mut all, readable) = seen(context);
     if all.is_empty() {
         return Verdict::Silent("the file is not there to read");
     }
-    let total: u64 = all.iter().filter(|s| s.charged()).map(|s| s.len).sum();
+    let total: u64 = all.iter().filter_map(|s| s.charged).sum();
     if total > REFUSABLE {
-        all.retain(Seen::charged);
-        return Verdict::Refuse(all);
+        all.retain(|s| s.charged.is_some());
+        return if readable {
+            Verdict::Refuse(all)
+        } else {
+            Verdict::Unreadable(all)
+        };
     }
     match all.into_iter().find(|s| qualifies(s.extent, Some(s.len))) {
         Some(advised) => Verdict::Advise(advised),
@@ -246,8 +262,8 @@ fn judge(ctx: &Context) -> Verdict {
 
 /// The files `confirm` refused, for the hook to bind the refuse-once telling
 /// to: empty when the command is not refused.
-pub fn refused(ctx: &Context) -> Vec<Refusal> {
-    match judge(ctx) {
+pub fn refused(context: &Context) -> Vec<Refusal> {
+    match judge(context) {
         Verdict::Refuse(files) => files
             .into_iter()
             .map(|s| Refusal {
@@ -255,19 +271,18 @@ pub fn refused(ctx: &Context) -> Vec<Refusal> {
                 cwd: s.cwd,
             })
             .collect(),
-        Verdict::Advise(_) | Verdict::Silent(_) => Vec::new(),
+        Verdict::Unreadable(_) | Verdict::Advise(_) | Verdict::Silent(_) => Vec::new(),
     }
 }
 
 /// The most files a reason lists by name.
-const LISTED: usize = 5;
+pub const LISTED: usize = 5;
 
 fn kilobytes(len: u64) -> u64 {
     len.div_ceil(1024)
 }
 
 fn refusal_reason(files: &[Seen]) -> String {
-    let total: u64 = files.iter().map(|s| s.len).sum();
     if let [only] = files {
         return format!(
             "{} It is {} KB, over the 8 KB past which a whole dump is refused.",
@@ -275,6 +290,7 @@ fn refusal_reason(files: &[Seen]) -> String {
             kilobytes(only.len)
         );
     }
+    let total: u64 = files.iter().map(|s| kilobytes(s.len)).sum();
     let mut listed: Vec<String> = files
         .iter()
         .take(LISTED)
@@ -284,55 +300,93 @@ fn refusal_reason(files: &[Seen]) -> String {
         listed.push(format!("and {} more", files.len() - LISTED));
     }
     format!(
-        "This command pours whole files into the tool result: {}. Together {} KB, over the \
+        "This command pours whole files into the tool result: {}. Together {total} KB, over the \
          8 KB past which whole dumps are refused: no line numbers, no size cap, and every \
          later turn of this session carries them again.",
         listed.join(", "),
-        kilobytes(total)
     )
 }
 
-fn remedy_for(shown: &str, path: &Path) -> String {
-    // Code LSP answers for is found with LSP, not with the grep this
-    // rule's remedy names for any other file.
-    if crate::lsp::is_code(shown) && crate::lsp::serves(path).is_ok() {
-        "Ask LSP first (`documentSymbol`, `goToDefinition`), then open the file with \
-         the Read tool, with `offset`/`limit` around that line. `cat` is fine inside \
-         a pipe or a heredoc."
-            .to_string()
-    } else {
-        pour_remedy(shown)
+/// What to do instead, for the dumped `files` (one or more): code LSP answers
+/// for is found with LSP, not with the grep this rule's remedy names for any
+/// other file.
+fn remedy_for(largest: &Seen, several: bool) -> String {
+    let lsp = crate::lsp::is_code(&largest.shown) && crate::lsp::serves(&largest.path).is_ok();
+    let shown = &largest.shown;
+    match (lsp, several) {
+        (true, false) => {
+            "Ask LSP first (`documentSymbol`, `goToDefinition`), then open the file with \
+             the Read tool, with `offset`/`limit` around that line. `cat` is fine inside \
+             a pipe or a heredoc."
+                .to_string()
+        }
+        (true, true) => format!(
+            "Ask LSP first (`documentSymbol`, `goToDefinition`), then read the files \
+             separately with the Read tool, starting with the largest, `{shown}`, with \
+             `offset`/`limit` around the lines you need. `cat` is fine inside a pipe or a \
+             heredoc."
+        ),
+        (false, false) => pour_remedy(shown),
+        (false, true) => format!(
+            "Read the files separately with the Read tool, starting with the largest, \
+             `{shown}`, with `offset`/`limit` around the part you need — \
+             `grep -n '<anchor>' {shown} | head` finds the line first. `cat` is fine inside \
+             a pipe or a heredoc."
+        ),
     }
 }
 
-fn confirm(ctx: &Context, _finding: &Finding) -> Confirmed {
-    match judge(ctx) {
+fn largest(files: &[Seen]) -> Option<&Seen> {
+    files.iter().max_by_key(|s| s.len)
+}
+
+fn confirm(context: &Context, _finding: &Finding) -> Confirmed {
+    match judge(context) {
         Verdict::Silent(why) => Confirmed::No(why),
         Verdict::Advise(file) => Confirmed::YesSaying {
             floor: None,
             ceiling: Some(Stance::Advise),
             reason: pour_reason(&file.shown),
-            remedy: Some(remedy_for(&file.shown, &file.path)),
+            remedy: Some(remedy_for(&file, false)),
             excerpt: file.shown,
         },
         Verdict::Refuse(files) => {
-            let largest = files
-                .iter()
-                .max_by_key(|s| s.len)
-                .expect("a refusal holds at least one file");
+            let Some(biggest) = largest(&files) else {
+                return Confirmed::No("no whole dump is charged");
+            };
             Confirmed::YesSaying {
                 floor: None,
                 ceiling: None,
                 reason: refusal_reason(&files),
-                remedy: Some(remedy_for(&largest.shown, &largest.path)),
-                excerpt: files
-                    .iter()
-                    .map(|s| s.shown.as_str())
-                    .collect::<Vec<_>>()
-                    .join(" "),
+                remedy: Some(remedy_for(biggest, files.len() > 1)),
+                excerpt: excerpt_of(&files),
+            }
+        }
+        Verdict::Unreadable(files) => {
+            let Some(biggest) = largest(&files) else {
+                return Confirmed::No("no whole dump is charged");
+            };
+            Confirmed::YesSaying {
+                floor: None,
+                ceiling: Some(Stance::Advise),
+                reason: format!(
+                    "{} The command's `||` structure could not be read, so this is advice, \
+                     not a refusal.",
+                    refusal_reason(&files)
+                ),
+                remedy: Some(remedy_for(biggest, files.len() > 1)),
+                excerpt: excerpt_of(&files),
             }
         }
     }
+}
+
+fn excerpt_of(files: &[Seen]) -> String {
+    files
+        .iter()
+        .map(|s| s.shown.as_str())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
@@ -358,11 +412,11 @@ mod tests {
     fn only_the_right_of_an_or_is_an_alternative() {
         let at = |src: &str, word: &str| src.find(word).unwrap();
         let src = "cat aa missing || cat bb";
-        let spans = alternatives(src);
+        let spans = alternatives(src).unwrap();
         assert!(spans.iter().any(|s| s.contains(&at(src, "cat bb"))));
         assert!(!spans.iter().any(|s| s.contains(&0)));
         let src = "cat a && cat b";
-        assert!(alternatives(src).is_empty());
+        assert!(alternatives(src).unwrap().is_empty());
     }
 
     #[test]

@@ -2571,11 +2571,31 @@ fn refuse_once_files(
     files: &[rules::whole_file_dump::Refusal],
 ) -> Once {
     let repo = files.first().map(|f| repo_name(&f.cwd)).unwrap_or_default();
-    let shown = |agent: &str| {
-        let paths: Vec<String> = files.iter().map(|f| f.path.display().to_string()).collect();
-        format!("{} @{agent}", paths.join(" "))
+    let shown = |agent: &str, why: Option<&str>| {
+        let mut paths: Vec<String> = files
+            .iter()
+            .take(rules::whole_file_dump::LISTED)
+            .map(|f| {
+                let text = f.path.display().to_string();
+                if text.contains(char::is_whitespace) {
+                    shell_quoted(&f.path)
+                } else {
+                    text
+                }
+            })
+            .collect();
+        if files.len() > rules::whole_file_dump::LISTED {
+            paths.push(format!(
+                "+{} more",
+                files.len() - rules::whole_file_dump::LISTED
+            ));
+        }
+        match why {
+            Some(why) => format!("{} @{agent} ({why})", paths.join(" ")),
+            None => format!("{} @{agent}", paths.join(" ")),
+        }
     };
-    let record = |outcome: &'static str, agent: &str| {
+    let record = |outcome: &'static str, excerpt: &str| {
         journal::record(&journal::Entry {
             rule: rule.id,
             stance: Stance::Deny.as_str(),
@@ -2583,11 +2603,11 @@ fn refuse_once_files(
             session,
             repo: &repo,
             mode,
-            excerpt: &shown(agent),
+            excerpt,
         });
     };
     let Some(agent) = crate::lsp::agent_key(agent_id) else {
-        record("unrecorded", "?");
+        record("unrecorded", &shown("?", None));
         return Once::Unrecorded;
     };
     let answers: Vec<crate::lsp::Told> = files
@@ -2601,16 +2621,17 @@ fn refuse_once_files(
             crate::lsp::told(session, &key)
         })
         .collect();
-    if answers
-        .iter()
-        .any(|a| matches!(a, crate::lsp::Told::Unrecorded(_)))
-    {
-        record("unrecorded", &agent);
+    let first_unrecorded = answers.iter().find_map(|answer| match answer {
+        crate::lsp::Told::Unrecorded(why) => Some(*why),
+        crate::lsp::Told::First | crate::lsp::Told::Before => None,
+    });
+    if let Some(why) = first_unrecorded {
+        record("unrecorded", &shown(&agent, Some(why)));
         Once::Unrecorded
     } else if answers.iter().any(|a| matches!(a, crate::lsp::Told::First)) {
         Once::Refuse
     } else {
-        record("allowed-after-feedback", &agent);
+        record("allowed-after-feedback", &shown(&agent, None));
         Once::Allowed
     }
 }
