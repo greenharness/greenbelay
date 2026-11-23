@@ -215,6 +215,7 @@ fn decide(raw: &str) -> Decision {
         Event::PreGrep(op) => on_grep(&op),
         Event::PreScreenshot(op) => on_screenshot(&op),
         Event::PreRelaisRun(op) => on_relais_run(&op),
+        Event::PreAgent(op) => on_agent(&op),
         Event::PostLsp(call) => on_post_lsp(&call),
         Event::PostFile(op) => on_post_file(&op),
         Event::PostWrite(op) => on_post_write(&op),
@@ -2479,6 +2480,89 @@ fn on_relais_run(op: &crate::payload::RelaisRunOp) -> Decision {
         workspace,
         shown.strip_prefix(r"\\?\").unwrap_or(&shown),
     );
+    match stance {
+        Stance::Observe => Decision::Silent,
+        Stance::Advise => Decision::Advise(text),
+        Stance::Deny => Decision::Deny(text),
+    }
+}
+
+/// The most an agent definition is read for.
+const DEFINITION_READ_LIMIT: u64 = 8 * 1024;
+
+/// The frontmatter of the first existing definition of a bare `subagent_type`:
+/// the repository's `.claude/agents`, then the config directory's. A file that
+/// is not a regular one, is too large or has no closed frontmatter reads as
+/// nothing.
+fn agent_definition(
+    subagent_type: &str,
+    cwd: &std::path::Path,
+) -> Option<rules::agent_preferred_model::Definition> {
+    use std::io::Read;
+    if subagent_type.contains([':', '/', '\\']) || subagent_type.starts_with('.') {
+        return None;
+    }
+    let file = format!("{subagent_type}.md");
+    let mut candidates = Vec::new();
+    if let Some(root) = greenbelay_guard::lsp::git_root(cwd) {
+        candidates.push(root.join(".claude").join("agents").join(&file));
+    }
+    if let Some(config) = greenbelay_guard::settings::config_dir() {
+        candidates.push(config.join("agents").join(&file));
+    }
+    // The path is judged before the open, because opening a FIFO blocks until
+    // a writer comes.
+    let path = candidates
+        .into_iter()
+        .find(|path| std::fs::symlink_metadata(path).is_ok())?;
+    if !std::fs::metadata(&path).ok()?.is_file() {
+        return None;
+    }
+    let handle = std::fs::File::open(&path).ok()?;
+    if !handle.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut text = Vec::new();
+    handle
+        .take(DEFINITION_READ_LIMIT + 1)
+        .read_to_end(&mut text)
+        .ok()?;
+    if text.len() as u64 > DEFINITION_READ_LIMIT {
+        return None;
+    }
+    rules::agent_preferred_model::parse_definition(std::str::from_utf8(&text).ok()?)
+}
+
+/// An `Agent` or `Task` launch whose definition prefers a model the call does
+/// not name.
+fn on_agent(op: &crate::payload::AgentLaunch) -> Decision {
+    let rule = &rules::agent_preferred_model::RULE;
+    let stance = crate::stance::resolve(rule);
+    let Some(definition) = agent_definition(&op.subagent_type, &op.cwd) else {
+        return Decision::Silent;
+    };
+    let Some(text) = rules::agent_preferred_model::judge(
+        &op.subagent_type,
+        definition.model.as_deref(),
+        definition.preferred_model.as_deref(),
+        op.model.as_deref(),
+        &op.prompt,
+    ) else {
+        return Decision::Silent;
+    };
+    journal::record(&journal::Entry {
+        rule: rule.id,
+        stance: stance.as_str(),
+        outcome: outcome_of(stance),
+        session: &op.session,
+        repo: &repo_name(&op.cwd),
+        mode: &op.permission_mode,
+        excerpt: &format!(
+            "{} prefers {}",
+            op.subagent_type,
+            definition.preferred_model.as_deref().unwrap_or("")
+        ),
+    });
     match stance {
         Stance::Observe => Decision::Silent,
         Stance::Advise => Decision::Advise(text),

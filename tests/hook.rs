@@ -5359,3 +5359,135 @@ fn a_git_entry_in_a_parent_directory_means_no_child_scan() {
         reply.stdout
     );
 }
+
+// agent-preferred-model
+
+const PREFERRED_DENY: &str = "[greenbelay \"agent-preferred-model\"]\n\tstance = deny";
+
+fn preferred_definition(dir: &std::path::Path, name: &str, body: &str) {
+    let agents = dir.join("agents");
+    std::fs::create_dir_all(&agents).expect("agents dir");
+    std::fs::write(agents.join(format!("{name}.md")), body).expect("definition");
+}
+
+fn preferred_inherit(name: &str) {
+    preferred_definition(
+        &home(),
+        name,
+        "---\nname: x\nmodel: inherit\npreferred-model: opus\n---\nbody\n",
+    );
+}
+
+fn preferred_call(
+    tool: &str,
+    subagent_type: &str,
+    model: Option<&str>,
+    prompt: &str,
+    cwd: &str,
+) -> Reply {
+    let mut input = serde_json::json!({
+        "description": "review",
+        "subagent_type": subagent_type,
+        "prompt": prompt,
+    });
+    if let Some(model) = model {
+        input["model"] = serde_json::json!(model);
+    }
+    let payload = serde_json::json!({
+        "hook_event_name": "PreToolUse",
+        "tool_name": tool,
+        "tool_input": input,
+        "session_id": "apm00001",
+        "cwd": cwd,
+    });
+    send_with_global(&payload.to_string(), PREFERRED_DENY)
+}
+
+fn preferred_expect_denied(reply: &Reply, name: &str) {
+    assert_eq!(reply.code, 0);
+    assert_eq!(
+        reply.decision().as_deref(),
+        Some("deny"),
+        "{}",
+        reply.stdout
+    );
+    let reason = reply.reason();
+    assert!(
+        reason.starts_with(&format!(
+            "greenbelay/agent-preferred-model: {name} declares preferred-model: opus but this \
+             call has no model, so it would run on the session model. Pass model: \"opus\"."
+        )),
+        "{reason}"
+    );
+}
+
+#[test]
+fn agent_preferred_model_denies_agent_and_task_without_a_model() {
+    preferred_inherit("apm-review");
+    for tool in ["Agent", "Task"] {
+        let reply = preferred_call(tool, "apm-review", None, "review it", "/tmp");
+        preferred_expect_denied(&reply, "apm-review");
+    }
+}
+
+#[test]
+fn agent_preferred_model_allows_the_declared_ways_out() {
+    preferred_inherit("apm-allow");
+    let silent = |reply: Reply| {
+        assert_eq!(reply.code, 0);
+        assert_eq!(reply.stdout, "", "expected silence");
+    };
+    silent(preferred_call(
+        "Agent",
+        "apm-allow",
+        Some("opus"),
+        "x",
+        "/tmp",
+    ));
+    silent(preferred_call(
+        "Agent",
+        "apm-allow",
+        None,
+        "model-fallback: opus -> root (rate limited)\nreview it",
+        "/tmp",
+    ));
+    silent(preferred_call(
+        "Agent",
+        "relais:relais-reviewer-opus-high",
+        None,
+        "x",
+        "/tmp",
+    ));
+    silent(preferred_call("Agent", "apm-missing", None, "x", "/tmp"));
+}
+
+#[test]
+fn agent_preferred_model_reads_the_repository_before_the_user() {
+    preferred_inherit("apm-repo");
+    let root = std::env::temp_dir().join(format!("apm-repo-{}", std::process::id()));
+    let agents = root.join(".claude").join("agents");
+    std::fs::create_dir_all(&agents).expect("repo agents");
+    std::fs::create_dir_all(root.join(".git")).expect("git marker");
+    std::fs::write(agents.join("apm-repo.md"), "---\nmodel: opus\n---\nbody\n")
+        .expect("repo definition");
+    let reply = preferred_call("Agent", "apm-repo", None, "x", root.to_str().unwrap());
+    assert_eq!(reply.stdout, "", "the pinned repo definition decides");
+    let _ = std::fs::remove_dir_all(&root); // temp-dir cleanup: a leftover dir only costs disk
+}
+
+#[test]
+fn agent_preferred_model_never_reads_a_plugin_directory() {
+    let plugin = home()
+        .join("plugins")
+        .join("cache")
+        .join("p")
+        .join("agents");
+    std::fs::create_dir_all(&plugin).expect("plugin agents");
+    std::fs::write(
+        plugin.join("apm-plugin.md"),
+        "---\nmodel: inherit\npreferred-model: opus\n---\n",
+    )
+    .expect("plugin definition");
+    let reply = preferred_call("Agent", "apm-plugin", None, "x", "/tmp");
+    assert_eq!(reply.stdout, "");
+}

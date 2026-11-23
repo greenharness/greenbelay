@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `agent-preferred-model` (advise, ceiling `deny`): an `Agent` or `Task` launch
+  whose agent definition says `model: inherit` and `preferred-model: X`, with no
+  `model` on the call and no `model-fallback:` first line in the prompt, is told
+  to pass `model: "X"`. The definition is read from the repository's
+  `.claude/agents`, then the config directory's; plugin-namespaced types pass.
+  `greenbelay install` adds the `Agent|Task` PreToolUse matcher.
+
 ## v6.8.0
 
 greenbelay 6.8.0 makes `whole-file-dump` judge every dump in a Bash command, so
