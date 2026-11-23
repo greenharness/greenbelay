@@ -1,0 +1,19 @@
+greengate-provenance-v1
+commit 0e9b36d72d8348ae0db5dba7daa24ef50bea9958
+tree a1c7fb833bf48b4879b1d8e2900164bbd591d676
+canon c6f2e5a37ea32462a4ab89d07d0af34a3c819130
+patch 3b6454686f5cd234995a75af5a98bc3e2f18b6e0
+plan docs/plans/2026-11-23-keep-weekly-firing-counts-past.md 78210420dbc52d83af5c4ee95ba8247ba92c4bdc54750f7153211d60fd326eeb
+review reviewed ea300e273cdba6445a9b9da63777aa095a3a50862304a5ed703a93973ac6365c
+code-review backend reviewed ea300e273cdba6445a9b9da63777aa095a3a50862304a5ed703a93973ac6365c
+code-review lang:rust reviewed ea300e273cdba6445a9b9da63777aa095a3a50862304a5ed703a93973ac6365c
+code-review unix reviewed ea300e273cdba6445a9b9da63777aa095a3a50862304a5ed703a93973ac6365c
+preview not-required
+producer greenbelay 6.9.0
+
+-----BEGIN SSH SIGNATURE-----
+U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg7UOvJ8myo4dhW907VFty7T/bUV
+RFQerK+MWJ4bjChwcAAAAUZ3JlZW5nYXRlLXByb3ZlbmFuY2UAAAAAAAAABnNoYTUxMgAA
+AFMAAAALc3NoLWVkMjU1MTkAAABAY7dpb3sZZcX7UfZkAltkAfEqA9d/st3fwwcZGh6NiM
+XV0nRw4bG8NoSUQsOJoO/1w1e/O2NyjicC4s98E9/PDw==
+-----END SSH SIGNATURE-----
