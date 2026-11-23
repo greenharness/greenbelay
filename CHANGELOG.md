@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v6.9.0
+
+greenbelay 6.9.0 adds `agent-preferred-model`, which holds a subagent
+launch to the model its definition prefers (#316).
+
 - `agent-preferred-model` (advise, ceiling `deny`): an `Agent` or `Task` launch
   whose agent definition says `model: inherit` and `preferred-model: X`, with no
   `model` on the call and no `model-fallback:` first line in the prompt, is told
