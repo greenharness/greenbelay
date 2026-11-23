@@ -11,7 +11,7 @@ adrs: [ADR-0080, ADR-0083]
 
 📄 Full reviews: [2026-11-23-hand-off-mid-phase-400k.reviews.md](2026-11-23-hand-off-mid-phase-400k.reviews.md)
 👉 **Decide:** none. Approve if one size handoff at about 400k (a deny, only if the replay holds) beats running on to 600k or more.
-📍 decisions, greenharness-skills, greenbelay · 4 phases · 1 release · Phase 1 done (ADR-0083, decisions#352 merged; carried items for Phases 2–3 in decisions `docs/plans/2026-11-23-hand-off-mid-phase-400k.md`) · next: Phase 2, worktree-task Handoff mid-phase in greenharness-skills. Panel: architect, backend, lang:rust, po, tui, unix (opus), codex.
+📍 decisions, greenharness-skills, greenbelay · 4 phases · 1 release · Phase 1 done (ADR-0083, decisions#352 merged; carried items for Phases 2–3 in decisions `docs/plans/2026-11-23-hand-off-mid-phase-400k.md`) · Phase 2 done (worktree-task size-boundary steps, greenharness/skills#50 merged) · next: Phase 3, the size kind in clear-at-boundary here, carried items in the decisions pointer. Panel: architect, backend, lang:rust, po, tui, unix (opus), codex.
 **Changed by review:** a new ADR replaces 0080 (no in-place edit); the size path runs before the early returns and is not a Candidate; the `deny` default survives the compiled `advise`.
 **Verdicts:** 4 approve-with-changes, 2 approve; codex approve-with-changes; 12 carried; words 2128 → 2872 (×1.35, mostly fixes to wrong statements); remove 1 rejected, merge 1 accepted.
 
