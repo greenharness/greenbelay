@@ -93,7 +93,7 @@ A backtest replay counts 12 of 62 greenbelay rules. The other 50 can only be cou
 - `status`: the column label follows decision 2. `tally` returns the roll-up rows inside the window plus the journal rows inside the same window. Readers skip journal rows at or below the roll-up's `W`, so a crash before the journal delete, or a read racing a fold, never double-counts. A test covers both. Shadow rows stay out. When the journal holds a `rollup-failed` record newer than `W`, `status` prints one line naming the record and the file.
 
 ## Phases
-- [ ] Phase 1 — rename `status`'s `seen, last 30 days` to `seen since <date>` from `oldest_record()`; the first code commit, true today: `src/main.rs`, `CHANGELOG.md`
+- [x] Phase 1 — rename `status`'s `seen, last 30 days` to `seen since <date>` from `oldest_record()`; the first code commit, true today: `src/main.rs`, `CHANGELOG.md`
 - [ ] Phase 2 — the roll-up file (read, merge, atomic write, lock, watermark) and `rotate`'s best-effort fold, returning the fold failure beside the move result so `append` writes `F <ts> - - rollup-failed …`; the roll-up keeps 104 weeks of rows: `crates/greenbelay-guard/src/rollup.rs`, `crates/greenbelay-guard/src/journal.rs`, `crates/greenbelay-guard/src/lib.rs`
 - [ ] Phase 3 — the per-tool transcript walker, the calls freeze, `rule_tool` and `greenbelay rollup [--json]`: `crates/greenbelay-guard/src/transcript.rs`, `crates/greenbelay-guard/src/rollup.rs`, `src/main.rs`, `docs/measuring.md`, `README.md`
 - [ ] Phase 4 — `tally` reads roll-up plus journal; `status` switches to the 4-week label once coverage allows: `crates/greenbelay-guard/src/journal.rs`, `src/main.rs`, `docs/index.md`
