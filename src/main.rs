@@ -3839,7 +3839,7 @@ fn print_install_registry(voice: RegistryVoice) {
 }
 
 /// `rollup.log` could not be read: say so on stderr.
-fn report_rollup_problem(problem: &Option<greenbelay_guard::rollup::Problem>) {
+fn report_rollup_problem(problem: Option<&greenbelay_guard::rollup::Problem>) {
     use greenbelay_guard::rollup::Problem;
     match problem {
         Some(Problem::UnknownVersion(version)) => {
@@ -3851,16 +3851,15 @@ fn report_rollup_problem(problem: &Option<greenbelay_guard::rollup::Problem>) {
 }
 
 /// One line naming the newest `rollup-failed` journal record the roll-up has
-/// not got past (newer than its watermark), and the file it is in.
+/// not got past (newer than its watermark), in the journal.
 fn rollup_failed_line(unfolded: &[journal::Row]) -> Option<String> {
     let newest = unfolded
         .iter()
         .filter(|row| row.outcome == "rollup-failed")
         .max_by_key(|row| row.ts)?;
     Some(format!(
-        "rollup: a fold failed: `rollup-failed` record at {} in {}",
-        newest.ts,
-        journal::path().map_or("journal.log".to_string(), |p| p.display().to_string())
+        "{BIN}: rollup: a fold failed: `rollup-failed` record at {} in the journal",
+        civil::iso((newest.ts / 86_400) as civil::Day)
     ))
 }
 
@@ -3884,25 +3883,45 @@ fn plan_root_finding() -> doctor::Finding {
     }
 }
 
+const ROLLUP_USAGE: &str =
+    "usage: greenbelay rollup [--weeks <n>] [--json] [--transcripts <dir>] [-q]";
+
 /// `greenbelay rollup [--weeks <n>] [--json] [--transcripts <dir>] [-q]`.
 ///
 /// Every state write (the calls freeze) finishes, and its lock is released,
 /// before the first byte goes to stdout.
 fn run_rollup(args: &[OsString]) -> ExitCode {
     use greenbelay_guard::rollup;
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("{ROLLUP_USAGE}");
+        return ExitCode::SUCCESS;
+    }
     let mut quiet = false;
     let mut weeks: Option<usize> = None;
     let mut rest: Vec<OsString> = Vec::new();
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
-        match arg.to_string_lossy().as_ref() {
+        let text = arg.to_string_lossy().into_owned();
+        let (name, inline) = match text.split_once('=') {
+            Some((name, value)) if name.starts_with("--") => {
+                (name.to_string(), Some(value.to_string()))
+            }
+            _ => (text.clone(), None),
+        };
+        match name.as_str() {
             "-q" | "--quiet" => quiet = true,
             "--weeks" => {
-                let given = iter.next().map(|v| v.to_string_lossy().into_owned());
+                let given =
+                    inline.or_else(|| iter.next().map(|v| v.to_string_lossy().into_owned()));
                 match given.as_deref().map(str::parse::<usize>) {
-                    Some(Ok(count)) if count >= 1 => weeks = Some(count),
+                    Some(Ok(count)) if (1..=rollup::WEEKS_KEPT as usize).contains(&count) => {
+                        weeks = Some(count);
+                    }
                     Some(_) => {
-                        eprintln!("{BIN}: --weeks takes a number of 1 or more");
+                        eprintln!(
+                            "{BIN}: --weeks takes a number from 1 to {}",
+                            rollup::WEEKS_KEPT
+                        );
                         return ExitCode::from(2);
                     }
                     None => {
@@ -3911,17 +3930,22 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
                     }
                 }
             }
+            "--json" | "--transcripts" => rest.push(arg.clone()),
+            other if other.starts_with('-') => {
+                eprintln!("{BIN}: rollup has no flag `{other}`; try `{BIN} rollup --help`");
+                return ExitCode::from(2);
+            }
             _ => rest.push(arg.clone()),
         }
     }
-    let f = match flags(&rest) {
-        Ok(f) => f,
+    let given = match flags(&rest) {
+        Ok(parsed) => parsed,
         Err(why) => {
             eprintln!("{BIN}: {why}");
             return ExitCode::from(2);
         }
     };
-    if let Some(extra) = f.rest.first() {
+    if let Some(extra) = given.rest.first() {
         eprintln!("{BIN}: rollup takes no argument, not `{extra}`");
         return ExitCode::from(2);
     }
@@ -3947,11 +3971,13 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
     let current = civil::week_start(today);
 
     let counted = rollup::load(&journal::paths(), &rollup_path);
-    report_rollup_problem(&counted.problem);
-    if matches!(counted.problem, Some(rollup::Problem::Unreadable(_))) {
+    report_rollup_problem(counted.problem.as_ref());
+    // An unreadable or unknown-format roll-up has no honest counts to print:
+    // retro would read the zeros as real.
+    if counted.problem.is_some() {
         return ExitCode::FAILURE;
     }
-    let closed = weeks.or(if f.json { None } else { Some(1) });
+    let closed = weeks.or(if given.json { None } else { Some(1) });
     let shown = rollup::weeks_shown(
         &counted,
         &rollup::merged_calls(&counted.rollup, &Default::default()),
@@ -3971,7 +3997,8 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
 
     // The scan holds no lock: it is the slow part.
     let mut live = rollup::Calls::new();
-    match transcript::roots(&f.transcripts) {
+    let mut freeze = true;
+    match transcript::roots(&given.transcripts) {
         Ok(roots) => {
             use std::io::IsTerminal as _;
             if !quiet && std::io::stderr().is_terminal() {
@@ -3984,7 +4011,17 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
                 .map_or(current, |w| w.min(current));
             match transcript::calls_by_week(&roots, Some(first)) {
                 Ok(scanned) => {
+                    if scanned.unreadable > 0 {
+                        // A file that would not read whole makes every count a
+                        // lower bound: show them, store none.
+                        eprintln!(
+                            "{BIN}: warning: {} transcript file(s) unreadable; calls of closed weeks not stored",
+                            scanned.unreadable
+                        );
+                        freeze = false;
+                    }
                     live = scanned
+                        .weeks
                         .into_iter()
                         .filter(|(week, _)| *week == current || freezable.contains(week))
                         .collect();
@@ -3997,7 +4034,7 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
             e.explain()
         ),
     }
-    if !freezable.is_empty() {
+    if freeze && !freezable.is_empty() {
         if let Err(e) = rollup::freeze_calls(&rollup_path, &live, &freezable) {
             eprintln!(
                 "{BIN}: warning: calls of closed weeks not stored: {}",
@@ -4009,7 +4046,7 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
     let counted = rollup::load(&journal::paths(), &rollup_path);
     let calls = rollup::merged_calls(&counted.rollup, &live);
     let report = rollup::build(&counted, &calls, &known, today, &shown);
-    let text = if f.json {
+    let text = if given.json {
         format!("{}\n", report.to_json())
     } else {
         report.to_text(ui::id_column(rule_table::RULES))
@@ -4065,9 +4102,9 @@ fn run_status() -> ExitCode {
         )
     });
     if let Some(counted) = &counted {
-        report_rollup_problem(&counted.problem);
+        report_rollup_problem(counted.problem.as_ref());
         if let Some(line) = rollup_failed_line(&counted.journal) {
-            println!("{line}");
+            eprintln!("{line}");
         }
     }
     let since = seen_label(

@@ -140,37 +140,40 @@ pub fn oldest_record() -> Option<u64> {
 /// Still under the module rule: this counts, and nothing reads it to decide.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Seen {
-    pub denied: u32,
-    pub advised: u32,
-    pub watched: u32,
+    pub denied: u64,
+    pub advised: u64,
+    pub watched: u64,
     /// `examine` fired and `confirm` said no. For an assertion, the claim
     /// could not be checked.
-    pub unconfirmed: u32,
+    pub unconfirmed: u64,
     /// Why `confirm` said no, by reason, so the leading one can be shown. A
     /// reason is one whitespace-free token as [`field`] wrote it.
-    pub reasons: std::collections::BTreeMap<String, u32>,
+    pub reasons: std::collections::BTreeMap<String, u64>,
 }
 
 impl Seen {
-    pub fn total(&self) -> u32 {
-        self.denied + self.advised + self.watched + self.unconfirmed
+    pub fn total(&self) -> u64 {
+        self.denied
+            .saturating_add(self.advised)
+            .saturating_add(self.watched)
+            .saturating_add(self.unconfirmed)
     }
 
-    /// Count `n` records of one stance and outcome.
-    pub fn count(&mut self, stance: &str, outcome: &str, n: u64) {
-        let n = u32::try_from(n).unwrap_or(u32::MAX);
+    /// Count `records` records of one stance and outcome.
+    pub fn count(&mut self, stance: &str, outcome: &str, records: u64) {
         match (stance, outcome) {
             // A `confirm` that declined, or an assertion that could not check
             // its claim. The outcome field carries the reason; older records
             // wrote the literal `skipped` there, which counts as a reason
             // nobody stated.
             ("unconfirmed" | "unverified", why) => {
-                self.unconfirmed += n;
-                *self.reasons.entry(why.to_string()).or_default() += n;
+                self.unconfirmed = self.unconfirmed.saturating_add(records);
+                let reason = self.reasons.entry(why.to_string()).or_default();
+                *reason = reason.saturating_add(records);
             }
-            (_, "denied") => self.denied += n,
-            (_, "advised") => self.advised += n,
-            (_, "watched") => self.watched += n,
+            (_, "denied") => self.denied = self.denied.saturating_add(records),
+            (_, "advised") => self.advised = self.advised.saturating_add(records),
+            (_, "watched") => self.watched = self.watched.saturating_add(records),
             // `rules-checked` and `candidates-checked` (ADR-0044) are notes
             // beside a push that passed, never a decision; an outcome this
             // reader does not know is none of the four buckets it can name.
@@ -179,7 +182,7 @@ impl Seen {
     }
 
     /// The most frequent reason `confirm` declined, if any.
-    pub fn top_reason(&self) -> Option<(&str, u32)> {
+    pub fn top_reason(&self) -> Option<(&str, u64)> {
         self.reasons
             .iter()
             .max_by_key(|(_, n)| **n)
@@ -211,7 +214,7 @@ pub fn tally(since: u64) -> std::collections::BTreeMap<String, Seen> {
 /// the journal's delete, or a read racing a fold, never counts twice. Shadow
 /// rows are dropped on both sides. A roll-up week is a whole unit: it counts
 /// when its last day falls inside the window.
-pub fn tally_in(
+pub(crate) fn tally_in(
     journal_paths: &[std::path::PathBuf],
     rollup_path: &std::path::Path,
     since: u64,

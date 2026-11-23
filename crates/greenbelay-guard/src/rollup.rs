@@ -478,7 +478,12 @@ fn write_atomic(target: &Path, contents: &str) -> std::io::Result<()> {
         let mut file = opts.open(&temp)?;
         file.write_all(contents.as_bytes())?;
         file.sync_all()?;
-        fs::rename(&temp, target)
+        fs::rename(&temp, target)?;
+        // The rename is durable only once its directory entry is.
+        if let Some(parent) = target.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+            fs::File::open(parent)?.sync_all()?;
+        }
+        Ok(())
     })();
     if written.is_err() {
         let _ = fs::remove_file(&temp); // the write error is what is reported
@@ -769,10 +774,11 @@ pub fn build(
     let weeks = weeks
         .iter()
         .map(|&week| {
-            let partial = week == current
-                || (Some(week) == first_week
-                    && since
-                        .is_some_and(|ts| ts > u64::try_from(week).unwrap_or(0) * SECONDS_PER_DAY));
+            // Firings are counted from `S` on, so a week that starts before it
+            // is divided by a whole week of calls only if its rate is left out.
+            let starts_before_coverage = Some(week) == first_week
+                && since.is_some_and(|ts| ts > u64::try_from(week).unwrap_or(0) * SECONDS_PER_DAY);
+            let partial = week == current || starts_before_coverage;
             let rules = known
                 .iter()
                 .map(|rule| {
@@ -785,7 +791,11 @@ pub fn build(
                         watched: found.watched,
                         unconfirmed: found.unconfirmed,
                         tool,
-                        calls: calls.get(&week).and_then(|tools| tool.calls_in(tools)),
+                        calls: if starts_before_coverage {
+                            None
+                        } else {
+                            calls.get(&week).and_then(|tools| tool.calls_in(tools))
+                        },
                         replay: rule.replay.to_string(),
                     }
                 })
@@ -1103,7 +1113,9 @@ mod tests {
             ),
         )
         .unwrap();
-        let calls = crate::transcript::calls_by_week(&transcript_roots(&dir), None).unwrap();
+        let calls = crate::transcript::calls_by_week(&transcript_roots(&dir), None)
+            .unwrap()
+            .weeks;
         let week = &calls[&MONDAY_DAY];
         assert_eq!(week["Bash"], 2, "the subagent's Bash call counts");
         assert_eq!(week["Read"], 1);
@@ -1124,7 +1136,9 @@ mod tests {
         let shown = [MONDAY_DAY];
         let covered = Some(TUESDAY);
         assert_eq!(freezable_weeks(&empty, &shown, today, covered), shown);
-        let scanned = crate::transcript::calls_by_week(&roots, None).unwrap();
+        let scanned = crate::transcript::calls_by_week(&roots, None)
+            .unwrap()
+            .weeks;
         assert_eq!(
             freeze_calls(&rollup, &scanned, &shown),
             Ok(vec![MONDAY_DAY])
@@ -1144,7 +1158,9 @@ mod tests {
             freezable_weeks(&frozen, &shown, today, covered).is_empty(),
             "a week with C rows is never rescanned"
         );
-        let rescanned = crate::transcript::calls_by_week(&roots, None).unwrap();
+        let rescanned = crate::transcript::calls_by_week(&roots, None)
+            .unwrap()
+            .weeks;
         assert_eq!(
             rescanned[&MONDAY_DAY]["Bash"], 2,
             "the transcript did change"
