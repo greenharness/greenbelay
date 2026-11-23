@@ -413,8 +413,8 @@ fn append(path: &std::path::Path, max: u64, line: &str) -> Option<()> {
     }
     if let Some(why) = fold_failed {
         // The generation that was deleted never reached the roll-up.
-        let _ = f.write_all(format!("F {} - - rollup-failed - - - {why}\n", now()).as_bytes());
-        // the note is itself best effort
+        let note = format!("F {} - - rollup-failed - - - {why}\n", now());
+        let _ = f.write_all(note.as_bytes()); // the note is itself best effort
     }
     f.write_all(line.as_bytes()).ok()?;
     Some(())
@@ -546,8 +546,9 @@ fn rotate(path: &std::path::Path, max: u64) -> Rotation {
         if shift {
             let _ = fs::remove_file(&oldest); // the oldest generation may not exist yet
             for n in (1..GENERATIONS).rev() {
-                let _ = fs::rename(generation(path, n), generation(path, n + 1));
-                // a missing generation leaves a gap, not a failure
+                let older = generation(path, n);
+                let newer = generation(path, n + 1);
+                let _ = fs::rename(older, newer); // a missing generation is a gap, not a failure
             }
             moved = fs::rename(path, generation(path, 1)).map_err(|e| e.kind().to_string());
         }
@@ -1383,6 +1384,28 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&rollup).unwrap(),
             "greenbelay-rollup-v9\nX future\n"
+        );
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
+    }
+
+    #[test]
+    fn a_future_stamped_record_is_dropped_and_reported() {
+        let dir = scratch("foldfuture");
+        let path = dir.join("journal.log");
+        let ahead = now() + 2 * 86_400;
+        gen_with(
+            &path,
+            GENERATIONS,
+            &[(1_700_000_000, "folded"), (ahead, "skewed")],
+        );
+        append(&path, 100, &rec(1, &"z".repeat(200))).expect("first");
+        append(&path, 100, &rec(2, "second")).expect("rotates");
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains(" rollup-failed - - - future-ts-1"), "{text}");
+        let rollup = fs::read_to_string(crate::rollup::path_beside(&path)).unwrap();
+        assert!(
+            rollup.contains(" folded ") && !rollup.contains(" skewed "),
+            "{rollup}"
         );
         let _ = fs::remove_dir_all(&dir); // scratch cleanup
     }

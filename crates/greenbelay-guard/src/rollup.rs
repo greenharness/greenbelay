@@ -303,7 +303,9 @@ pub fn fold_generation(generation: &Path, rollup: &Path) -> Result<Folded, FoldE
     };
     let ceiling = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(u64::MAX, |d| d.as_secs() + SECONDS_PER_DAY);
+        .map_or(u64::MAX, |elapsed| {
+            elapsed.as_secs().saturating_add(SECONDS_PER_DAY)
+        }); // a clock before the epoch drops nothing
     if current.fold_text(&text, ceiling) {
         write_atomic(rollup, &current.render()).map_err(|e| FoldError::Io(io_why(&e)))?;
     }
