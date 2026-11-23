@@ -44,6 +44,7 @@ pub mod push_record;
 pub mod push_target;
 #[cfg(unix)]
 pub mod quiet;
+pub mod rollup;
 pub mod rules;
 pub mod session_state;
 pub mod settings;
