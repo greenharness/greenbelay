@@ -71,6 +71,9 @@ pub struct Rollup {
     pub rows: BTreeMap<Key, u64>,
     /// Lines of a kind this version does not know, kept in order.
     pub carried: Vec<String>,
+    /// Records the last [`Rollup::fold_text`] left out for a timestamp past its
+    /// ceiling. Not written to the file.
+    pub dropped_future: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +107,9 @@ pub enum Folded {
     Counted,
     /// The roll-up has another format version; nothing was written.
     SkippedUnknownVersion,
+    /// Counted, but this many records were stamped more than a day ahead of the
+    /// clock and left out, so a skewed clock cannot move the watermark.
+    DroppedFuture(u64),
 }
 
 fn io_why(error: &std::io::Error) -> String {
@@ -190,12 +196,19 @@ impl Rollup {
 
     /// Count the journal records in `text` that are newer than the watermark
     /// this roll-up held when the fold began. Returns whether any record was
-    /// seen at all.
-    pub fn fold_text(&mut self, text: &str) -> bool {
+    /// seen at all. A record stamped after `ceiling` is a skewed clock's: it is
+    /// counted in [`Rollup::dropped_future`] and moves neither the watermark nor
+    /// the prune cutoff.
+    pub fn fold_text(&mut self, text: &str, ceiling: u64) -> bool {
         let floor = self.watermark;
         let mut newest = None::<u64>;
         let mut oldest = None::<u64>;
+        self.dropped_future = 0;
         for row in text.lines().filter_map(journal::fixed_fields) {
+            if row.ts > ceiling {
+                self.dropped_future += 1;
+                continue;
+            }
             newest = newest.max(Some(row.ts));
             oldest = Some(oldest.map_or(row.ts, |o| o.min(row.ts)));
             if row.ts <= floor {
@@ -288,10 +301,16 @@ pub fn fold_generation(generation: &Path, rollup: &Path) -> Result<Folded, FoldE
         Loaded::Rollup(current) => current,
         Loaded::UnknownVersion(_) => return Ok(Folded::SkippedUnknownVersion),
     };
-    if current.fold_text(&text) {
+    let ceiling = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(u64::MAX, |d| d.as_secs() + SECONDS_PER_DAY);
+    if current.fold_text(&text, ceiling) {
         write_atomic(rollup, &current.render()).map_err(|e| FoldError::Io(io_why(&e)))?;
     }
-    Ok(Folded::Counted)
+    Ok(match current.dropped_future {
+        0 => Folded::Counted,
+        rows => Folded::DroppedFuture(rows),
+    })
 }
 
 /// Write `contents` to a temp file beside `target`, fsync it, rename it over.
@@ -304,8 +323,8 @@ fn write_atomic(target: &Path, contents: &str) -> std::io::Result<()> {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     remove_stale_temps(target, &name);
-    let n = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let temp = target.with_file_name(format!("{name}.new.{}.{n}", std::process::id()));
+    let temp_sequence = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temp = target.with_file_name(format!("{name}.new.{}.{temp_sequence}", std::process::id()));
     let written = (|| {
         let mut opts = fs::OpenOptions::new();
         opts.write(true).create_new(true);
@@ -471,7 +490,7 @@ mod tests {
     }
 
     #[test]
-    fn a_held_lock_is_busy_and_a_stale_one_is_taken() {
+    fn a_held_lock_is_busy() {
         let dir = scratch("lock");
         let rollup = dir.join("rollup.log");
         let gen = dir.join("gen");
@@ -483,6 +502,32 @@ mod tests {
             "a busy lock is not ours to remove"
         );
         let _ = fs::remove_dir_all(&dir); // scratch cleanup
+    }
+
+    #[test]
+    fn a_stale_lock_is_taken() {
+        let dir = scratch("stale");
+        let rollup = dir.join("rollup.log");
+        let gen = dir.join("gen");
+        fs::write(&gen, generation_text(&[(TUESDAY, "r", "arm=live")])).unwrap();
+        let lock = fs::File::create(lock_path(&rollup)).unwrap();
+        lock.set_modified(
+            std::time::SystemTime::now() - std::time::Duration::from_secs(LOCK_STALE_SECS + 5),
+        )
+        .unwrap();
+        assert_eq!(fold_generation(&gen, &rollup), Ok(Folded::Counted));
+        assert_eq!(live_count(&load(&rollup), "r"), 1);
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
+    }
+
+    #[test]
+    fn a_future_record_neither_counts_nor_moves_the_watermark() {
+        let mut rollup = Rollup::default();
+        let text = generation_text(&[(TUESDAY, "r", "arm=live"), (TUESDAY * 3, "r", "arm=live")]);
+        assert!(rollup.fold_text(&text, TUESDAY + SECONDS_PER_DAY));
+        assert_eq!(rollup.dropped_future, 1);
+        assert_eq!(rollup.watermark, TUESDAY);
+        assert_eq!(live_count(&rollup, "r"), 1);
     }
 
     #[test]
@@ -511,7 +556,7 @@ mod tests {
                 start + i * week
             ));
         }
-        rollup.fold_text(&text);
+        rollup.fold_text(&text, u64::MAX);
         let weeks: std::collections::BTreeSet<_> = rollup.rows.keys().map(|k| k.week).collect();
         assert_eq!(weeks.len(), 104);
     }

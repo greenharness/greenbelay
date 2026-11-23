@@ -122,5 +122,6 @@ Board 2026-11-23: `greenbelay-wt-preferred-model` (feat/agent-preferred-model) t
 
 ## Decision log
 - 2026-11-23 — roll-up over longer journal (t29). The rule-to-tool table is explicit, because rules declare no tool and the rate needs one denominator per rule.
+- 2026-11-23 — Phase 2 review: a journal over twice its cap rotates despite a busy roll-up lock and writes `rollup-failed lock-busy`, so a stuck lock cannot grow the journal without bound (architect, round 2). A roll-up of another format version is left untouched and reported as `rollup-failed rollup-format-unknown`. Records stamped a day ahead of the clock are left out and reported as `rollup-failed future-ts-<n>`. Same-second records at the watermark may undercount: kept, as the plan's decision 6 says. Carried to the second PR: `Arm` typed in `Key`, one shared bucket function with `tally`, a parent-directory fsync.
 
 <!-- panel: repos=greenbelay,greenharness-skills,blue-factory adds=cli,contract reviewers=backend,lang:rust,tui,unix,architect,po body-sha=561128469e6a -->

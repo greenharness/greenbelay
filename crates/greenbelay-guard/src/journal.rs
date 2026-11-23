@@ -528,7 +528,15 @@ fn rotate(path: &std::path::Path, max: u64) -> Rotation {
         let mut shift = true;
         if oldest.exists() {
             match crate::rollup::fold_generation(&oldest, &crate::rollup::path_beside(path)) {
-                Ok(_) => {}
+                Ok(crate::rollup::Folded::Counted) => {}
+                Ok(crate::rollup::Folded::SkippedUnknownVersion) => {
+                    // The roll-up is another format's: its counts are not ours to
+                    // rewrite, and this generation is about to be deleted.
+                    fold_failed = Some("rollup-format-unknown".to_string());
+                }
+                Ok(crate::rollup::Folded::DroppedFuture(rows)) => {
+                    fold_failed = Some(format!("future-ts-{rows}"));
+                }
                 Err(crate::rollup::FoldError::Busy) if size <= max.saturating_mul(2) => {
                     shift = false;
                 }
@@ -792,7 +800,7 @@ mod tests {
     #[test]
     fn the_tally_reads_what_was_written_and_nothing_else() {
         let dir = std::env::temp_dir().join(format!("greenbelay-tally-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
         fs::create_dir_all(&dir).expect("scratch dir");
         let path = dir.join("journal.log");
         let now = 2_000_000u64;
@@ -836,7 +844,7 @@ mod tests {
         let bfd = &seen["branch-force-delete"];
         assert_eq!(bfd.watched, 1, "the old record is outside the window");
 
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
     }
 
     /// An `unresolved <shape> <what>` row of clear-at-boundary is read by its
@@ -891,7 +899,7 @@ mod tests {
     #[test]
     fn the_tally_keeps_the_implementation_reviews_reasons_apart() {
         let dir = std::env::temp_dir().join(format!("greenbelay-tally-ir-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
         fs::create_dir_all(&dir).expect("scratch dir");
         let path = dir.join("journal.log");
         let now = 2_000_000u64;
@@ -916,7 +924,7 @@ mod tests {
         assert_eq!(ir.reasons.get("reviewed"), Some(&2));
         assert_eq!(ir.reasons.get("no-plan"), Some(&1));
         assert_eq!(ir.reasons.get("overruled"), Some(&1));
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
     }
 
     /// A `rules-checked` note sits beside a push that passed: it moves none
@@ -994,7 +1002,7 @@ mod tests {
             Arm::Shadow
         );
         let dir = std::env::temp_dir().join(format!("greenbelay-arm-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
         fs::create_dir_all(&dir).expect("scratch dir");
         let path = dir.join("journal.log");
         let now = 2_000_000u64;
@@ -1014,7 +1022,7 @@ mod tests {
         let after = tally_at(&path, 100_000, now);
         assert_eq!(before, after);
         assert_eq!(after["r"].total(), 2);
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
     }
 
     /// Interleaving is only safe if a record is one line with no interior
@@ -1190,7 +1198,7 @@ mod tests {
     fn the_journal_is_not_world_readable() {
         use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join(format!("greenbelay-mode-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
         fs::create_dir_all(&dir).unwrap();
 
         let fresh = dir.join("journal.log");
@@ -1217,12 +1225,12 @@ mod tests {
         let mode = fs::metadata(&strict).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o400, "narrowing must never widen");
 
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
     }
 
     fn scratch(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("greenbelay-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
         fs::create_dir_all(&dir).expect("scratch dir");
         dir
     }
@@ -1250,7 +1258,7 @@ mod tests {
         // Oldest first: the last path is the live file.
         assert_eq!(all.last(), Some(&path));
         assert!(all[0].ends_with("journal.log.10"));
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
     }
 
     /// A live file that cannot be moved keeps growing: the journal says so
@@ -1271,7 +1279,7 @@ mod tests {
         assert!(text.contains(" rotate-failed "), "{text}");
         assert!(text.contains(" late"), "{text}");
         assert!(!generation(&path, 0).exists(), "the lock is released");
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
     }
 
     #[test]
@@ -1296,7 +1304,7 @@ mod tests {
         assert_eq!(seen["in-three"].denied, 1);
         assert_eq!(seen["live"].denied, 1);
         assert!(!seen.contains_key("old-nine"), "outside the window");
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
     }
 
     fn gen_with(path: &std::path::Path, n: u32, rows: &[(u64, &str)]) {
@@ -1321,7 +1329,7 @@ mod tests {
             rollup.contains("R 2023-11-13 folded deny denied live 1"),
             "{rollup}"
         );
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
     }
 
     #[test]
@@ -1335,7 +1343,7 @@ mod tests {
         assert!(generation(&path, 1).exists(), "rotated anyway");
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains(" rollup-failed "), "{text}");
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
     }
 
     #[test]
@@ -1355,7 +1363,28 @@ mod tests {
         assert!(!generation(&path, GENERATIONS).exists());
         let rollup = fs::read_to_string(crate::rollup::path_beside(&path)).unwrap();
         assert!(rollup.contains(" folded "), "{rollup}");
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
+    }
+
+    #[test]
+    fn a_rollup_of_another_version_is_reported_and_not_rewritten() {
+        let dir = scratch("foldversion");
+        let path = dir.join("journal.log");
+        let rollup = crate::rollup::path_beside(&path);
+        fs::write(&rollup, "greenbelay-rollup-v9\nX future\n").unwrap();
+        gen_with(&path, GENERATIONS, &[(1_700_000_000, "folded")]);
+        append(&path, 100, &rec(1, &"z".repeat(200))).expect("first");
+        append(&path, 100, &rec(2, "second")).expect("rotates");
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains(" rollup-failed - - - rollup-format-unknown"),
+            "{text}"
+        );
+        assert_eq!(
+            fs::read_to_string(&rollup).unwrap(),
+            "greenbelay-rollup-v9\nX future\n"
+        );
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
     }
 
     #[test]
@@ -1369,7 +1398,7 @@ mod tests {
         assert!(generation(&path, 1).exists());
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains(" rollup-failed - - - lock-busy"), "{text}");
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
     }
 
     /// Entry point for the child processes of the test below; a no-op unless
@@ -1438,6 +1467,6 @@ mod tests {
                 assert!(found.contains(&format!("w{id}-{i}")), "lost w{id}-{i}");
             }
         }
-        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
     }
 }
