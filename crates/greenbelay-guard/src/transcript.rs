@@ -525,6 +525,33 @@ where
     Ok(stats)
 }
 
+/// Tool calls per UTC week and tool name, from every transcript under the
+/// roots, subagent files included (the hook fires inside subagents too).
+/// Deduplicated on `tool_use.id` and bucketed on the entry's own timestamp, by
+/// the same walk as [`for_each_transcript`]. `since` drops calls on earlier days.
+pub fn calls_by_week(
+    roots: &Roots,
+    since: Option<Day>,
+) -> Result<std::collections::BTreeMap<Day, std::collections::BTreeMap<String, u64>>, ScanError> {
+    let mut weeks: std::collections::BTreeMap<Day, std::collections::BTreeMap<String, u64>> =
+        std::collections::BTreeMap::new();
+    let scan = Scan {
+        roots,
+        tool: "Bash",
+        since,
+    };
+    for_each_transcript(&scan, |records| {
+        for record in records {
+            *weeks
+                .entry(crate::civil::week_start(record.day))
+                .or_default()
+                .entry(record.tool.clone())
+                .or_default() += 1;
+        }
+    })?;
+    Ok(weeks)
+}
+
 /// The `tool_use_id` of a result line, or `None` when this is not one.
 fn tool_use_id(raw: &str) -> Option<&str> {
     const KEY: &str = "\"tool_use_id\":\"";

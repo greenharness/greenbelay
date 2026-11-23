@@ -113,6 +113,9 @@ usage: ",
                         replay the size kind over recorded transcripts, Stop
                         by Stop: coverage, fires per week, the release bar
   backtest [flags]      replay your transcripts through the rules
+  rollup [--weeks <n>] [--json] [--transcripts <dir>] [-q]
+                        firings per week and rule, past the journal's rotation,
+                        with each rule's tool calls and the rate per 1,000
   harness-review [--json] [--check] [--model <id>] [--out <dir>]
                         one row per rule and assertion: firings, compliance
                         per model, shadow-arm share, replay count; writes
@@ -235,6 +238,7 @@ enum Sub {
     Graduate,
     Demote,
     Backtest,
+    Rollup,
     HarnessReview,
     Explain,
     Mine,
@@ -263,7 +267,7 @@ enum Sub {
     Migrate,
 }
 
-const SUBCOMMANDS: [(&str, Sub); 35] = [
+const SUBCOMMANDS: [(&str, Sub); 36] = [
     ("hook", Sub::Hook),
     ("install", Sub::Install),
     ("uninstall", Sub::Uninstall),
@@ -273,6 +277,7 @@ const SUBCOMMANDS: [(&str, Sub); 35] = [
     ("graduate", Sub::Graduate),
     ("demote", Sub::Demote),
     ("backtest", Sub::Backtest),
+    ("rollup", Sub::Rollup),
     ("harness-review", Sub::HarnessReview),
     ("explain", Sub::Explain),
     ("mine", Sub::Mine),
@@ -725,11 +730,12 @@ fn main() -> ExitCode {
     // `board` already treats EPIPE on its own output as a quiet exit.
     // `suppressions` feeds `git cat-file` the same way. `plan-review` keeps
     // it ignored so that `plan-review stats … | head` ends on EPIPE with the
-    // command's own exit code, not by the signal (141).
+    // command's own exit code, not by the signal (141). `rollup` keeps it
+    // ignored so that `rollup | head` ends on EPIPE after its state writes.
     if !matches!(
         invocation,
         Invocation::Sub {
-            name: Sub::Hook | Sub::Board | Sub::Suppressions | Sub::PlanReview,
+            name: Sub::Hook | Sub::Board | Sub::Suppressions | Sub::PlanReview | Sub::Rollup,
             ..
         }
     ) {
@@ -823,6 +829,7 @@ fn main() -> ExitCode {
             Sub::Graduate => run_graduate(&args, true),
             Sub::Demote => run_graduate(&args, false),
             Sub::Backtest => run_backtest(&args, false),
+            Sub::Rollup => run_rollup(&args),
             Sub::HarnessReview => run_harness_review(&args),
             Sub::Explain => run_backtest(&args, true),
             Sub::Mine => run_mine(&args),
@@ -3831,10 +3838,31 @@ fn print_install_registry(voice: RegistryVoice) {
     }
 }
 
-/// How far back `status` reads the journal. Long enough for a rule that
-/// fires a few times a week to show a shape; short enough that a rule fixed a
-/// month ago stops being judged on what it did before.
-const SEEN_WINDOW: u64 = 30 * 24 * 60 * 60;
+/// `rollup.log` could not be read: say so on stderr.
+fn report_rollup_problem(problem: &Option<greenbelay_guard::rollup::Problem>) {
+    use greenbelay_guard::rollup::Problem;
+    match problem {
+        Some(Problem::UnknownVersion(version)) => {
+            eprintln!("{BIN}: rollup.log has format {version}, skipped; upgrade {BIN}");
+        }
+        Some(Problem::Unreadable(why)) => eprintln!("{BIN}: rollup.log unreadable: {why}"),
+        None => {}
+    }
+}
+
+/// One line naming the newest `rollup-failed` journal record the roll-up has
+/// not got past (newer than its watermark), and the file it is in.
+fn rollup_failed_line(unfolded: &[journal::Row]) -> Option<String> {
+    let newest = unfolded
+        .iter()
+        .filter(|row| row.outcome == "rollup-failed")
+        .max_by_key(|row| row.ts)?;
+    Some(format!(
+        "rollup: a fold failed: `rollup-failed` record at {} in {}",
+        newest.ts,
+        journal::path().map_or("journal.log".to_string(), |p| p.display().to_string())
+    ))
+}
 
 /// The plan root in use and where it came from.
 fn plan_root_finding() -> doctor::Finding {
@@ -3856,15 +3884,198 @@ fn plan_root_finding() -> doctor::Finding {
     }
 }
 
+/// `greenbelay rollup [--weeks <n>] [--json] [--transcripts <dir>] [-q]`.
+///
+/// Every state write (the calls freeze) finishes, and its lock is released,
+/// before the first byte goes to stdout.
+fn run_rollup(args: &[OsString]) -> ExitCode {
+    use greenbelay_guard::rollup;
+    let mut quiet = false;
+    let mut weeks: Option<usize> = None;
+    let mut rest: Vec<OsString> = Vec::new();
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.to_string_lossy().as_ref() {
+            "-q" | "--quiet" => quiet = true,
+            "--weeks" => {
+                let given = iter.next().map(|v| v.to_string_lossy().into_owned());
+                match given.as_deref().map(str::parse::<usize>) {
+                    Some(Ok(count)) if count >= 1 => weeks = Some(count),
+                    Some(_) => {
+                        eprintln!("{BIN}: --weeks takes a number of 1 or more");
+                        return ExitCode::from(2);
+                    }
+                    None => {
+                        eprintln!("{BIN}: --weeks needs a value");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
+            _ => rest.push(arg.clone()),
+        }
+    }
+    let f = match flags(&rest) {
+        Ok(f) => f,
+        Err(why) => {
+            eprintln!("{BIN}: {why}");
+            return ExitCode::from(2);
+        }
+    };
+    if let Some(extra) = f.rest.first() {
+        eprintln!("{BIN}: rollup takes no argument, not `{extra}`");
+        return ExitCode::from(2);
+    }
+    let Some(journal_path) = journal::path() else {
+        eprintln!("{BIN}: cannot find the state directory (is HOME set?)");
+        return ExitCode::FAILURE;
+    };
+    let rollup_path = rollup::path_beside(&journal_path);
+    let known: Vec<rollup::Known> = rule_table::RULES
+        .iter()
+        .map(backtest::Subject::Rule)
+        .chain(
+            assertions::ASSERTIONS
+                .iter()
+                .map(backtest::Subject::Assertion),
+        )
+        .map(|subject| rollup::Known {
+            id: subject.id(),
+            replay: subject.replay().as_str(),
+        })
+        .collect();
+    let today = (unix_now() / 86_400) as civil::Day;
+    let current = civil::week_start(today);
+
+    let counted = rollup::load(&journal::paths(), &rollup_path);
+    report_rollup_problem(&counted.problem);
+    if matches!(counted.problem, Some(rollup::Problem::Unreadable(_))) {
+        return ExitCode::FAILURE;
+    }
+    let closed = weeks.or(if f.json { None } else { Some(1) });
+    let shown = rollup::weeks_shown(
+        &counted,
+        &rollup::merged_calls(&counted.rollup, &Default::default()),
+        today,
+        closed,
+    );
+    let freezable = if counted.problem.is_none() {
+        rollup::freezable_weeks(
+            &counted.rollup,
+            &shown,
+            today,
+            rollup::covered_since(&counted),
+        )
+    } else {
+        Vec::new()
+    };
+
+    // The scan holds no lock: it is the slow part.
+    let mut live = rollup::Calls::new();
+    match transcript::roots(&f.transcripts) {
+        Ok(roots) => {
+            use std::io::IsTerminal as _;
+            if !quiet && std::io::stderr().is_terminal() {
+                eprintln!("{BIN}: counting tool calls in the transcripts...");
+            }
+            let first = freezable
+                .iter()
+                .copied()
+                .min()
+                .map_or(current, |w| w.min(current));
+            match transcript::calls_by_week(&roots, Some(first)) {
+                Ok(scanned) => {
+                    live = scanned
+                        .into_iter()
+                        .filter(|(week, _)| *week == current || freezable.contains(week))
+                        .collect();
+                }
+                Err(e) => eprintln!("{BIN}: {}", e.explain()),
+            }
+        }
+        Err(e) => eprintln!(
+            "{BIN}: warning: {}; calls come from the frozen weeks only",
+            e.explain()
+        ),
+    }
+    if !freezable.is_empty() {
+        if let Err(e) = rollup::freeze_calls(&rollup_path, &live, &freezable) {
+            eprintln!(
+                "{BIN}: warning: calls of closed weeks not stored: {}",
+                e.why()
+            );
+        }
+    }
+
+    let counted = rollup::load(&journal::paths(), &rollup_path);
+    let calls = rollup::merged_calls(&counted.rollup, &live);
+    let report = rollup::build(&counted, &calls, &known, today, &shown);
+    let text = if f.json {
+        format!("{}\n", report.to_json())
+    } else {
+        report.to_text(ui::id_column(rule_table::RULES))
+    };
+    use std::io::Write as _;
+    match std::io::stdout().lock().write_all(text.as_bytes()) {
+        Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => {
+            eprintln!("{BIN}: cannot write the report: {e}");
+            ExitCode::FAILURE
+        }
+        _ => ExitCode::SUCCESS,
+    }
+}
+
+/// Closed weeks `status` counts, besides the current one.
+const SEEN_WEEKS: i64 = 4;
+
+/// Seconds since the Monday `SEEN_WEEKS` weeks before this week's.
+fn seen_window(now: u64) -> u64 {
+    let today = (now / 86_400) as civil::Day;
+    let start = civil::week_start(today) - 7 * SEEN_WEEKS;
+    now.saturating_sub(start as u64 * 86_400)
+}
+
+/// The label over `status`'s seen column. The four-week form only when the
+/// counts reach back to the start of the oldest of the four closed weeks;
+/// otherwise it says where they really start.
+fn seen_label(now: u64, covered_since: Option<u64>) -> String {
+    let Some(since) = covered_since else {
+        return "seen (journal empty)".to_string();
+    };
+    if since <= now.saturating_sub(seen_window(now)) {
+        "seen, last 4 weeks + this week".to_string()
+    } else {
+        format!("seen since {}", civil::iso((since / 86_400) as civil::Day))
+    }
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
 fn run_status() -> ExitCode {
     let w = ui::id_column(rule_table::RULES);
-    let seen = journal::tally(SEEN_WINDOW);
-    // The journal rotates at a size, not at a date, so it keeps days, not
-    // the 30 the window allows: say where the counts start.
-    let since = match journal::oldest_record() {
-        Some(ts) => format!("seen since {}", civil::iso((ts / 86_400) as civil::Day)),
-        None => "seen (journal empty)".to_string(),
-    };
+    let now = unix_now();
+    let seen = journal::tally(seen_window(now));
+    let counted = journal::path().map(|path| {
+        greenbelay_guard::rollup::load(
+            &journal::paths(),
+            &greenbelay_guard::rollup::path_beside(&path),
+        )
+    });
+    if let Some(counted) = &counted {
+        report_rollup_problem(&counted.problem);
+        if let Some(line) = rollup_failed_line(&counted.journal) {
+            println!("{line}");
+        }
+    }
+    let since = seen_label(
+        now,
+        counted
+            .as_ref()
+            .and_then(greenbelay_guard::rollup::covered_since),
+    );
     println!(
         "{:<w$}{:<10}{:<10}  {:<31}  {since}",
         "rule", "ships as", "now", "evidence"
@@ -4160,5 +4371,95 @@ mod migration_mode_tests {
             assert!(line.chars().count() <= 80, "{} wide: {line}", line.len());
         }
         assert!(table.contains("window-many (mixed output)"), "{table}");
+    }
+}
+
+#[cfg(test)]
+mod rollup_tests {
+    use super::*;
+    use greenbelay_guard::rollup;
+
+    #[test]
+    fn rule_tool_has_an_entry_for_every_rule_and_assertion() {
+        let ids = rule_table::RULES
+            .iter()
+            .map(|r| r.id)
+            .chain(assertions::ASSERTIONS.iter().map(|a| a.id));
+        for id in ids {
+            assert!(
+                rollup::rule_tool(id).is_some(),
+                "`{id}` has no entry in rollup::RULE_TOOLS"
+            );
+        }
+        let known: Vec<&str> = rule_table::RULES
+            .iter()
+            .map(|r| r.id)
+            .chain(assertions::ASSERTIONS.iter().map(|a| a.id))
+            .collect();
+        for id in rollup::mapped_ids() {
+            assert!(known.contains(&id), "RULE_TOOLS names `{id}`, no such rule");
+        }
+    }
+
+    #[test]
+    fn a_rule_with_a_bash_replay_maps_to_bash() {
+        for rule in rule_table::RULES {
+            let replay = backtest::Subject::Rule(rule).replay();
+            if replay.why() != "not-shell" {
+                assert_eq!(
+                    rollup::rule_tool(rule.id),
+                    Some(rollup::Tool::Bash),
+                    "`{}` replays on Bash",
+                    rule.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_rollup_row_fits_in_eighty_columns_with_the_real_rule_column() {
+        let width = ui::id_column(rule_table::RULES);
+        let rule = rollup::RuleReport {
+            rule: "screenshot-in-main-session".to_string(),
+            denied: 1_234_567,
+            advised: 0,
+            watched: 0,
+            unconfirmed: 0,
+            tool: rollup::Tool::Bash,
+            calls: Some(12_345_678),
+            replay: "exact".to_string(),
+        };
+        let report = rollup::Report {
+            covered_since: Some(0),
+            weeks: vec![rollup::WeekReport {
+                week: 19_674,
+                partial: true,
+                rules: vec![rule],
+            }],
+        };
+        for line in report.to_text(width).lines() {
+            assert!(line.chars().count() <= 80, "`{line}` is wider than 80");
+        }
+    }
+
+    #[test]
+    fn the_status_label_switches_only_when_coverage_allows() {
+        // Wednesday 2023-11-15; the oldest closed week of four starts Monday
+        // 2023-10-16.
+        let now = 1_700_000_000 + 86_400;
+        let window_start = 19_646u64 * 86_400;
+        assert_eq!(
+            seen_label(now, Some(window_start)),
+            "seen, last 4 weeks + this week"
+        );
+        assert_eq!(
+            seen_label(now, Some(window_start - 5)),
+            "seen, last 4 weeks + this week"
+        );
+        assert_eq!(
+            seen_label(now, Some(window_start + 1)),
+            "seen since 2023-10-16"
+        );
+        assert_eq!(seen_label(now, None), "seen (journal empty)");
     }
 }

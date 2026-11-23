@@ -156,6 +156,28 @@ impl Seen {
         self.denied + self.advised + self.watched + self.unconfirmed
     }
 
+    /// Count `n` records of one stance and outcome.
+    pub fn count(&mut self, stance: &str, outcome: &str, n: u64) {
+        let n = u32::try_from(n).unwrap_or(u32::MAX);
+        match (stance, outcome) {
+            // A `confirm` that declined, or an assertion that could not check
+            // its claim. The outcome field carries the reason; older records
+            // wrote the literal `skipped` there, which counts as a reason
+            // nobody stated.
+            ("unconfirmed" | "unverified", why) => {
+                self.unconfirmed += n;
+                *self.reasons.entry(why.to_string()).or_default() += n;
+            }
+            (_, "denied") => self.denied += n,
+            (_, "advised") => self.advised += n,
+            (_, "watched") => self.watched += n,
+            // `rules-checked` and `candidates-checked` (ADR-0044) are notes
+            // beside a push that passed, never a decision; an outcome this
+            // reader does not know is none of the four buckets it can name.
+            _ => {}
+        }
+    }
+
     /// The most frequent reason `confirm` declined, if any.
     pub fn top_reason(&self) -> Option<(&str, u32)> {
         self.reasons
@@ -165,82 +187,71 @@ impl Seen {
     }
 }
 
-/// Every rule's [`Seen`] for records no older than `since` seconds.
+/// Every rule's [`Seen`] for records no older than `since` seconds: the
+/// roll-up's weeks that reach into the window, plus the journal's records the
+/// roll-up has not folded yet.
 pub fn tally(since: u64) -> std::collections::BTreeMap<String, Seen> {
-    let mut out = Default::default();
-    let now = now();
-    for p in paths() {
-        tally_into(&mut out, &p, since, now);
+    let Some(path) = path() else {
+        return Default::default();
+    };
+    tally_in(
+        &paths_of(&path),
+        &crate::rollup::path_beside(&path),
+        since,
+        now(),
+    )
+}
+
+/// [`tally`] against named files and a fixed clock, so it can be tested
+/// without touching the machine's journal.
+///
+/// A line that does not carry its fixed fields is a torn write and is
+/// dropped, never counted wrong. Journal records at or below the roll-up's
+/// watermark are in the roll-up already and are skipped, so a crash before
+/// the journal's delete, or a read racing a fold, never counts twice. Shadow
+/// rows are dropped on both sides. A roll-up week is a whole unit: it counts
+/// when its last day falls inside the window.
+pub fn tally_in(
+    journal_paths: &[std::path::PathBuf],
+    rollup_path: &std::path::Path,
+    since: u64,
+    now: u64,
+) -> std::collections::BTreeMap<String, Seen> {
+    let mut out: std::collections::BTreeMap<String, Seen> = Default::default();
+    let floor = now.saturating_sub(since);
+    let counted = crate::rollup::load(journal_paths, rollup_path);
+    for (key, count) in &counted.rollup.rows {
+        let week_end = u64::try_from(key.week + 7).unwrap_or(0) * 86_400;
+        if key.arm == "live" && week_end > floor {
+            out.entry(key.rule.clone())
+                .or_default()
+                .count(&key.stance, &key.outcome, *count);
+        }
+    }
+    for row in &counted.journal {
+        // Shadow rows are the part dropped to observe on purpose: counting
+        // them would read the experiment as the part's own behaviour.
+        if row.ts >= floor && row.arm == Arm::Live {
+            out.entry(row.rule.clone())
+                .or_default()
+                .count(&row.stance, &row.outcome, 1);
+        }
     }
     out
 }
 
-/// [`tally`] against a named file and a fixed clock, so it can be tested
-/// without touching the machine's journal.
-///
-/// Reads one generation: only `F ` lines, and a line that does not
-/// carry its fixed fields is a torn write and is dropped, never counted
-/// wrong. The eight fixed fields are exactly what [`line_for`] emits; the
-/// excerpt after them is free text and is not parsed.
 #[cfg(test)]
 pub fn tally_at(
     path: &std::path::Path,
     since: u64,
     now: u64,
 ) -> std::collections::BTreeMap<String, Seen> {
-    let mut out: std::collections::BTreeMap<String, Seen> = Default::default();
-    tally_into(&mut out, path, since, now);
-    out
-}
-
-fn tally_into(
-    out: &mut std::collections::BTreeMap<String, Seen>,
-    path: &std::path::Path,
-    since: u64,
-    now: u64,
-) {
-    let Ok(text) = fs::read_to_string(path) else {
-        return;
-    };
-    let floor = now.saturating_sub(since);
-    for line in text.lines() {
-        let Some(row) = fixed_fields(line) else {
-            continue;
-        };
-        if row.ts < floor {
-            continue;
-        }
-        // Shadow rows are the part dropped to observe on purpose: counting
-        // them would read the experiment as the part's own behaviour.
-        if row.arm == Arm::Shadow {
-            continue;
-        }
-        let (stance, outcome) = (row.stance.as_str(), row.outcome.as_str());
-        let seen = out.entry(row.rule.clone()).or_default();
-        match (stance, outcome) {
-            // A `confirm` that declined, or an assertion that could not check
-            // its claim. The outcome field carries the reason; older records
-            // wrote the literal `skipped` there, which counts as a reason
-            // nobody stated.
-            ("unconfirmed" | "unverified", why) => {
-                seen.unconfirmed += 1;
-                *seen.reasons.entry(why.to_string()).or_default() += 1;
-            }
-            (_, "denied") => seen.denied += 1,
-            (_, "advised") => seen.advised += 1,
-            (_, "watched") => seen.watched += 1,
-            // The implementation review's advisory rules comparison (ADR-0044):
-            // a note beside a push that passed, never a decision, so it is
-            // none of the four buckets.
-            (_, "rules-checked") => {}
-            // The same for the candidates adr-lint listed and the reviewer
-            // ruled on (ADR-0044): a note beside a push that passed.
-            (_, "candidates-checked") => {}
-            // An outcome this reader does not know. Counted as seen, because
-            // it was, but not as any of the four it can name.
-            _ => {}
-        }
-    }
+    tally_in(
+        &[path.to_path_buf()],
+        &path.with_file_name("no-such-rollup.log"),
+        since,
+        now,
+    )
 }
 
 /// Which arm of the ADR-0042 shadow a record belongs to. `Live` is every
@@ -1298,10 +1309,12 @@ mod tests {
         w(&generation(&path, 3), now - 100, "in-three");
         w(&generation(&path, 9), now - 500_000, "old-nine");
         w(&path, now - 5, "live");
-        let mut seen = std::collections::BTreeMap::new();
-        for p in paths_of(&path) {
-            tally_into(&mut seen, &p, 100_000, now);
-        }
+        let seen = tally_in(
+            &paths_of(&path),
+            &path.with_file_name("rollup.log"),
+            100_000,
+            now,
+        );
         assert_eq!(seen["in-three"].denied, 1);
         assert_eq!(seen["live"].denied, 1);
         assert!(!seen.contains_key("old-nine"), "outside the window");
@@ -1490,6 +1503,44 @@ mod tests {
                 assert!(found.contains(&format!("w{id}-{i}")), "lost w{id}-{i}");
             }
         }
+        let _ = fs::remove_dir_all(&dir); // scratch cleanup
+    }
+
+    #[test]
+    fn tally_counts_rollup_plus_journal_without_shadow_or_double_counting() {
+        let dir = std::env::temp_dir().join(format!("greenbelay-tally-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir); // a missing scratch dir is the normal case
+        fs::create_dir_all(&dir).unwrap();
+        let journal_file = dir.join("journal.log");
+        let rollup_file = dir.join("rollup.log");
+        // 2023-11-14 is in the week of Monday 2023-11-13.
+        let (folded, unfolded) = (1_700_000_000u64, 1_700_000_100u64);
+        fs::write(
+            &rollup_file,
+            format!(
+                "{}\nW {folded}\nR 2023-11-13 r deny denied live 3\n\
+                 R 2023-11-13 r deny denied shadow 5\n",
+                crate::rollup::FORMAT
+            ),
+        )
+        .unwrap();
+        let row = |ts: u64, arm: &str| format!("F {ts} r deny denied sess repo default {arm} x\n");
+        fs::write(
+            &journal_file,
+            format!(
+                "{}\n{}{}{}",
+                FORMAT,
+                row(folded - 10, "arm=live"),
+                row(unfolded, "arm=live"),
+                row(unfolded + 1, "arm=shadow"),
+            ),
+        )
+        .unwrap();
+        let seen = tally_in(&[journal_file], &rollup_file, 30 * 86_400, folded + 86_400);
+        assert_eq!(
+            seen["r"].denied, 4,
+            "3 rolled up + 1 unfolded; the row at or below W and both shadows stay out"
+        );
         let _ = fs::remove_dir_all(&dir); // scratch cleanup
     }
 }

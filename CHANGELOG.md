@@ -36,6 +36,17 @@ keeps what it decides for the follow-up that may move it to `deny` (#321).
 - The corpus case `8145b6c0-1794667260` (a teardown at 518k held on a dirty
   chezmoi checkout) now expects a fire: the size kind drops the
   clean-repository test.
+- New `greenbelay rollup [--weeks <n>] [--json] [--transcripts <dir>] [-q]`:
+  firings per week and rule from `rollup.log` plus the unfolded journal, with
+  each rule's tool calls (counted from the transcripts, subagents included,
+  frozen for a closed week) and the rate per 1,000. `--json` is
+  `greenbelay-rollup-v1`. A rule with no honest tool, or a week not stored,
+  prints `-` / `null`.
+- `status` reads roll-up plus journal, and its column says `seen, last 4 weeks
+  + this week` once the roll-up covers the four closed weeks, `seen since
+  <date>` before; a `rollup-failed` record newer than the roll-up is named.
+  Shadow rows stay out, and journal records at or below the roll-up's
+  watermark are not counted twice.
 
 ## v6.10.0
 
