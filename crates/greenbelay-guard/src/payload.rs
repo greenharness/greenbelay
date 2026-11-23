@@ -232,6 +232,18 @@ pub struct RelaisRunOp {
     pub permission_mode: String,
 }
 
+/// An `Agent` or `Task` call about to run.
+pub struct AgentLaunch {
+    pub subagent_type: String,
+    /// The call's `model`, when it carries one.
+    pub model: Option<String>,
+    pub prompt: String,
+    /// The session's working directory.
+    pub cwd: PathBuf,
+    pub session: String,
+    pub permission_mode: String,
+}
+
 /// The text a write tool was handed, before anything is applied.
 pub enum Change {
     /// `Write`: the whole new content.
@@ -341,6 +353,9 @@ pub enum Event {
     PreScreenshot(Box<ScreenshotOp>),
     /// A relais `run` about to start: `relais-run-forks` judges it.
     PreRelaisRun(Box<RelaisRunOp>),
+    /// An `Agent` or `Task` launch about to run: `agent-preferred-model`
+    /// judges it.
+    PreAgent(Box<AgentLaunch>),
     /// An LSP tool call that has run: recorded, never spoken to.
     PostLsp(Box<LspCall>),
     /// A prompt the person submitted: the one moment a typed approval of a
@@ -641,6 +656,32 @@ pub fn parse(raw: &str) -> Event {
                 run_cwd: field("cwd"),
                 task,
                 workspace: field("workspace"),
+                cwd: cwd.clone(),
+                session: str_at("session_id"),
+                permission_mode: str_at("permission_mode"),
+            }))
+        }
+        Some("PreToolUse")
+            if matches!(
+                v.get("tool_name").and_then(|x| x.as_str()),
+                Some("Agent" | "Task")
+            ) =>
+        {
+            let input = v.get("tool_input");
+            let text = |key: &str| {
+                input
+                    .and_then(|fields| fields.get(key))
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string)
+            };
+            let Some(subagent_type) = text("subagent_type").filter(|s| !s.trim().is_empty()) else {
+                return Event::NotOurs;
+            };
+            Event::PreAgent(Box::new(AgentLaunch {
+                subagent_type,
+                // A blank model is no model: the launch inherits.
+                model: text("model").filter(|m| !m.trim().is_empty()),
+                prompt: text("prompt").unwrap_or_default(),
                 cwd: cwd.clone(),
                 session: str_at("session_id"),
                 permission_mode: str_at("permission_mode"),

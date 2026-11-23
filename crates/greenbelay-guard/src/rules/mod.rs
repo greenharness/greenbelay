@@ -30,6 +30,7 @@ use crate::shell::Parsed;
 pub mod adr_lint_written;
 pub mod agent_guidance_shape;
 pub mod agent_guidance_written;
+pub mod agent_preferred_model;
 pub mod amend_pushed;
 pub mod ask_unopened_page;
 pub mod bare_stash_pop;

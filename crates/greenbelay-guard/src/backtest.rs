@@ -169,6 +169,7 @@ pub const NOT_SHELL: &[&str] = &[
     rules::code_read_not_lsp::RULE.id,
     rules::screenshot_in_main_session::RULE.id,
     rules::relais_run_forks::RULE.id,
+    rules::agent_preferred_model::RULE.id,
     rules::lint_suppression_added::RULE.id,
     rules::agent_guidance_written::RULE.id,
     rules::agent_guidance_shape::RULE.id,

@@ -215,6 +215,7 @@ fn decide(raw: &str) -> Decision {
         Event::PreGrep(op) => on_grep(&op),
         Event::PreScreenshot(op) => on_screenshot(&op),
         Event::PreRelaisRun(op) => on_relais_run(&op),
+        Event::PreAgent(op) => on_agent(&op),
         Event::PostLsp(call) => on_post_lsp(&call),
         Event::PostFile(op) => on_post_file(&op),
         Event::PostWrite(op) => on_post_write(&op),
@@ -2478,6 +2479,130 @@ fn on_relais_run(op: &crate::payload::RelaisRunOp) -> Decision {
         fire,
         workspace,
         shown.strip_prefix(r"\\?\").unwrap_or(&shown),
+    );
+    match stance {
+        Stance::Observe => Decision::Silent,
+        Stance::Advise => Decision::Advise(text),
+        Stance::Deny => Decision::Deny(text),
+    }
+}
+
+/// The most of an agent definition that is read: its frontmatter is at the
+/// top, so a longer body is cut, never refused.
+const DEFINITION_READ_LIMIT: u64 = 8 * 1024;
+
+/// Why a definition that exists could not be judged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Unreadable {
+    NotAFile,
+    Unopened,
+    Unread,
+    NoFrontmatter,
+}
+
+impl Unreadable {
+    fn label(self) -> &'static str {
+        match self {
+            Unreadable::NotAFile => "not_a_file",
+            Unreadable::Unopened => "unopened",
+            Unreadable::Unread => "unread",
+            Unreadable::NoFrontmatter => "no_frontmatter",
+        }
+    }
+}
+
+/// The frontmatter of the definition at `path`. Only a regular file is
+/// opened (a FIFO would block the open until a writer comes), and only its
+/// first [`DEFINITION_READ_LIMIT`] bytes are read. A file swapped for a FIFO
+/// between the check and the open would still block: that swap needs write
+/// access to the agents directory, which already controls the definitions.
+/// If that ever changes, open with `O_NONBLOCK` (a `libc` dependency).
+fn read_definition(
+    path: &std::path::Path,
+) -> Result<rules::agent_preferred_model::Definition, Unreadable> {
+    use std::io::Read;
+    if !std::fs::metadata(path).is_ok_and(|meta| meta.is_file()) {
+        return Err(Unreadable::NotAFile);
+    }
+    let handle = std::fs::File::open(path).map_err(|_| Unreadable::Unopened)?;
+    let mut bytes = Vec::new();
+    handle
+        .take(DEFINITION_READ_LIMIT)
+        .read_to_end(&mut bytes)
+        .map_err(|_| Unreadable::Unread)?;
+    // The cut may split a character: the valid prefix holds the frontmatter.
+    let text = match std::str::from_utf8(&bytes) {
+        Ok(text) => text,
+        Err(e) => std::str::from_utf8(&bytes[..e.valid_up_to()]).unwrap_or_default(),
+    };
+    rules::agent_preferred_model::parse_definition(text).ok_or(Unreadable::NoFrontmatter)
+}
+
+/// The directory Claude Code loaded the session's project agents from: the
+/// project directory it gives hooks, else the call's working directory.
+fn agent_project(cwd: &std::path::Path) -> std::path::PathBuf {
+    std::env::var_os("CLAUDE_PROJECT_DIR")
+        .filter(|dir| !dir.is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| cwd.to_path_buf())
+}
+
+/// An `Agent` or `Task` launch whose definition prefers a model the call does
+/// not name.
+fn on_agent(op: &crate::payload::AgentLaunch) -> Decision {
+    use rules::agent_preferred_model as apm;
+    let rule = &apm::RULE;
+    let stance = crate::stance::resolve(rule);
+    let project = agent_project(&op.cwd);
+    let journal_as = |outcome: &str, excerpt: &str| {
+        journal::record(&journal::Entry {
+            rule: rule.id,
+            stance: stance.as_str(),
+            outcome,
+            session: &op.session,
+            // The repository whose definition decided.
+            repo: &repo_name(&project),
+            mode: &op.permission_mode,
+            excerpt,
+        });
+    };
+    let config = greenbelay_guard::settings::config_dir();
+    let Some(path) =
+        greenbelay_process::agents::bare_agent_file(config.as_deref(), &project, &op.subagent_type)
+    else {
+        return Decision::Silent;
+    };
+    // A definition that exists but cannot be read is journalled, so a rule
+    // that went quiet for a reviewer shows in the counts.
+    let definition = match read_definition(&path) {
+        Ok(definition) => definition,
+        Err(reason) => {
+            journal_as(
+                "silent",
+                &format!(
+                    "{} definition_unreadable {}",
+                    op.subagent_type,
+                    reason.label()
+                ),
+            );
+            return Decision::Silent;
+        }
+    };
+    let Some(text) = apm::judge(
+        &op.subagent_type,
+        &definition,
+        op.model.as_deref(),
+        &op.prompt,
+    ) else {
+        return Decision::Silent;
+    };
+    journal_as(
+        outcome_of(stance),
+        &format!(
+            "{} prefers {}",
+            op.subagent_type,
+            definition.preferred_model.as_deref().unwrap_or("")
+        ),
     );
     match stance {
         Stance::Observe => Decision::Silent,

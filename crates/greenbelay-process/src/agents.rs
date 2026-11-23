@@ -142,6 +142,29 @@ pub fn agent_files(project: &Path, agent: &str) -> Option<Vec<PathBuf>> {
     )
 }
 
+/// The file Claude Code loads a bare (not plugin-namespaced) `agent` from:
+/// the repository's `.claude/agents` first, then the config directory's. A
+/// plugin's `agents/` is left out: a plugin agent loads only as
+/// `plugin:name`, so it never defines a bare name. A candidate whose target
+/// that is not there (a dangling link included) is skipped; one that exists
+/// but cannot be read is returned, for the caller to report. `None` when
+/// neither exists, or when `agent` is not a bare file name (a plugin agent's
+/// `plugin:name`, a path, a dot file).
+pub fn bare_agent_file(config_dir: Option<&Path>, project: &Path, agent: &str) -> Option<PathBuf> {
+    if agent.is_empty() || agent.contains([':', '/', '\\']) || agent.starts_with('.') {
+        return None;
+    }
+    let file_name = format!("{agent}{AGENT_EXTENSION}");
+    let repository = repository_root(project).join(".claude").join("agents");
+    std::iter::once(repository)
+        .chain(config_dir.map(|config| config.join("agents")))
+        .map(|dir| dir.join(&file_name))
+        .find(|path| match std::fs::metadata(path) {
+            Ok(_) => true,
+            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+        })
+}
+
 fn agent_dirs_in(config_dir: Option<&Path>, project: &Path) -> Option<Vec<PathBuf>> {
     // Where the agents would be is unknown without a config directory.
     let config = config_dir?;
@@ -241,6 +264,58 @@ mod tests {
     fn touch(path: &Path) {
         std::fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
         std::fs::write(path, "---\nname: x\n---\n").expect("file");
+    }
+
+    #[test]
+    fn a_bare_agent_is_read_from_the_repository_before_the_config() {
+        let root = scratch("bare-order");
+        let project = root.join("repo");
+        std::fs::create_dir_all(project.join(".git")).expect("repo");
+        let config = root.join("config");
+        let user = config.join("agents/rev.md");
+        touch(&user);
+        assert_eq!(bare_agent_file(Some(&config), &project, "rev"), Some(user));
+        let repo = project.join(".claude/agents/rev.md");
+        touch(&repo);
+        assert_eq!(bare_agent_file(Some(&config), &project, "rev"), Some(repo));
+        assert_eq!(bare_agent_file(Some(&config), &project, "absent"), None);
+    }
+
+    #[test]
+    fn a_name_that_is_not_a_bare_file_name_has_no_file() {
+        let root = scratch("bare-names");
+        let config = root.join("config");
+        touch(&config.join("agents/rev.md"));
+        for name in ["", "p:rev", "../agents/rev", "a/rev", "a\\rev", ".rev"] {
+            assert_eq!(
+                bare_agent_file(Some(&config), &root, name),
+                None,
+                "{name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_plugin_agent_never_defines_a_bare_name() {
+        let root = scratch("bare-plugin");
+        let config = root.join("config");
+        touch(&config.join("plugins/cache/m/p/1.0.0/agents/rev.md"));
+        assert_eq!(bare_agent_file(Some(&config), &root, "rev"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_repository_link_falls_through_to_the_config() {
+        let root = scratch("bare-dangling");
+        let project = root.join("repo");
+        std::fs::create_dir_all(project.join(".git")).expect("repo");
+        let link = project.join(".claude/agents/rev.md");
+        std::fs::create_dir_all(link.parent().expect("parent")).expect("dirs");
+        std::os::unix::fs::symlink(root.join("nowhere.md"), &link).expect("link");
+        let config = root.join("config");
+        let user = config.join("agents/rev.md");
+        touch(&user);
+        assert_eq!(bare_agent_file(Some(&config), &project, "rev"), Some(user));
     }
 
     #[test]

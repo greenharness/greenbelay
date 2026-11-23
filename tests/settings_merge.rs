@@ -86,8 +86,8 @@ fn an_unrelated_hook_survives_install_and_uninstall() {
     // Theirs, then our Bash block, our Read|Edit|Write block, our Grep
     // block (symbol-grep-not-lsp), our AskUserQuestion block (preview
     // approval), our ExitPlanMode block (review panel), our take_screenshot
-    // block and our relais run block.
-    assert_eq!(pre.len(), 8, "ours were added beside theirs");
+    // block, our relais run block and our Agent|Task block.
+    assert_eq!(pre.len(), 9, "ours were added beside theirs");
     assert_eq!(pre[0]["matcher"], "Write");
     assert_eq!(
         after.get("Notification"),
@@ -121,9 +121,9 @@ fn we_join_an_existing_bash_block_rather_than_adding_a_second() {
     // ExitPlanMode blocks are ours alone.
     assert_eq!(
         pre.len(),
-        7,
+        8,
         "one Bash block, one Read|Edit|Write block, one Grep block, one AskUserQuestion block, \
-         one ExitPlanMode block, one take_screenshot block, one relais run block"
+         one ExitPlanMode block, one take_screenshot block, one relais run block, one Agent|Task block"
     );
     assert_eq!(pre[0]["matcher"], "Bash");
     assert_eq!(pre[0]["hooks"].as_array().unwrap().len(), 2, "two handlers");

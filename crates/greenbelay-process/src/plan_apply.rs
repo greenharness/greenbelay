@@ -945,3 +945,28 @@ fn fallback(opts: &Opts, real: &Path, findings: &[Finding]) -> Done {
     eprintln!("recorded the fallback of {agent_id} (verified: {verified})");
     Ok((said, 0))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HEADER: &str = "<<<APPLY path=/r/plan.md sha=abc123>>>\nedits";
+
+    #[test]
+    fn a_prompt_starting_with_the_apply_block_is_found_by_the_fallback_lookup() {
+        assert_eq!(
+            apply_header(HEADER),
+            Some(("/r/plan.md".to_string(), "abc123".to_string()))
+        );
+        assert!(apply_header(&format!("\n  {HEADER}")).is_some());
+    }
+
+    /// `--record-fallback` recognises a launch only by a prompt that starts
+    /// with the block, so a `model-fallback:` marker must follow it, never
+    /// precede it.
+    #[test]
+    fn a_model_fallback_line_before_the_block_hides_the_launch() {
+        let marker = "model-fallback: opus -> root (unavailable)";
+        assert_eq!(apply_header(&format!("{marker}\n{HEADER}")), None);
+    }
+}

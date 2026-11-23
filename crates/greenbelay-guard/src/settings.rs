@@ -499,6 +499,8 @@ pub const TARGETS: &[(&str, Option<&str>)] = &[
     ),
     // `relais-run-forks`: the relais run tool, by its literal MCP name.
     ("PreToolUse", Some(crate::rules::relais_run_forks::TOOL)),
+    // `agent-preferred-model`: a subagent launch, as `Agent` or as `Task`.
+    ("PreToolUse", Some("Agent|Task")),
     // The turn ending: the one moment a plan left open can be seen.
     ("Stop", None),
 ];

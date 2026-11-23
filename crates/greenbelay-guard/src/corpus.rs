@@ -208,6 +208,10 @@ const EMBEDDED: &[(&str, &str)] = &[
         include_str!("../tests/corpus/relais-run-forks.cases"),
     ),
     (
+        "agent-preferred-model",
+        include_str!("../tests/corpus/agent-preferred-model.cases"),
+    ),
+    (
         "lint-suppression-added",
         include_str!("../tests/corpus/lint-suppression-added.cases"),
     ),
