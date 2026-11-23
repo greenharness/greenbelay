@@ -508,6 +508,37 @@ pub fn enumerated_or(key: &str, allowed: &[&'static str], default: &'static str)
     }
 }
 
+/// A whole number setting of at least `min`; a value that does not parse, or
+/// is below `min`, is reported once and the default is used.
+pub fn integer_at_least_or(key: &str, min: u64, default: u64) -> u64 {
+    match read(key, None) {
+        Value::Set(text) => match text.trim().parse::<u64>() {
+            Ok(number) if number >= min => number,
+            Ok(number) => {
+                complain(
+                    key,
+                    &format!("{number} is below the floor of {min}"),
+                    &default.to_string(),
+                );
+                default
+            }
+            Err(_) => {
+                complain(
+                    key,
+                    &format!("{:?} is not a whole number", text.trim()),
+                    &default.to_string(),
+                );
+                default
+            }
+        },
+        Value::Unset => default,
+        Value::Bad { why } => {
+            complain(key, &why, &default.to_string());
+            default
+        }
+    }
+}
+
 /// A length of time written as whole numbers with a unit: `45s`, `90m`, `3h`,
 /// `2d`. A bare number is seconds.
 pub fn parse_duration(text: &str) -> Option<std::time::Duration> {

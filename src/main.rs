@@ -105,6 +105,13 @@ usage: ",
   mine [flags]          shapes the model got wrong that no rule names yet
   output-audit --since <UTC> --until <UTC> [--json]
                         where tool output went in a window, by kind of call
+  size-evidence [--days <n>]
+                        clear-at-boundary size decisions of the last n days
+                        (default 7) and the clear-relay submissions after each
+                        handoff request; missing relay logs counted apart
+  size-replay [--transcripts <dir>] [--since <YYYY-MM-DD>]
+                        replay the size kind over recorded transcripts, Stop
+                        by Stop: coverage, fires per week, the release bar
   backtest [flags]      replay your transcripts through the rules
   harness-review [--json] [--check] [--model <id>] [--out <dir>]
                         one row per rule and assertion: firings, compliance
@@ -232,6 +239,8 @@ enum Sub {
     Explain,
     Mine,
     OutputAudit,
+    SizeEvidence,
+    SizeReplay,
     Check,
     Analyze,
     Rules,
@@ -254,7 +263,7 @@ enum Sub {
     Migrate,
 }
 
-const SUBCOMMANDS: [(&str, Sub); 33] = [
+const SUBCOMMANDS: [(&str, Sub); 35] = [
     ("hook", Sub::Hook),
     ("install", Sub::Install),
     ("uninstall", Sub::Uninstall),
@@ -268,6 +277,8 @@ const SUBCOMMANDS: [(&str, Sub); 33] = [
     ("explain", Sub::Explain),
     ("mine", Sub::Mine),
     ("output-audit", Sub::OutputAudit),
+    ("size-evidence", Sub::SizeEvidence),
+    ("size-replay", Sub::SizeReplay),
     ("check", Sub::Check),
     ("analyze", Sub::Analyze),
     ("rules", Sub::Rules),
@@ -816,6 +827,8 @@ fn main() -> ExitCode {
             Sub::Explain => run_backtest(&args, true),
             Sub::Mine => run_mine(&args),
             Sub::OutputAudit => run_output_audit(&args),
+            Sub::SizeEvidence => run_size_evidence(&args),
+            Sub::SizeReplay => run_size_replay(&args),
             Sub::Check => run_check(&args),
             Sub::Analyze => run_analyze(&args),
             Sub::Rules => run_rules(&args),
@@ -1445,6 +1458,84 @@ JSON `coverage.complete` say so); 1 when the transcripts cannot be found;
 2 on a usage error.
 "
 );
+
+/// `size-evidence [--days <n>]`: the size kind's decisions, read from its
+/// own day files, with each handoff request paired to a clear-relay submit.
+fn run_size_evidence(args: &[OsString]) -> ExitCode {
+    let args: Vec<String> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let usage = |why: &str| {
+        eprintln!("{BIN}: size-evidence: {why}; usage: {BIN} size-evidence [--days <n>]");
+        ExitCode::from(2)
+    };
+    let mut days = 7;
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        match word.as_str() {
+            "--help" | "-h" => {
+                println!("usage: {BIN} size-evidence [--days <n>]");
+                return ExitCode::SUCCESS;
+            }
+            "--days" => match words.next().and_then(|n| n.parse::<u64>().ok()) {
+                Some(n) if n > 0 => days = n,
+                _ => return usage("--days needs a whole number of days above 0"),
+            },
+            other => return usage(&format!("unexpected argument `{other}`")),
+        }
+    }
+    match greenbelay_process::size_evidence::report(days) {
+        Some(report) => {
+            print!("{}", report.render(days));
+            ExitCode::SUCCESS
+        }
+        None => {
+            eprintln!("{BIN}: size-evidence: no data or state directory (set HOME)");
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// `size-replay [--transcripts <dir>] [--since <YYYY-MM-DD>]`.
+fn run_size_replay(args: &[OsString]) -> ExitCode {
+    let args: Vec<String> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let usage = |why: &str| {
+        eprintln!("{BIN}: size-replay: {why}; usage: {BIN} size-replay [--transcripts <dir>] [--since <YYYY-MM-DD>]");
+        ExitCode::from(2)
+    };
+    let mut root = greenbelay_guard::settings::config_dir().map(|dir| dir.join("projects"));
+    let mut since = String::from("0000-00-00");
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        match word.as_str() {
+            "--transcripts" => match words.next() {
+                Some(dir) => root = Some(std::path::PathBuf::from(dir)),
+                None => return usage("--transcripts needs a directory"),
+            },
+            "--since" => match words.next() {
+                Some(day)
+                    if greenbelay_guard::civil::day_of(&format!("{day}T00:00:00Z")).is_some() =>
+                {
+                    since.clone_from(day);
+                }
+                _ => return usage("--since needs a day as YYYY-MM-DD"),
+            },
+            other => return usage(&format!("unexpected argument `{other}`")),
+        }
+    }
+    let Some(root) = root.filter(|dir| dir.is_dir()) else {
+        return usage("no transcripts directory");
+    };
+    print!(
+        "{}",
+        greenbelay_process::size_replay::replay(&root, &since).render()
+    );
+    ExitCode::SUCCESS
+}
 
 fn run_output_audit(args: &[OsString]) -> ExitCode {
     use greenbelay_guard::output_audit::{self, Instant, Window};

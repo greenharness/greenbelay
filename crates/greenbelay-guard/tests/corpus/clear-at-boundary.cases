@@ -68,4 +68,23 @@ nomatch	Stop 1dbedd97-1794869349
 # alone" and " M dot_zshrc" (original transcript). The rule advised because it joined
 # `~` to the cwd and counted the missing path clean (session-boundaries t21); with
 # home resolved it checks that checkout, and the per-directory fact freezes it dirty.
-nomatch	Stop 8145b6c0-1794667260
+# Since the size kind (ADR-0083): the context is at 518k, past 400k, and nothing is
+# in flight, so the held command boundary leaves the size kind to judge; it drops the
+# clean-repository test, and the idle Stop past the size gets the mid-phase handoff.
+match	Stop 8145b6c0-1794667260
+
+# The size kind (ADR-0083): synthetic Stops, the plan's fixtures.
+# why: a Working Stop at 450k, nothing in flight: the mid-phase handoff (ADR-0083)
+match	Stop size-working-450k
+# why: a Working Stop at 450k with a background task: the size kind holds
+nomatch	Stop size-held-background
+# why: a Working Stop at 350k: below the size boundary, plan-phases-open's
+nomatch	Stop size-below-400k
+# why: the first step fired at 450k; a new turn at 480k is the same step
+nomatch	Stop size-same-step-480k
+# why: the first step fired at 450k; at 510k the next step fires
+match	Stop size-next-step-510k
+# why: a teardown at 450k is answered at the size stance (decision 7b)
+match	Stop size-command-450k
+# why: the handoff turn ends with the marker: silent
+nomatch	Stop size-marker-turn

@@ -36,3 +36,5 @@ pub mod push_preview;
 pub mod review_brief;
 pub mod review_outcomes;
 pub mod shipped;
+pub mod size_evidence;
+pub mod size_replay;

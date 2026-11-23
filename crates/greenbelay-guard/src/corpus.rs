@@ -691,6 +691,41 @@ const EMBEDDED_STOP: &[(&str, &str, &str)] = &[
         "e2fb2812-1794806880",
         include_str!("../tests/corpus/stop/clear-at-boundary/e2fb2812-1794806880.json"),
     ),
+    (
+        "clear-at-boundary",
+        "size-working-450k",
+        include_str!("../tests/corpus/stop/clear-at-boundary/size-working-450k.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "size-held-background",
+        include_str!("../tests/corpus/stop/clear-at-boundary/size-held-background.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "size-below-400k",
+        include_str!("../tests/corpus/stop/clear-at-boundary/size-below-400k.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "size-same-step-480k",
+        include_str!("../tests/corpus/stop/clear-at-boundary/size-same-step-480k.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "size-next-step-510k",
+        include_str!("../tests/corpus/stop/clear-at-boundary/size-next-step-510k.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "size-command-450k",
+        include_str!("../tests/corpus/stop/clear-at-boundary/size-command-450k.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "size-marker-turn",
+        include_str!("../tests/corpus/stop/clear-at-boundary/size-marker-turn.json"),
+    ),
 ];
 
 fn embedded_stop(rule: &str, name: &str) -> Option<&'static str> {

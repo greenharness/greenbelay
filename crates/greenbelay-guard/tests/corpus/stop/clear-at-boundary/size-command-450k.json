@@ -1,0 +1,54 @@
+{
+  "payload": {
+    "cwd": "/work",
+    "permission_mode": "bypassPermissions",
+    "background_busy": false,
+    "stop_hook_active": false,
+    "ends_with_question": false,
+    "waiting_line": false,
+    "marker": false
+  },
+  "state": {
+    "turn": "",
+    "key": "",
+    "advices": 0,
+    "pending": null
+  },
+  "facts": {
+    "phase": "none",
+    "repositories": "clean"
+  },
+  "entries": [
+    {
+      "type": "user",
+      "uuid": "p1",
+      "message": {
+        "role": "user",
+        "content": "go"
+      }
+    },
+    {
+      "type": "assistant",
+      "uuid": "b1",
+      "isSidechain": false,
+      "message": {
+        "role": "assistant",
+        "usage": {
+          "input_tokens": 450000,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0
+        },
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "b1",
+            "name": "Bash",
+            "input": {
+              "command": "git worktree remove /tmp/wt"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- `clear-at-boundary` gains a size kind (ADR-0083): past 400k tokens of
+  context (`greenbelay.clear-at-boundary.size-tokens`, at least 200k), a
+  `Stop` with no background task and no relais run in flight hands off
+  mid-phase at the size stance (`greenbelay.clear-at-boundary.size-stance`),
+  at any phase and in a continued turn. It ships at `observe`: the 30-day
+  replay fired 2.71 times a day, but 15.5% of fires (the bar is 10%) came
+  while a task launched outside the replayed transcript still ran. `deny`
+  waits on the 7-day live evidence (follow-up t03). `plan-phases-open`
+  stays silent for the rest of a turn the size Continue spoke in. A command
+  boundary past 400k is answered at the size stance. Once per turn and per
+  100k step, at most 3 per session. A `docs(plan): handoff …` commit is never
+  a command boundary. To send the agent on:
+  `git config --global greenbelay.clear-at-boundary.size-stance deny`.
+- `size-replay [--transcripts <dir>] [--since <day>]`: the size kind replayed
+  Stop by Stop over recorded transcripts, with its coverage and the bar.
+- `size-evidence [--days <n>]`: the size decisions, kept 30 days in their own
+  day files apart from the journal's rotation, each handoff request paired
+  with the clear-relay's `submit`; a missing relay log is counted apart.
+- The corpus case `8145b6c0-1794667260` (a teardown at 518k held on a dirty
+  chezmoi checkout) now expects a fire: the size kind drops the
+  clean-repository test.
+
 ## v6.10.0
 
 greenbelay 6.10.0 keeps weekly firing counts past the journal's rotation, in

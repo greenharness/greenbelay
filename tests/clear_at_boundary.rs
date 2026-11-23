@@ -78,7 +78,7 @@ impl World {
         let global = root.join("global");
         std::fs::write(
             &global,
-            "[greenbelay \"clear-at-boundary\"]\n\tstance = deny\n",
+            "[greenbelay \"clear-at-boundary\"]\n\tstance = deny\n\tsize-stance = deny\n",
         )
         .unwrap();
         Command::new("git")
@@ -120,9 +120,14 @@ impl World {
     fn stance(&self, rule: &str, stance: &str) {
         std::fs::write(
             &self.global,
-            format!("[greenbelay \"{rule}\"]\n\tstance = {stance}\n"),
+            format!("[greenbelay \"clear-at-boundary\"]\n\tsize-stance = deny\n[greenbelay \"{rule}\"]\n\tstance = {stance}\n"),
         )
         .unwrap();
+    }
+
+    /// Replace the global git config with `text`.
+    fn config(&self, text: &str) {
+        std::fs::write(&self.global, text).unwrap();
     }
 
     fn transcript(&self, name: &str, entries: &[Value]) -> PathBuf {
@@ -133,6 +138,10 @@ impl World {
     }
 
     fn run_with_path(&self, payload: &Value, bin_dir: Option<&Path>) -> Reply {
+        self.run_with_env(payload, bin_dir, &[])
+    }
+
+    fn run_with_env(&self, payload: &Value, bin_dir: Option<&Path>, env: &[(&str, &str)]) -> Reply {
         let mut command = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
         command
             .arg("hook")
@@ -144,6 +153,9 @@ impl World {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        for (name, value) in env {
+            command.env(name, value);
+        }
         if let Some(dir) = bin_dir {
             let rest = std::env::var("PATH").unwrap_or_default();
             command.env("PATH", format!("{}:{rest}", dir.display()));
@@ -921,4 +933,197 @@ fn a_state_file_in_the_text_format_still_reads() {
     assert!(world.journal_has("watched", "cap"), "{:?}", world.journal());
     let fresh = world.stop("fresh", &transcript, json!({}));
     assert!(fresh.blocks(), "{}", fresh.stdout);
+}
+
+/// A mid-phase turn with uuids on every entry: a prompt, an edit, its
+/// result, and the closing usage at `tokens`.
+fn mid_phase_turn(tokens: u64) -> Vec<Value> {
+    let mut closing = usage(tokens, false);
+    closing["uuid"] = json!("u-close");
+    vec![
+        prompt("p1"),
+        json!({"type": "assistant", "uuid": "u-edit", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "e1", "name": "Edit", "input": {}}]}}),
+        json!({"type": "user", "uuid": "u-result", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "e1", "content": [{"type": "text", "text": "ok"}]}]}}),
+        closing,
+    ]
+}
+
+/// A plan with an open phase and work committed after it: `Working`.
+fn working_world(name: &str) -> World {
+    let world = World::new(name);
+    world.commit_file("docs/plans/2026-11-13-x.md", OPEN_PLAN, "docs(plan): x");
+    world.commit_file("src/lib.rs", "fn f() {}", "feat: work after the plan");
+    world
+}
+
+#[test]
+fn past_the_size_a_working_stop_gets_the_mid_phase_handoff_once() {
+    let world = working_world("size-working");
+    let transcript = world.transcript("t.jsonl", &mid_phase_turn(450_000));
+    let first = world.stop("s1", &transcript, json!({}));
+    assert!(first.blocks(), "{}", first.stdout);
+    let reason = first.reason();
+    assert!(
+        reason.starts_with("greenbelay/clear-at-boundary:"),
+        "{reason}"
+    );
+    assert!(reason.contains("mid-phase at 450k"), "{reason}");
+    assert!(reason.contains("size boundary at 450k"), "{reason}");
+    assert!(
+        world.journal_has("denied", "size fired 450k"),
+        "{:?}",
+        world.journal()
+    );
+    // The handoff Stop of the same turn, before the marker: both rules silent.
+    let continued = world.stop("s1", &transcript, json!({"stop_hook_active": true}));
+    assert!(continued.silent(), "{}", continued.stdout);
+    // The marker turn: both silent.
+    let marked = world.stop(
+        "s1",
+        &transcript,
+        json!({"stop_hook_active": true, "last_assistant_message": "done\nsafe to /clear; next: `resume Phase 3: x`"}),
+    );
+    assert!(marked.silent(), "{}", marked.stdout);
+    // The size kind's evidence is kept outside the journal.
+    let evidence = std::fs::read_dir(world.claude.join("greenbelay/size-evidence"))
+        .expect("an evidence directory")
+        .flatten()
+        .map(|entry| std::fs::read_to_string(entry.path()).unwrap())
+        .collect::<String>();
+    assert!(evidence.contains("\"outcome\":\"requested\""), "{evidence}");
+}
+
+#[test]
+fn below_the_size_a_working_stop_is_plan_phases_opens() {
+    let world = working_world("size-below");
+    let transcript = world.transcript("t.jsonl", &mid_phase_turn(350_000));
+    let reply = world.stop("s1", &transcript, json!({}));
+    assert!(reply.blocks(), "{}", reply.stdout);
+    assert!(
+        reply.reason().starts_with("greenbelay/plan-phases-open:"),
+        "{}",
+        reply.reason()
+    );
+    assert!(world.journal().is_empty(), "{:?}", world.journal());
+}
+
+#[test]
+fn background_work_holds_the_size_kind_and_plan_phases_open_still_speaks() {
+    let world = working_world("size-busy");
+    let transcript = world.transcript("t.jsonl", &mid_phase_turn(450_000));
+    let reply = world.stop(
+        "s1",
+        &transcript,
+        json!({"background_tasks": [{"id": "b1"}]}),
+    );
+    assert!(
+        reply.silent() || reply.reason().starts_with("greenbelay/plan-phases-open:"),
+        "{}",
+        reply.stdout
+    );
+    assert!(
+        world.journal_has("watched", "size held background"),
+        "{:?}",
+        world.journal()
+    );
+}
+
+#[test]
+fn a_second_size_fire_waits_for_500k() {
+    let world = working_world("size-step");
+    let first = world.transcript("a.jsonl", &mid_phase_turn(450_000));
+    assert!(world.stop("s1", &first, json!({})).blocks());
+    let mut later = mid_phase_turn(450_000);
+    later.push(prompt("p2"));
+    let mut closing = usage(480_000, false);
+    closing["uuid"] = json!("u-480");
+    later.push(closing);
+    let same_step = world.transcript("b.jsonl", &later);
+    let reply = world.stop("s1", &same_step, json!({}));
+    assert!(
+        !reply.blocks() || !reply.reason().starts_with("greenbelay/clear-at-boundary:"),
+        "{}",
+        reply.stdout
+    );
+    let mut closing = usage(510_000, false);
+    closing["uuid"] = json!("u-510");
+    later.push(closing);
+    let next_step = world.transcript("c.jsonl", &later);
+    let reply = world.stop("s1", &next_step, json!({}));
+    assert!(
+        reply.reason().contains("mid-phase at 510k"),
+        "{}",
+        reply.stdout
+    );
+}
+
+#[test]
+fn the_size_kind_ships_at_observe_and_the_kill_switch_observes() {
+    let world = working_world("size-default");
+    world.config("");
+    let transcript = world.transcript("t.jsonl", &mid_phase_turn(450_000));
+    let reply = world.stop("s1", &transcript, json!({}));
+    assert!(
+        !reply.blocks() || reply.reason().starts_with("greenbelay/plan-phases-open:"),
+        "{}",
+        reply.stdout
+    );
+    assert!(
+        world.journal_has("watched", "size fired 450k (observe)"),
+        "{:?}",
+        world.journal()
+    );
+    // The compiled `advise` of the rule does not lower a configured `deny`.
+    world.config("[greenbelay \"clear-at-boundary\"]\n\tsize-stance = deny\n");
+    let reply = world.stop("s3", &transcript, json!({}));
+    assert!(
+        reply.reason().starts_with("greenbelay/clear-at-boundary:"),
+        "{}",
+        reply.stdout
+    );
+
+    let payload = json!({"hook_event_name": "Stop", "session_id": "s2", "cwd": world.repo,
+        "transcript_path": transcript});
+    let off = world.run_with_env(&payload, None, &[("GREENBELAY_OFF", "1")]);
+    assert!(off.silent(), "{}", off.stdout);
+    assert!(
+        world
+            .journal()
+            .iter()
+            .any(|line| line.contains(" observe ") && line.contains("size fired 450k")),
+        "{:?}",
+        world.journal()
+    );
+}
+
+#[test]
+fn a_command_boundary_past_the_size_is_answered_at_the_size_stance() {
+    let world = World::new("size-command");
+    world.config("[greenbelay \"clear-at-boundary\"]\n\tstance = advise\n\tsize-stance = deny\n");
+    let big = world.transcript("big.jsonl", &turn(TEARDOWN, 450_000));
+    let reply = world.stop("s1", &big, json!({}));
+    assert!(reply.blocks(), "{}", reply.stdout);
+    let small = world.transcript("small.jsonl", &turn(TEARDOWN, 300_000));
+    let reply = world.stop("s2", &small, json!({}));
+    assert!(reply.note().is_some(), "{}", reply.stdout);
+}
+
+#[test]
+fn the_size_stance_key_observes() {
+    let world = working_world("size-observe");
+    world.config("[greenbelay \"clear-at-boundary\"]\n\tsize-stance = observe\n");
+    let transcript = world.transcript("t.jsonl", &mid_phase_turn(450_000));
+    let reply = world.stop("s1", &transcript, json!({}));
+    assert!(
+        !reply.blocks() || reply.reason().starts_with("greenbelay/plan-phases-open:"),
+        "{}",
+        reply.stdout
+    );
+    assert!(
+        world.journal_has("watched", "size fired 450k (observe)"),
+        "{:?}",
+        world.journal()
+    );
 }
