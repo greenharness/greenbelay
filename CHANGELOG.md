@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Journal rotation folds the generation it deletes into `rollup.log`, beside the
+  journal: weekly firing counts per rule, kept 104 weeks. The fold is best
+  effort: a busy roll-up lock skips that rotation, and a failed fold rotates
+  anyway and writes a `rollup-failed` record. Counts start at the first fold.
 - `status`: the journal column reads `seen since <date>`, from the oldest
   record, instead of `seen, last 30 days`: the journal keeps about three days.
 

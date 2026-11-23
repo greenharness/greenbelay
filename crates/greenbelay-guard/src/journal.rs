@@ -390,8 +390,11 @@ fn append(path: &std::path::Path, max: u64, line: &str) -> Option<()> {
     // Rotation happens BEFORE the write, so `journal.log` always exists
     // afterwards and doctor's liveness mtime stays correct.
     let mut stuck = None;
+    let mut fold_failed = None;
     if fs::metadata(path).map(|m| m.len() > max).unwrap_or(false) {
-        stuck = rotate(path, max).err();
+        let rotation = rotate(path, max);
+        stuck = rotation.moved.err();
+        fold_failed = rotation.fold_failed;
     }
     // The file appears with its header already in it: of several writers
     // that find no file, exactly one creates it, and nobody can append to an
@@ -406,6 +409,11 @@ fn append(path: &std::path::Path, max: u64, line: &str) -> Option<()> {
         // The journal kept growing past its cap: said once per write, in the
         // journal itself, where `doctor` and a reader of the file see it.
         let _ = f.write_all(format!("F {} - - rotate-failed - - - {why}\n", now()).as_bytes());
+        // the note is itself best effort
+    }
+    if let Some(why) = fold_failed {
+        // The generation that was deleted never reached the roll-up.
+        let _ = f.write_all(format!("F {} - - rollup-failed - - - {why}\n", now()).as_bytes());
         // the note is itself best effort
     }
     f.write_all(line.as_bytes()).ok()?;
@@ -475,12 +483,26 @@ fn create_with_header(path: &std::path::Path) -> Option<()> {
     linked.ok()
 }
 
-/// Shift the generations by renames only; nothing is read or rewritten. A
-/// short-lived lock file makes one writer do it: the others append to the
-/// file as it is. A stale lock (a crashed writer) is ignored after a minute.
-/// `Err` only when the live file could not be moved: older generations that
-/// fail to shift cost history, never the cap.
-fn rotate(path: &std::path::Path, max: u64) -> Result<(), String> {
+/// What one rotation did: whether the live file moved, and why the roll-up
+/// fold of the generation about to be deleted failed, if it did.
+struct Rotation {
+    moved: Result<(), String>,
+    fold_failed: Option<String>,
+}
+
+/// Shift the generations by renames only. A short-lived lock file makes one
+/// writer do it: the others append to the file as it is. A stale lock (a
+/// crashed writer) is ignored after a minute.
+///
+/// Before the shift, `journal.log.10`, the generation the shift deletes, is
+/// folded into `rollup.log` under the rotation lock. The fold is best effort:
+/// a busy roll-up lock skips this rotation (the next append retries), unless
+/// the journal is over twice its cap, when it rotates anyway; an I/O failure
+/// rotates anyway. Either way the caller journals a `rollup-failed` record.
+///
+/// `moved` is `Err` only when the live file could not be moved: older
+/// generations that fail to shift cost history, never the cap.
+fn rotate(path: &std::path::Path, max: u64) -> Rotation {
     let lock = generation(path, 0);
     let mut opts = fs::OpenOptions::new();
     opts.write(true).create_new(true);
@@ -491,22 +513,42 @@ fn rotate(path: &std::path::Path, max: u64) -> Result<(), String> {
             .and_then(|t| t.elapsed().ok())
             .is_some_and(|age| age.as_secs() > 60);
         if !stale || fs::remove_file(&lock).is_err() || opts.open(&lock).is_err() {
-            return Ok(());
+            return Rotation {
+                moved: Ok(()),
+                fold_failed: None,
+            };
         }
     }
     let mut moved = Ok(());
+    let mut fold_failed = None;
     // Re-check under the lock: another writer may have rotated already.
-    if fs::metadata(path).map(|m| m.len() > max).unwrap_or(false) {
-        let _ = fs::remove_file(generation(path, GENERATIONS)); // the oldest generation may not exist yet
-        for n in (1..GENERATIONS).rev() {
-            let _ = fs::rename(generation(path, n), generation(path, n + 1)); // a missing generation leaves a gap, not a failure
+    let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    if size > max {
+        let oldest = generation(path, GENERATIONS);
+        let mut shift = true;
+        if oldest.exists() {
+            match crate::rollup::fold_generation(&oldest, &crate::rollup::path_beside(path)) {
+                Ok(_) => {}
+                Err(crate::rollup::FoldError::Busy) if size <= max.saturating_mul(2) => {
+                    shift = false;
+                }
+                Err(failure) => fold_failed = Some(failure.why()),
+            }
         }
-        moved = fs::rename(path, generation(path, 1)).map_err(|e| e.kind().to_string());
+        if shift {
+            let _ = fs::remove_file(&oldest); // the oldest generation may not exist yet
+            for n in (1..GENERATIONS).rev() {
+                let _ = fs::rename(generation(path, n), generation(path, n + 1));
+                // a missing generation leaves a gap, not a failure
+            }
+            moved = fs::rename(path, generation(path, 1)).map_err(|e| e.kind().to_string());
+        }
     }
     let _ = fs::remove_file(&lock); // a lock file that is already gone is the goal
-    moved
-        .map(|_| ())
-        .map_err(|why| why.replace(char::is_whitespace, "-"))
+    Rotation {
+        moved: moved.map_err(|why| why.replace(char::is_whitespace, "-")),
+        fold_failed,
+    }
 }
 
 /// Build the whole record as one line. Separated from the write so it can be
@@ -1254,6 +1296,79 @@ mod tests {
         assert_eq!(seen["in-three"].denied, 1);
         assert_eq!(seen["live"].denied, 1);
         assert!(!seen.contains_key("old-nine"), "outside the window");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn gen_with(path: &std::path::Path, n: u32, rows: &[(u64, &str)]) {
+        let mut text = format!("{FORMAT}\n");
+        for (ts, rule) in rows {
+            text.push_str(&format!("F {ts} {rule} deny denied s r default x\n"));
+        }
+        fs::write(generation(path, n), text).unwrap();
+    }
+
+    #[test]
+    fn a_rotation_folds_the_oldest_generation_into_the_rollup() {
+        let dir = scratch("fold");
+        let path = dir.join("journal.log");
+        gen_with(&path, GENERATIONS, &[(1_700_000_000, "folded")]);
+        append(&path, 100, &rec(1, &"z".repeat(200))).expect("first");
+        append(&path, 100, &rec(2, "second")).expect("rotates");
+        assert!(!generation(&path, GENERATIONS).exists());
+        assert!(generation(&path, 1).exists());
+        let rollup = fs::read_to_string(crate::rollup::path_beside(&path)).unwrap();
+        assert!(
+            rollup.contains("R 2023-11-13 folded deny denied live 1"),
+            "{rollup}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_fold_still_rotates_and_says_so() {
+        let dir = scratch("foldfail");
+        let path = dir.join("journal.log");
+        fs::create_dir(crate::rollup::path_beside(&path)).unwrap();
+        gen_with(&path, GENERATIONS, &[(1_700_000_000, "folded")]);
+        append(&path, 100, &rec(1, &"z".repeat(200))).expect("first");
+        append(&path, 100, &rec(2, "second")).expect("rotates");
+        assert!(generation(&path, 1).exists(), "rotated anyway");
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains(" rollup-failed "), "{text}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_busy_rollup_lock_skips_the_rotation_until_the_next_append() {
+        let dir = scratch("foldbusy");
+        let path = dir.join("journal.log");
+        let lock = dir.join("rollup.log.lock");
+        gen_with(&path, GENERATIONS, &[(1_700_000_000, "folded")]);
+        append(&path, 250, &rec(1, &"z".repeat(200))).expect("first");
+        fs::write(&lock, "").unwrap();
+        append(&path, 250, &rec(2, "second")).expect("busy");
+        assert!(!generation(&path, 1).exists(), "generations stay unshifted");
+        assert!(generation(&path, GENERATIONS).exists());
+        fs::remove_file(&lock).unwrap();
+        append(&path, 250, &rec(3, "third")).expect("folds and rotates");
+        assert!(generation(&path, 1).exists());
+        assert!(!generation(&path, GENERATIONS).exists());
+        let rollup = fs::read_to_string(crate::rollup::path_beside(&path)).unwrap();
+        assert!(rollup.contains(" folded "), "{rollup}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_journal_over_twice_its_cap_rotates_despite_a_busy_lock() {
+        let dir = scratch("foldbusy2");
+        let path = dir.join("journal.log");
+        gen_with(&path, GENERATIONS, &[(1_700_000_000, "folded")]);
+        append(&path, 100, &rec(1, &"z".repeat(400))).expect("first");
+        fs::write(dir.join("rollup.log.lock"), "").unwrap();
+        append(&path, 100, &rec(2, "second")).expect("rotates");
+        assert!(generation(&path, 1).exists());
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains(" rollup-failed - - - lock-busy"), "{text}");
         let _ = fs::remove_dir_all(&dir);
     }
 
