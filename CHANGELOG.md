@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v6.10.0
+
+greenbelay 6.10.0 keeps weekly firing counts past the journal's rotation, in
+`rollup.log`, and makes `status` say where its counts start (#318).
+
 - Journal rotation folds the generation it deletes into `rollup.log`, beside the
   journal: weekly firing counts per rule, kept 104 weeks. The fold is best
   effort: a busy roll-up lock skips that rotation (a journal over twice its cap
