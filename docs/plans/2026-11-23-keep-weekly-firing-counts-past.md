@@ -114,7 +114,7 @@ A backtest replay counts 12 of 62 greenbelay rules. The other 50 can only be cou
 - Pilot, on a copy of the live journal, never the live one. Set `CLAUDE_CONFIG_DIR` to a scratch directory, copy `journal.log*` into `<scratch>/greenbelay/`, symlink the real `projects/` transcripts, and drive the branch binary. It runs a forced rotation, then `rollup` and `rollup --json`, then `status`.
   - Expected: 14k firings in, the same total out of `rollup` plus the journal; sums by rule match the pre-fold `tally`.
   - Expected: the fold adds under 20 ms p95 to an `append` on a 256 KB generation; a crash injected between the roll-up rename and the journal delete leaves the total unchanged.
-  - Observed: filled at F3.
+  - Observed, Phases 1–2 (scratch `CLAUDE_CONFIG_DIR`, branch binary, a copy of the live journal): one hook call over the 256 KB cap rotated; `rollup.log` took 1,270 firings in 77 `R` rows, equal to the 1,270 an awk count finds in the original generation 10; no `rollup-failed` record, no leftover temp file. `status` prints `seen since 2026-11-20`. Fold latency was not timed in this pilot, and no synthetic 104-week file was seeded: both are carried to the second release.
 - `make check`, and the hook-latency pilot above.
 
 ## Overlap
