@@ -3708,8 +3708,14 @@ fn plan_root_finding() -> doctor::Finding {
 fn run_status() -> ExitCode {
     let w = ui::id_column(rule_table::RULES);
     let seen = journal::tally(SEEN_WINDOW);
+    // The journal rotates at a size, not at a date, so it keeps days, not
+    // the 30 the window allows: say where the counts start.
+    let since = match journal::oldest_record() {
+        Some(ts) => format!("seen since {}", civil::iso((ts / 86_400) as civil::Day)),
+        None => "seen (journal empty)".to_string(),
+    };
     println!(
-        "{:<w$}{:<10}{:<10}  {:<31}  seen, last 30 days",
+        "{:<w$}{:<10}{:<10}  {:<31}  {since}",
         "rule", "ships as", "now", "evidence"
     );
     for r in rule_table::RULES {

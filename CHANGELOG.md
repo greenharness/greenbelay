@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `status`: the journal column reads `seen since <date>`, from the oldest
+  record, instead of `seen, last 30 days`: the journal keeps about three days.
+
 ## v6.9.0
 
 greenbelay 6.9.0 adds `agent-preferred-model`, which holds a subagent
