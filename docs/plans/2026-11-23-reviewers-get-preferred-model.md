@@ -35,3 +35,13 @@ the launch, so a half-done rename silences the rule rather than blocking.
   (expected equal), 0 on any other agent type.
 - Deliberate: the check-then-open FIFO race stays (a swap needs write access
   to the agents directory; `O_NONBLOCK` would need a `libc` dependency).
+
+## Implementation review
+
+- implementation-review: approve-with-changes ×2 → approve; 7 fixed; 1 low left (metadata error labelled not_a_file); 62k+39k+39k.
+- backend: approve-with-changes → approve; 4 fixed incl. the high (8 KiB refusal); 2 lows fixed in round 3; 70k+34k.
+- lang:rust: approve-with-changes ×2 → approve; 7 fixed; 1 low left (unreadable-path test); 46k+32k+24k.
+- unix: approve-with-changes → approve; 2 fixed, FIFO race deliberate (no libc); 48k+31k.
+- architect: approve-with-changes ×2 → approve; 4 fixed; 1 low left (replay script mirrors the rule: name it); 61k+31k+26k.
+
+Next: release, install, `greenbelay install` for the matcher, stance deny on this Mac, live deny check.
