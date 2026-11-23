@@ -120,6 +120,13 @@ A backtest replay counts 12 of 62 greenbelay rules. The other 50 can only be cou
 ## Overlap
 Board 2026-11-23: `greenbelay-wt-preferred-model` (feat/agent-preferred-model) touches `src/hook.rs`, `src/rule_table.rs`, `rules/mod.rs` and `settings.rs`. It does not touch `src/main.rs` or `journal.rs`. `src/rule_table.rs` and `rules/mod.rs` are read here only. The expected merge conflict is none. Its new rule must appear in the `rule_tool` table, and the coverage test catches that if it lands first.
 
+## Implementation review
+PR 1 carries Phases 1–2; Phases 3–6 follow in a second PR, so `status` stays `active`.
+- implementation-review: approve after one delta; fixed same-line `let _` reasons, the `d` name, a DroppedFuture test; 20 candidates fine.
+- backend: approve-with-changes; fixed future-dated watermark, unknown version, stale-lock test; carried: name `future-ts-<n>` in the CHANGELOG (second PR).
+- lang:rust: approve; carried: the `dropped_future` side channel, `Arm` in `Key`, typed fold errors, one bucket function with `tally`.
+- unix: approve; fixed the unknown-version silent loss; carried: a parent-directory fsync.
+
 ## Decision log
 - 2026-11-23 — roll-up over longer journal (t29). The rule-to-tool table is explicit, because rules declare no tool and the rate needs one denominator per rule.
 - 2026-11-23 — Phase 2 review: a journal over twice its cap rotates despite a busy roll-up lock and writes `rollup-failed lock-busy`, so a stuck lock cannot grow the journal without bound (architect, round 2). A roll-up of another format version is left untouched and reported as `rollup-failed rollup-format-unknown`. Records stamped a day ahead of the clock are left out and reported as `rollup-failed future-ts-<n>`. Same-second records at the watermark may undercount: kept, as the plan's decision 6 says. Carried to the second PR: `Arm` typed in `Key`, one shared bucket function with `tally`, a parent-directory fsync.
