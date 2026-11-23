@@ -19,8 +19,9 @@ Reached when no ticket here is open.
 
 2026-11-21, boundary: the map opens with the first dated check.
 
-- Next: [t01](t01-push-browser-check-day-7.md), due 2026-11-28. No ticket
-  is ready before then.
+- Next: [t02](t02-three-sessions-one-owner.md), ready now (filed 2026-11-23
+  from f107: three sessions could not agree who owned it). Then
+  [t01](t01-push-browser-check-day-7.md), due 2026-11-28.
 
 ## Not yet specified
 
