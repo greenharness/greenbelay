@@ -2496,6 +2496,7 @@ const DEFINITION_READ_LIMIT: u64 = 8 * 1024;
 enum Unreadable {
     NotAFile,
     Unopened,
+    Unread,
     NoFrontmatter,
 }
 
@@ -2504,6 +2505,7 @@ impl Unreadable {
         match self {
             Unreadable::NotAFile => "not_a_file",
             Unreadable::Unopened => "unopened",
+            Unreadable::Unread => "unread",
             Unreadable::NoFrontmatter => "no_frontmatter",
         }
     }
@@ -2511,7 +2513,10 @@ impl Unreadable {
 
 /// The frontmatter of the definition at `path`. Only a regular file is
 /// opened (a FIFO would block the open until a writer comes), and only its
-/// first [`DEFINITION_READ_LIMIT`] bytes are read.
+/// first [`DEFINITION_READ_LIMIT`] bytes are read. A file swapped for a FIFO
+/// between the check and the open would still block: that swap needs write
+/// access to the agents directory, which already controls the definitions.
+/// If that ever changes, open with `O_NONBLOCK` (a `libc` dependency).
 fn read_definition(
     path: &std::path::Path,
 ) -> Result<rules::agent_preferred_model::Definition, Unreadable> {
@@ -2524,7 +2529,7 @@ fn read_definition(
     handle
         .take(DEFINITION_READ_LIMIT)
         .read_to_end(&mut bytes)
-        .map_err(|_| Unreadable::Unopened)?;
+        .map_err(|_| Unreadable::Unread)?;
     // The cut may split a character: the valid prefix holds the frontmatter.
     let text = match std::str::from_utf8(&bytes) {
         Ok(text) => text,
@@ -2547,11 +2552,6 @@ fn agent_project(cwd: &std::path::Path) -> std::path::PathBuf {
 fn on_agent(op: &crate::payload::AgentLaunch) -> Decision {
     use rules::agent_preferred_model as apm;
     let rule = &apm::RULE;
-    // A plugin agent (`plugin:name`) or a name that is not a file name has no
-    // bare definition.
-    if op.subagent_type.contains([':', '/', '\\']) || op.subagent_type.starts_with('.') {
-        return Decision::Silent;
-    }
     let stance = crate::stance::resolve(rule);
     let project = agent_project(&op.cwd);
     let journal_as = |outcome: &str, excerpt: &str| {
@@ -2560,7 +2560,8 @@ fn on_agent(op: &crate::payload::AgentLaunch) -> Decision {
             stance: stance.as_str(),
             outcome,
             session: &op.session,
-            repo: &repo_name(&op.cwd),
+            // The repository whose definition decided.
+            repo: &repo_name(&project),
             mode: &op.permission_mode,
             excerpt,
         });

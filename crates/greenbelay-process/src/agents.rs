@@ -146,14 +146,23 @@ pub fn agent_files(project: &Path, agent: &str) -> Option<Vec<PathBuf>> {
 /// the repository's `.claude/agents` first, then the config directory's. A
 /// plugin's `agents/` is left out: a plugin agent loads only as
 /// `plugin:name`, so it never defines a bare name. A candidate whose target
-/// cannot be read (a dangling link) is skipped. `None` when neither exists.
+/// that is not there (a dangling link included) is skipped; one that exists
+/// but cannot be read is returned, for the caller to report. `None` when
+/// neither exists, or when `agent` is not a bare file name (a plugin agent's
+/// `plugin:name`, a path, a dot file).
 pub fn bare_agent_file(config_dir: Option<&Path>, project: &Path, agent: &str) -> Option<PathBuf> {
+    if agent.is_empty() || agent.contains([':', '/', '\\']) || agent.starts_with('.') {
+        return None;
+    }
     let file_name = format!("{agent}{AGENT_EXTENSION}");
     let repository = repository_root(project).join(".claude").join("agents");
     std::iter::once(repository)
         .chain(config_dir.map(|config| config.join("agents")))
         .map(|dir| dir.join(&file_name))
-        .find(|path| std::fs::metadata(path).is_ok())
+        .find(|path| match std::fs::metadata(path) {
+            Ok(_) => true,
+            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+        })
 }
 
 fn agent_dirs_in(config_dir: Option<&Path>, project: &Path) -> Option<Vec<PathBuf>> {
@@ -270,6 +279,20 @@ mod tests {
         touch(&repo);
         assert_eq!(bare_agent_file(Some(&config), &project, "rev"), Some(repo));
         assert_eq!(bare_agent_file(Some(&config), &project, "absent"), None);
+    }
+
+    #[test]
+    fn a_name_that_is_not_a_bare_file_name_has_no_file() {
+        let root = scratch("bare-names");
+        let config = root.join("config");
+        touch(&config.join("agents/rev.md"));
+        for name in ["", "p:rev", "../agents/rev", "a/rev", "a\\rev", ".rev"] {
+            assert_eq!(
+                bare_agent_file(Some(&config), &root, name),
+                None,
+                "{name:?}"
+            );
+        }
     }
 
     #[test]

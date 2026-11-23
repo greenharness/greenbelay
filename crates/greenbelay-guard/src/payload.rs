@@ -670,8 +670,8 @@ pub fn parse(raw: &str) -> Event {
             let input = v.get("tool_input");
             let text = |key: &str| {
                 input
-                    .and_then(|i| i.get(key))
-                    .and_then(|x| x.as_str())
+                    .and_then(|fields| fields.get(key))
+                    .and_then(|value| value.as_str())
                     .map(str::to_string)
             };
             let Some(subagent_type) = text("subagent_type").filter(|s| !s.trim().is_empty()) else {

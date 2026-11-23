@@ -5539,6 +5539,20 @@ fn agent_preferred_model_journals_an_unreadable_definition() {
 }
 
 #[test]
+fn agent_preferred_model_journals_a_definition_that_is_not_a_file() {
+    std::fs::create_dir_all(home().join("agents").join("apm-dir.md")).expect("a directory");
+    let reply = preferred_call("Agent", "apm-dir", None, "x", "/tmp");
+    assert_eq!(reply.stdout, "");
+    assert!(
+        journal_rows("apm00001")
+            .iter()
+            .any(|row| row.contains("apm-dir definition_unreadable not_a_file")),
+        "{:?}",
+        journal_rows("apm00001")
+    );
+}
+
+#[test]
 fn agent_preferred_model_reads_the_project_claude_code_gave() {
     preferred_inherit("apm-project");
     let base = std::env::temp_dir().join(format!("apm-project-{}", std::process::id()));
