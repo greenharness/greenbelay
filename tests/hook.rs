@@ -1565,10 +1565,25 @@ fn send_with_global(payload: &str, global: &str) -> Reply {
 
 /// `send_with_global`, also returning what the hook wrote to stderr.
 fn send_with_global_err(payload: &str, global: &str) -> (Reply, String) {
+    send_in_project(payload, global, None)
+}
+
+/// `send_with_global_err`, with Claude Code's `CLAUDE_PROJECT_DIR` set to
+/// `project`, or unset.
+fn send_in_project(
+    payload: &str,
+    global: &str,
+    project: Option<&std::path::Path>,
+) -> (Reply, String) {
     let dir = home();
     let cfg = dir.join("fanout.gitconfig");
     std::fs::write(&cfg, global).expect("global config");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
+    match project {
+        Some(project) => command.env("CLAUDE_PROJECT_DIR", project),
+        None => command.env_remove("CLAUDE_PROJECT_DIR"),
+    };
+    let mut child = command
         .arg("hook")
         .env("CLAUDE_CONFIG_DIR", &dir)
         .env_remove("XDG_STATE_HOME")
@@ -5483,11 +5498,71 @@ fn agent_preferred_model_never_reads_a_plugin_directory() {
         .join("p")
         .join("agents");
     std::fs::create_dir_all(&plugin).expect("plugin agents");
-    std::fs::write(
-        plugin.join("apm-plugin.md"),
-        "---\nmodel: inherit\npreferred-model: opus\n---\n",
-    )
-    .expect("plugin definition");
+    // A pinned plugin file of the same name must not shadow the user's.
+    std::fs::write(plugin.join("apm-plugin.md"), "---\nmodel: opus\n---\n")
+        .expect("plugin definition");
     let reply = preferred_call("Agent", "apm-plugin", None, "x", "/tmp");
+    assert_eq!(reply.stdout, "", "a plugin file alone defines no bare name");
+    preferred_inherit("apm-plugin");
+    let reply = preferred_call("Agent", "apm-plugin", None, "x", "/tmp");
+    preferred_expect_denied(&reply, "apm-plugin");
+}
+
+#[test]
+fn agent_preferred_model_reads_past_a_long_body() {
+    let body = format!(
+        "---\nmodel: inherit\npreferred-model: opus\n---\n{}\n",
+        "a reviewer's long instructions, past the read limit. ".repeat(400)
+    );
+    assert!(body.len() > 16 * 1024);
+    preferred_definition(&home(), "apm-long", &body);
+    let reply = preferred_call("Agent", "apm-long", None, "x", "/tmp");
+    preferred_expect_denied(&reply, "apm-long");
+}
+
+#[test]
+fn agent_preferred_model_journals_an_unreadable_definition() {
+    preferred_definition(
+        &home(),
+        "apm-broken",
+        "model: inherit\npreferred-model: opus\n",
+    );
+    let reply = preferred_call("Agent", "apm-broken", None, "x", "/tmp");
     assert_eq!(reply.stdout, "");
+    assert!(
+        journal_rows("apm00001")
+            .iter()
+            .any(|row| row.contains("apm-broken definition_unreadable no_frontmatter")),
+        "{:?}",
+        journal_rows("apm00001")
+    );
+}
+
+#[test]
+fn agent_preferred_model_reads_the_project_claude_code_gave() {
+    preferred_inherit("apm-project");
+    let base = std::env::temp_dir().join(format!("apm-project-{}", std::process::id()));
+    let project = base.join("project");
+    let elsewhere = base.join("elsewhere");
+    for dir in [&project, &elsewhere] {
+        std::fs::create_dir_all(dir.join(".git")).expect("git marker");
+    }
+    // The project pins its reviewer; the directory the shell moved to does not.
+    let agents = project.join(".claude").join("agents");
+    std::fs::create_dir_all(&agents).expect("project agents");
+    std::fs::write(agents.join("apm-project.md"), "---\nmodel: opus\n---\n")
+        .expect("project definition");
+    let payload = serde_json::json!({
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Agent",
+        "tool_input": {"description": "r", "subagent_type": "apm-project", "prompt": "x"},
+        "session_id": "apm00001",
+        "cwd": elsewhere,
+    })
+    .to_string();
+    let (reply, _) = send_in_project(&payload, PREFERRED_DENY, Some(&project));
+    assert_eq!(reply.stdout, "", "the project Claude Code gave decides");
+    let (reply, _) = send_in_project(&payload, PREFERRED_DENY, None);
+    preferred_expect_denied(&reply, "apm-project");
+    let _ = std::fs::remove_dir_all(&base); // temp-dir cleanup: a leftover dir only costs disk
 }

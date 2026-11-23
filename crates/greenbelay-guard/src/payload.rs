@@ -242,7 +242,6 @@ pub struct AgentLaunch {
     pub cwd: PathBuf,
     pub session: String,
     pub permission_mode: String,
-    pub agent_id: Option<String>,
 }
 
 /// The text a write tool was handed, before anything is applied.
@@ -680,12 +679,12 @@ pub fn parse(raw: &str) -> Event {
             };
             Event::PreAgent(Box::new(AgentLaunch {
                 subagent_type,
-                model: text("model"),
+                // A blank model is no model: the launch inherits.
+                model: text("model").filter(|m| !m.trim().is_empty()),
                 prompt: text("prompt").unwrap_or_default(),
                 cwd: cwd.clone(),
                 session: str_at("session_id"),
                 permission_mode: str_at("permission_mode"),
-                agent_id: agent_id(),
             }))
         }
         Some("PreToolUse") if v.get("tool_name").and_then(|x| x.as_str()) == Some("Grep") => {

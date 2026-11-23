@@ -2487,82 +2487,122 @@ fn on_relais_run(op: &crate::payload::RelaisRunOp) -> Decision {
     }
 }
 
-/// The most an agent definition is read for.
+/// The most of an agent definition that is read: its frontmatter is at the
+/// top, so a longer body is cut, never refused.
 const DEFINITION_READ_LIMIT: u64 = 8 * 1024;
 
-/// The frontmatter of the first existing definition of a bare `subagent_type`:
-/// the repository's `.claude/agents`, then the config directory's. A file that
-/// is not a regular one, is too large or has no closed frontmatter reads as
-/// nothing.
-fn agent_definition(
-    subagent_type: &str,
-    cwd: &std::path::Path,
-) -> Option<rules::agent_preferred_model::Definition> {
+/// Why a definition that exists could not be judged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Unreadable {
+    NotAFile,
+    Unopened,
+    NoFrontmatter,
+}
+
+impl Unreadable {
+    fn label(self) -> &'static str {
+        match self {
+            Unreadable::NotAFile => "not_a_file",
+            Unreadable::Unopened => "unopened",
+            Unreadable::NoFrontmatter => "no_frontmatter",
+        }
+    }
+}
+
+/// The frontmatter of the definition at `path`. Only a regular file is
+/// opened (a FIFO would block the open until a writer comes), and only its
+/// first [`DEFINITION_READ_LIMIT`] bytes are read.
+fn read_definition(
+    path: &std::path::Path,
+) -> Result<rules::agent_preferred_model::Definition, Unreadable> {
     use std::io::Read;
-    if subagent_type.contains([':', '/', '\\']) || subagent_type.starts_with('.') {
-        return None;
+    if !std::fs::metadata(path).is_ok_and(|meta| meta.is_file()) {
+        return Err(Unreadable::NotAFile);
     }
-    let file = format!("{subagent_type}.md");
-    let mut candidates = Vec::new();
-    if let Some(root) = greenbelay_guard::lsp::git_root(cwd) {
-        candidates.push(root.join(".claude").join("agents").join(&file));
-    }
-    if let Some(config) = greenbelay_guard::settings::config_dir() {
-        candidates.push(config.join("agents").join(&file));
-    }
-    // The path is judged before the open, because opening a FIFO blocks until
-    // a writer comes.
-    let path = candidates
-        .into_iter()
-        .find(|path| std::fs::symlink_metadata(path).is_ok())?;
-    if !std::fs::metadata(&path).ok()?.is_file() {
-        return None;
-    }
-    let handle = std::fs::File::open(&path).ok()?;
-    if !handle.metadata().ok()?.is_file() {
-        return None;
-    }
-    let mut text = Vec::new();
+    let handle = std::fs::File::open(path).map_err(|_| Unreadable::Unopened)?;
+    let mut bytes = Vec::new();
     handle
-        .take(DEFINITION_READ_LIMIT + 1)
-        .read_to_end(&mut text)
-        .ok()?;
-    if text.len() as u64 > DEFINITION_READ_LIMIT {
-        return None;
-    }
-    rules::agent_preferred_model::parse_definition(std::str::from_utf8(&text).ok()?)
+        .take(DEFINITION_READ_LIMIT)
+        .read_to_end(&mut bytes)
+        .map_err(|_| Unreadable::Unopened)?;
+    // The cut may split a character: the valid prefix holds the frontmatter.
+    let text = match std::str::from_utf8(&bytes) {
+        Ok(text) => text,
+        Err(e) => std::str::from_utf8(&bytes[..e.valid_up_to()]).unwrap_or_default(),
+    };
+    rules::agent_preferred_model::parse_definition(text).ok_or(Unreadable::NoFrontmatter)
+}
+
+/// The directory Claude Code loaded the session's project agents from: the
+/// project directory it gives hooks, else the call's working directory.
+fn agent_project(cwd: &std::path::Path) -> std::path::PathBuf {
+    std::env::var_os("CLAUDE_PROJECT_DIR")
+        .filter(|dir| !dir.is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| cwd.to_path_buf())
 }
 
 /// An `Agent` or `Task` launch whose definition prefers a model the call does
 /// not name.
 fn on_agent(op: &crate::payload::AgentLaunch) -> Decision {
-    let rule = &rules::agent_preferred_model::RULE;
+    use rules::agent_preferred_model as apm;
+    let rule = &apm::RULE;
+    // A plugin agent (`plugin:name`) or a name that is not a file name has no
+    // bare definition.
+    if op.subagent_type.contains([':', '/', '\\']) || op.subagent_type.starts_with('.') {
+        return Decision::Silent;
+    }
     let stance = crate::stance::resolve(rule);
-    let Some(definition) = agent_definition(&op.subagent_type, &op.cwd) else {
+    let project = agent_project(&op.cwd);
+    let journal_as = |outcome: &str, excerpt: &str| {
+        journal::record(&journal::Entry {
+            rule: rule.id,
+            stance: stance.as_str(),
+            outcome,
+            session: &op.session,
+            repo: &repo_name(&op.cwd),
+            mode: &op.permission_mode,
+            excerpt,
+        });
+    };
+    let config = greenbelay_guard::settings::config_dir();
+    let Some(path) =
+        greenbelay_process::agents::bare_agent_file(config.as_deref(), &project, &op.subagent_type)
+    else {
         return Decision::Silent;
     };
-    let Some(text) = rules::agent_preferred_model::judge(
+    // A definition that exists but cannot be read is journalled, so a rule
+    // that went quiet for a reviewer shows in the counts.
+    let definition = match read_definition(&path) {
+        Ok(definition) => definition,
+        Err(reason) => {
+            journal_as(
+                "silent",
+                &format!(
+                    "{} definition_unreadable {}",
+                    op.subagent_type,
+                    reason.label()
+                ),
+            );
+            return Decision::Silent;
+        }
+    };
+    let Some(text) = apm::judge(
         &op.subagent_type,
-        definition.model.as_deref(),
-        definition.preferred_model.as_deref(),
+        &definition,
         op.model.as_deref(),
         &op.prompt,
     ) else {
         return Decision::Silent;
     };
-    journal::record(&journal::Entry {
-        rule: rule.id,
-        stance: stance.as_str(),
-        outcome: outcome_of(stance),
-        session: &op.session,
-        repo: &repo_name(&op.cwd),
-        mode: &op.permission_mode,
-        excerpt: &format!(
+    journal_as(
+        outcome_of(stance),
+        &format!(
             "{} prefers {}",
             op.subagent_type,
             definition.preferred_model.as_deref().unwrap_or("")
         ),
-    });
+    );
     match stance {
         Stance::Observe => Decision::Silent,
         Stance::Advise => Decision::Advise(text),

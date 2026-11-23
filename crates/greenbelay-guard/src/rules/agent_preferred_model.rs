@@ -39,6 +39,13 @@ pub struct Definition {
     pub preferred_model: Option<String>,
 }
 
+impl Definition {
+    /// Whether the definition defers to the session's model.
+    pub fn inherits(&self) -> bool {
+        self.model.as_deref() == Some("inherit")
+    }
+}
+
 fn unquote(raw: &str) -> &str {
     let raw = raw.trim();
     for quote in ['"', '\''] {
@@ -81,19 +88,22 @@ fn first_line_is_marker(prompt: &str) -> bool {
 }
 
 /// The advice, when the definition inherits, prefers a model, the call names
-/// none and the prompt is not a declared fallback.
+/// none and the prompt is not a declared fallback. `call_model` is `None` when
+/// the call carries no model (the payload drops a blank one).
 pub fn judge(
     subagent_type: &str,
-    definition_model: Option<&str>,
-    preferred: Option<&str>,
+    definition: &Definition,
     call_model: Option<&str>,
     prompt: &str,
 ) -> Option<String> {
-    if definition_model? != "inherit" {
+    if !definition.inherits() {
         return None;
     }
-    let preferred = preferred.filter(|p| !p.is_empty())?;
-    if call_model.is_some_and(|m| !m.trim().is_empty()) || first_line_is_marker(prompt) {
+    let preferred = definition
+        .preferred_model
+        .as_deref()
+        .filter(|p| !p.is_empty())?;
+    if call_model.is_some() || first_line_is_marker(prompt) {
         return None;
     }
     Some(crate::decision::phrase(
@@ -114,8 +124,20 @@ pub fn judge(
 mod tests {
     use super::*;
 
+    fn definition(model: Option<&str>, preferred: Option<&str>) -> Definition {
+        Definition {
+            model: model.map(str::to_string),
+            preferred_model: preferred.map(str::to_string),
+        }
+    }
+
     fn fires(model: Option<&str>, call: Option<&str>, prompt: &str) -> Option<String> {
-        judge("impl-review", model, Some("opus"), call, prompt)
+        judge(
+            "impl-review",
+            &definition(model, Some("opus")),
+            call,
+            prompt,
+        )
     }
 
     #[test]
@@ -128,7 +150,6 @@ mod tests {
              prompt's first line exactly: model-fallback: opus -> root (<why opus was \
              unavailable>)"
         );
-        assert!(fires(Some("inherit"), Some(""), "x").is_some());
     }
 
     #[test]
@@ -160,8 +181,14 @@ mod tests {
 
     #[test]
     fn no_preference_passes() {
-        assert_eq!(judge("a", Some("inherit"), None, None, "x"), None);
-        assert_eq!(judge("a", Some("inherit"), Some(""), None, "x"), None);
+        assert_eq!(
+            judge("a", &definition(Some("inherit"), None), None, "x"),
+            None
+        );
+        assert_eq!(
+            judge("a", &definition(Some("inherit"), Some("")), None, "x"),
+            None
+        );
     }
 
     #[test]

@@ -172,9 +172,10 @@ mod tests {
     /// left after the workspace split and the observe-rule retirements, plus
     /// `relais-run-forks`, `screenshot-in-main-session`, `work-overlap`,
     /// `ask-unopened-page`, `suppressions-override`, `plan-names-no-paths`,
-    /// `chain-with-and`, `block-reinstate`, `land-detached`, `secret-read` and
-    /// `push-browser-check` and `agent-preferred-model`, with `push-preview` between `push-preflight` and
-    /// `plan-review-panel`, `implementation-review` after `plan-phases-open`,
+    /// `chain-with-and`, `block-reinstate`, `land-detached`, `secret-read`,
+    /// `push-browser-check` and `agent-preferred-model`, with `push-preview`
+    /// between `push-preflight` and `plan-review-panel`,
+    /// `implementation-review` after `plan-phases-open`,
     /// and `push-browser-check` after that. A rule a crate stopped listing
     /// would vanish here.
     #[test]
