@@ -17,10 +17,13 @@ Reached when no ticket here is open.
 
 ## Handoff
 
-2026-11-21, boundary: the map opens with the first dated check.
+2026-11-23: [t02](t02-three-sessions-one-owner.md) filed from decisions
+f107, where three sessions could not agree on who owned it.
 
-- Next: [t01](t01-push-browser-check-day-7.md), due 2026-11-28. No ticket
-  is ready before then.
+- Next: t02, ready now. Then [t01](t01-push-browser-check-day-7.md), due
+  2026-11-28.
+
+2026-11-21, boundary: the map opens with the first dated check.
 
 ## Not yet specified
 
