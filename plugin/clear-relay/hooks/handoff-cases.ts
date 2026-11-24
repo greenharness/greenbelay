@@ -8,14 +8,16 @@
 // `parked`, `absent` or `near-miss`; a `next` case names the `prompt` the relay
 // submits (a repeat derives it), and a `near-miss` case its `reason` id.
 
-export type HandoffCase = {
-  name: string
-  answer?: string
-  next_repeat?: { unit: string; count: number; tail?: string }
-  kind: 'next' | 'parked' | 'absent' | 'near-miss'
-  prompt?: string
-  reason?: string
-}
+import type { NearMissReason } from './register'
+
+type Repeat = { unit: string; count: number; tail?: string }
+
+export type HandoffCase =
+  | { name: string; kind: 'next'; answer: string; prompt: string }
+  | { name: string; kind: 'next'; next_repeat: Repeat }
+  | { name: string; kind: 'parked' | 'absent'; answer: string }
+  | { name: string; kind: 'near-miss'; reason: NearMissReason; answer: string }
+  | { name: string; kind: 'near-miss'; reason: NearMissReason; next_repeat: Repeat }
 
 export const HANDOFF_CASES: HandoffCase[] =
 // handoff-cases:begin

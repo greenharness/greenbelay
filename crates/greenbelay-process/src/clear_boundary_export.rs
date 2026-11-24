@@ -675,8 +675,7 @@ impl Exporter<'_> {
                 stop_hook_active: false,
                 ends_with_question: false,
                 waiting_line: false,
-                marker: false,
-                near_miss: None,
+                last_line: crate::clear_boundary::LastLine::Other,
             },
             prior: State {
                 turn: String::new(),
@@ -791,7 +790,7 @@ impl Exporter<'_> {
                 "stop_hook_active": frozen.view.stop_hook_active,
                 "ends_with_question": frozen.view.ends_with_question,
                 "waiting_line": frozen.view.waiting_line,
-                "marker": frozen.view.marker,
+                "marker": frozen.view.last_line == crate::clear_boundary::LastLine::Armed,
             }),
         );
         if *kind == Kind::PendingBackground {

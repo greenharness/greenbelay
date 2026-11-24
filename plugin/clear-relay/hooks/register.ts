@@ -55,7 +55,7 @@ const NAMED =
   /^resume (?<repo>[^\s:]+) (?<programme>[^\s:]+) (?<ticket>(?:[a-z]+-)?[a-z]\d+[a-z]?(?:-[a-z0-9]+)*):/
 
 /** Why a line that starts with the marker does not arm: the hook's ids. */
-type NearMissReason =
+export type NearMissReason =
   | 'empty-parked'
   | 'not-next-or-parked'
   | 'empty-prompt'
@@ -63,10 +63,12 @@ type NearMissReason =
   | 'inner-backtick'
   | 'overlong'
 
-type HandoffLine =
-  | { kind: 'next'; prompt: string }
-  | { kind: 'parked' }
-  | { kind: 'near-miss'; reason: NearMissReason; line: string; units?: number }
+// Only an overlong prompt has a length to say.
+type NearMiss =
+  | { kind: 'near-miss'; reason: Exclude<NearMissReason, 'overlong'>; line: string }
+  | { kind: 'near-miss'; reason: 'overlong'; line: string; units: number }
+
+type HandoffLine = { kind: 'next'; prompt: string } | { kind: 'parked' } | NearMiss
 
 /** The ticket a submitted prompt names; `null` for any other prompt. */
 type Named = { repo: string; programme: string; ticket: string } | null
@@ -77,7 +79,7 @@ type LogEntry =
   | { event: 'submit'; named: Named }
   | { event: 'disarm'; cause: DisarmCause }
   | { event: 'failure'; failure: RelayFailure; prompt: string }
-  | { event: 'near-miss'; reason: NearMissReason; line: string }
+  | { event: 'near-miss'; reason: NearMissReason; line: string; line_units: number }
 
 /** Where a log line belongs: the session and its directory. */
 type Place = { sessionId: string; cwd: string }
@@ -114,7 +116,7 @@ function handoffLine(answer: string): HandoffLine | undefined {
   const last = answer.split('\n').map(trimmed).filter(line => line !== '').pop()
   if (last === undefined || !last.startsWith(MARKER)) return undefined
   const rest = last.slice(MARKER.length)
-  const near = (reason: NearMissReason, units?: number): HandoffLine => ({ kind: 'near-miss', reason, line: last, units })
+  const near = (reason: Exclude<NearMissReason, 'overlong'>): HandoffLine => ({ kind: 'near-miss', reason, line: last })
 
   if (rest.startsWith('; parked:')) {
     const parked = rest.slice('; parked:'.length)
@@ -129,13 +131,13 @@ function handoffLine(answer: string): HandoffLine | undefined {
   const prompt = after.slice(1, -1)
   if (trimmed(prompt) === '') return near('empty-prompt')
   if (prompt.includes('`')) return near('inner-backtick')
-  if (prompt.length > MAX_PROMPT_UNITS) return near('overlong', prompt.length)
+  if (prompt.length > MAX_PROMPT_UNITS) return { kind: 'near-miss', reason: 'overlong', line: last, units: prompt.length }
 
   return { kind: 'next', prompt }
 }
 
 /** What is wrong with a near-miss line, in the hook's words. */
-function nearMissText(miss: Extract<HandoffLine, { kind: 'near-miss' }>): string {
+function nearMissText(miss: NearMiss): string {
   switch (miss.reason) {
     case 'empty-parked':
       return 'the parked line after `parked:` is empty'
@@ -148,7 +150,7 @@ function nearMissText(miss: Extract<HandoffLine, { kind: 'near-miss' }>): string
     case 'inner-backtick':
       return 'the prompt holds a backtick'
     case 'overlong':
-      return `the prompt is ${miss.units ?? 0} UTF-16 units, over the 2,000 limit`
+      return `the prompt is ${miss.units} UTF-16 units, over the limit of ${MAX_PROMPT_UNITS}`
   }
 }
 
@@ -206,8 +208,8 @@ async function logFile($: Engine, relayer: Relayer, sessionId: string): Promise<
   return base === undefined ? undefined : `${base}/clear-relay/${sessionId}.jsonl`
 }
 
-async function log($: Engine, relayer: Relayer, relay: Place, entry: LogEntry): Promise<void> {
-  const file = await logFile($, relayer, relay.sessionId)
+async function log($: Engine, relayer: Relayer, place: Place, entry: LogEntry): Promise<void> {
+  const file = await logFile($, relayer, place.sessionId)
   if (file === undefined) {
     // The log is a record: with nowhere to keep it, say so and go on.
     await $.ui.log('clear-relay: no state directory (set stateDir, XDG_STATE_HOME or HOME): the log is not kept')
@@ -215,8 +217,8 @@ async function log($: Engine, relayer: Relayer, relay: Place, entry: LogEntry): 
   }
   const line = JSON.stringify({
     ...entry,
-    session: relay.sessionId,
-    cwd: relay.cwd,
+    session: place.sessionId,
+    cwd: place.cwd,
     time: await $.clock.now(),
   })
   const previous = relayer.writes.get(file) ?? Promise.resolve()
@@ -329,14 +331,23 @@ async function declareStay($: Engine, relayer: Relayer, relay: Relay): Promise<v
     )
 }
 
+// The first `units` UTF-16 units of `text`, never ending on half a surrogate pair.
+function cut(text: string, units: number): string {
+  if (text.length <= units) return text
+  const last = text.charCodeAt(units - 1)
+  const isHighSurrogate = last >= 0xd800 && last <= 0xdbff
+  return text.slice(0, isHighSurrogate ? units - 1 : units)
+}
+
 // A near-miss arms nothing: it is logged, then said in a toast, so the person
 // knows why no countdown started. A failed toast is the UI's, never the answer's.
-async function nearMiss($: Engine, relayer: Relayer, miss: Extract<HandoffLine, { kind: 'near-miss' }>): Promise<void> {
+async function nearMiss($: Engine, relayer: Relayer, miss: NearMiss): Promise<void> {
   const place: Place = { sessionId: await $.session.id(), cwd: await $.session.cwd() }
   await log($, relayer, place, {
     event: 'near-miss',
     reason: miss.reason,
-    line: miss.line.slice(0, MAX_LOGGED_LINE_UNITS),
+    line: cut(miss.line, MAX_LOGGED_LINE_UNITS),
+    line_units: miss.line.length,
   })
   try {
     await $.ui.toast(

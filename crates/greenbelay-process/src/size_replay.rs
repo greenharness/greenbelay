@@ -35,8 +35,8 @@ use serde_json::Value;
 
 use crate::clear_boundary::{
     blocks, context_size, decide, entry_type, is_person_prompt, is_prompt, is_sidechain,
-    position_of, read_tail_until_at, Repositories, State, StopView, SIZE_BOUNDARY, TAIL_CAP,
-    TAIL_FIRST_CHUNK,
+    position_of, read_tail_until_at, LastLine, Repositories, State, StopView, SIZE_BOUNDARY,
+    TAIL_CAP, TAIL_FIRST_CHUNK,
 };
 use crate::plan_phases::PhaseFact;
 use crate::size_evidence::Outcome as SizeOutcome;
@@ -272,8 +272,7 @@ impl Summary {
                 waiting_line: last_text
                     .lines()
                     .any(|line| line.trim().starts_with("WAITING:")),
-                marker: handoff.is_armed(),
-                near_miss: crate::clear_boundary::near_miss_of(&handoff),
+                last_line: LastLine::of(&handoff),
             };
             stops_in_turn += 1;
             let anchor = state.size_anchor.clone();

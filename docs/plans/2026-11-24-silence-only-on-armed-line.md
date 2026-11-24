@@ -209,13 +209,16 @@ counts UTF-16 units (`encode_utf16().count()`), because the relay measures
 
 - [x] Phase 1 — the grammar and its shared table:
   `crates/greenbelay-guard/src/rules/clear_at_boundary.rs`,
-  `plugin/clear-relay/hooks/handoff-cases.ts`
+  `plugin/clear-relay/hooks/handoff-cases.ts`, `src/plugin_install.rs`
+  (the plugin install carries the table)
 - [x] Phase 2 — the rule reads it, and the near-miss remedies:
   `crates/greenbelay-process/src/clear_boundary.rs`,
   `crates/greenbelay-process/src/size_replay.rs`,
   `crates/greenbelay-process/src/clear_boundary_export.rs`,
   `crates/greenbelay-guard/tests/corpus/clear-at-boundary.cases`,
-  `crates/greenbelay-guard/tests/corpus/stop/clear-at-boundary/*.json`
+  `crates/greenbelay-guard/tests/corpus/stop/clear-at-boundary/*.json`,
+  `crates/greenbelay-guard/src/corpus.rs`, `tests/clear_at_boundary.rs`
+  (the contract test pins the relay by grammar, not by its old regex)
 - [x] Phase 3 — the relay classifies, logs and toasts near-misses:
   `plugin/clear-relay/hooks/register.ts`,
   `plugin/clear-relay/hooks/register.test.ts`, `CHANGELOG.md`
@@ -237,6 +240,15 @@ counts UTF-16 units (`encode_utf16().count()`), because the relay measures
   lands (due 2026-11-25). greenbelay releases several times a day, so a
   merge to main before then would ship t30 inside t22's window. The ticket's
   "release with t23 Phase 2" is moot: #298-#302 are already in v6.10.0.
+
+- 2026-11-24: implementation review changed four things:
+  - the overlong reason reads "N UTF-16 units, over the limit of 2000" on
+    both sides, from the constant, so the two numbers share a format;
+  - `StopView` holds one `last_line` (`Other`, `Armed`, `NearMiss`)
+    instead of `marker` beside `near_miss`;
+  - the relay's overlong near-miss alone carries `units`;
+  - a near-miss log entry carries `line_units`, its line's full length,
+    and its line is cut without splitting a surrogate pair.
 
 ## Verification
 

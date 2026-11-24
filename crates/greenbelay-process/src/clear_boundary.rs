@@ -1966,12 +1966,36 @@ pub(crate) struct StopView {
     pub stop_hook_active: bool,
     pub ends_with_question: bool,
     pub waiting_line: bool,
-    /// The last line is one the clear-relay plugin acts on: a `next:`
-    /// prompt or a park ([`handoff_line`]).
-    pub marker: bool,
-    /// The last line starts with [`MARKER`] but the relay does not arm on
-    /// it: the remedies say why.
-    pub near_miss: Option<NearMiss>,
+    /// What the last line is to the clear-relay plugin ([`handoff_line`]).
+    pub last_line: LastLine,
+}
+
+/// What a turn's last line is to the clear-relay plugin, as far as the
+/// judgement reads it: armed (a `next:` prompt or a park) is silence, a
+/// near-miss names its reason in the remedies.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum LastLine {
+    #[default]
+    Other,
+    Armed,
+    NearMiss(NearMiss),
+}
+
+impl LastLine {
+    pub(crate) fn of(line: &HandoffLine) -> Self {
+        match line {
+            HandoffLine::Next(_) | HandoffLine::Parked => Self::Armed,
+            HandoffLine::NearMiss(miss) => Self::NearMiss(*miss),
+            HandoffLine::Absent => Self::Other,
+        }
+    }
+
+    fn near_miss(self) -> Option<NearMiss> {
+        match self {
+            Self::NearMiss(miss) => Some(miss),
+            Self::Other | Self::Armed => None,
+        }
+    }
 }
 
 impl StopView {
@@ -1986,8 +2010,7 @@ impl StopView {
             stop_hook_active: stop.stop_hook_active,
             ends_with_question: message.is_some_and(|text| text.trim_end().ends_with('?')),
             waiting_line: message.is_some_and(has_waiting_line),
-            marker: handoff.is_armed(),
-            near_miss: near_miss_of(&handoff),
+            last_line: LastLine::of(&handoff),
         }
     }
 
@@ -1997,15 +2020,7 @@ impl StopView {
         self.permission_mode.as_deref() == Some("plan")
             || self.ends_with_question
             || self.waiting_line
-            || self.marker
-    }
-}
-
-/// The near-miss a handoff line holds, if any.
-pub(crate) fn near_miss_of(line: &HandoffLine) -> Option<NearMiss> {
-    match line {
-        HandoffLine::NearMiss(miss) => Some(*miss),
-        HandoffLine::Absent | HandoffLine::Next(_) | HandoffLine::Parked => None,
+            || self.last_line == LastLine::Armed
     }
 }
 
@@ -2449,11 +2464,14 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
         match stance {
             Stance::Observe => self.watched(&format!("{} (observe)", boundary.what)),
             Stance::Advise => {
-                self.record("advised", &with_near_miss(&boundary.what, view.near_miss));
+                self.record(
+                    "advised",
+                    &with_near_miss(&boundary.what, view.last_line.near_miss()),
+                );
                 // The agent hands off unasked (worktree-task `## Handoff`), so
                 // the note names that step; the line it quotes still works with
                 // no handoff skill installed.
-                let ended = view.near_miss.map_or_else(
+                let ended = view.last_line.near_miss().map_or_else(
                     || "This turn ended without that line.".to_string(),
                     near_miss_note,
                 );
@@ -2465,8 +2483,11 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
                 )))
             }
             Stance::Deny => {
-                self.record("denied", &with_near_miss(&boundary.what, view.near_miss));
-                let remedy = view.near_miss.map_or_else(
+                self.record(
+                    "denied",
+                    &with_near_miss(&boundary.what, view.last_line.near_miss()),
+                );
+                let remedy = view.last_line.near_miss().map_or_else(
                     || format!(
                         "Hand off now, as the worktree-task skill's Handoff section says. Without that skill, the handoff is complete when the plan or ticket states the next action and the turn ends with one line: \"{MARKER}; next: `<the exact first prompt>`\"."
                     ),
@@ -2538,9 +2559,13 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
                 (None, Some(SizeOutcome::Observed))
             }
             Stance::Advise => {
-                self.record("advised", &with_near_miss(&what, view.near_miss));
+                self.record(
+                    "advised",
+                    &with_near_miss(&what, view.last_line.near_miss()),
+                );
                 let ended = view
-                    .near_miss
+                    .last_line
+                    .near_miss()
                     .map_or_else(String::new, |miss| format!("{} ", near_miss_note(miss)));
                 let remedy = format!(
                     "{ended}The agent can hand off mid-phase, as the worktree-task skill's Handoff section says for a size boundary. To clear and carry on, reply: hand off now. The turn then ends with the line \"{MARKER}; next: `<the exact first prompt>`\", and the clear-relay plugin clears and submits that prompt. Or /clear yourself."
@@ -2553,9 +2578,10 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
                 )
             }
             Stance::Deny => {
-                self.record("denied", &with_near_miss(&what, view.near_miss));
+                self.record("denied", &with_near_miss(&what, view.last_line.near_miss()));
                 let remedy = view
-                    .near_miss
+                    .last_line
+                    .near_miss()
                     .map_or_else(|| size_handoff_remedy(k), near_miss_remedy);
                 (
                     Some(Decision::Continue(decision::phrase(
@@ -2938,8 +2964,11 @@ impl TryFrom<StopFixture> for StopInputs {
             stop_hook_active: payload.stop_hook_active,
             ends_with_question: payload.ends_with_question,
             waiting_line: payload.waiting_line,
-            marker: payload.marker,
-            near_miss: handoff.as_ref().and_then(near_miss_of),
+            last_line: match &handoff {
+                Some(line) => LastLine::of(line),
+                None if payload.marker => LastLine::Armed,
+                None => LastLine::Other,
+            },
         };
         let prior = State {
             turn: fixture.state.turn,
@@ -4965,7 +4994,7 @@ mod size_kind_tests {
     #[test]
     fn the_marker_turn_is_silent() {
         let marked = StopView {
-            marker: true,
+            last_line: LastLine::Armed,
             stop_hook_active: true,
             ..view()
         };
@@ -5028,16 +5057,16 @@ mod size_kind_tests {
     fn only_an_armed_last_line_silences() {
         let armed = view_of("Done.\n\nsafe to /clear; next: `resume a b t01-x: go`\n");
         assert!(armed.says_silence());
-        assert_eq!(armed.near_miss, None);
+        assert_eq!(armed.last_line.near_miss(), None);
         let parked = view_of("Done.\n\nsafe to /clear; parked: next due 2026-11-25");
         assert!(parked.says_silence());
         let bare = view_of(BARE);
         assert!(!bare.says_silence());
-        assert_eq!(bare.near_miss, Some(NearMiss::MissingBackticks));
+        assert_eq!(bare.last_line.near_miss(), Some(NearMiss::MissingBackticks));
         // The marker mid-text used to silence the rule; the last line decides now.
         let quoted = view_of("It is safe to /clear; next: `x` once merged.\nFirst the review.");
         assert!(!quoted.says_silence());
-        assert_eq!(quoted.near_miss, None);
+        assert_eq!(quoted.last_line.near_miss(), None);
     }
 
     #[test]
@@ -5118,7 +5147,7 @@ mod size_kind_tests {
         };
         assert!(
             note.contains(
-                "This turn ended with a handoff line the clear-relay plugin does not arm on: the prompt is 2001 UTF-16 units, over the 2,000 limit."
+                "This turn ended with a handoff line the clear-relay plugin does not arm on: the prompt is 2001 UTF-16 units, over the limit of 2000."
             ),
             "{note}"
         );

@@ -94,7 +94,7 @@ impl NearMiss {
             }
             Self::InnerBacktick => "the prompt holds a backtick".to_string(),
             Self::Overlong(units) => {
-                format!("the prompt is {units} UTF-16 units, over the 2,000 limit")
+                format!("the prompt is {units} UTF-16 units, over the limit of {MAX_PROMPT_UNITS}")
             }
         }
     }
