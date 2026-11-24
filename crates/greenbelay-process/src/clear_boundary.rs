@@ -32,6 +32,7 @@ use crate::plan_phases::PhaseFact;
 use crate::size_evidence::{Kind as SizeKind, Outcome as SizeOutcome};
 
 pub use greenbelay_guard::rules::clear_at_boundary::MARKER;
+use greenbelay_guard::rules::clear_at_boundary::{handoff_line, HandoffLine, NearMiss};
 
 /// The context size, in tokens, past which a clear pays for itself.
 ///
@@ -1965,12 +1966,18 @@ pub(crate) struct StopView {
     pub stop_hook_active: bool,
     pub ends_with_question: bool,
     pub waiting_line: bool,
+    /// The last line is one the clear-relay plugin acts on: a `next:`
+    /// prompt or a park ([`handoff_line`]).
     pub marker: bool,
+    /// The last line starts with [`MARKER`] but the relay does not arm on
+    /// it: the remedies say why.
+    pub near_miss: Option<NearMiss>,
 }
 
 impl StopView {
     fn of(stop: &Stop) -> Self {
         let message = stop.last_message.as_deref();
+        let handoff = message.map_or(HandoffLine::Absent, handoff_line);
         Self {
             cwd: stop.cwd.clone(),
             home: home_from(std::env::var_os("HOME")),
@@ -1979,18 +1986,52 @@ impl StopView {
             stop_hook_active: stop.stop_hook_active,
             ends_with_question: message.is_some_and(|text| text.trim_end().ends_with('?')),
             waiting_line: message.is_some_and(has_waiting_line),
-            marker: message.is_some_and(|text| text.contains(MARKER)),
+            marker: handoff.is_armed(),
+            near_miss: near_miss_of(&handoff),
         }
     }
 
     /// Silence for both kinds: plan mode, a question, a `WAITING:` line or
-    /// the handoff marker.
+    /// a handoff line the relay arms on.
     fn says_silence(&self) -> bool {
         self.permission_mode.as_deref() == Some("plan")
             || self.ends_with_question
             || self.waiting_line
             || self.marker
     }
+}
+
+/// The near-miss a handoff line holds, if any.
+pub(crate) fn near_miss_of(line: &HandoffLine) -> Option<NearMiss> {
+    match line {
+        HandoffLine::NearMiss(miss) => Some(*miss),
+        _ => None,
+    }
+}
+
+/// The journal's `what`, with the near-miss's id when there is one.
+fn with_near_miss(what: &str, near_miss: Option<NearMiss>) -> String {
+    near_miss.map_or_else(
+        || what.to_string(),
+        |miss| format!("{what} near-miss:{}", miss.id()),
+    )
+}
+
+/// The remedy when the turn's last line is a near-miss: the handoff is
+/// written, so only that line is fixed.
+fn near_miss_remedy(miss: NearMiss) -> String {
+    format!(
+        "This turn's last line starts `{MARKER}`, but the clear-relay plugin does not arm on it: {}. If the handoff is written, fix only that line, with nothing after it: \"{MARKER}; next: `<the exact first prompt>`\", or \"{MARKER}; parked: <the parked line relais printed>\".",
+        miss.reason()
+    )
+}
+
+/// The advise note's sentence for a near-miss last line.
+fn near_miss_note(miss: NearMiss) -> String {
+    format!(
+        "This turn ended with a handoff line the clear-relay plugin does not arm on: {}.",
+        miss.reason()
+    )
 }
 
 /// Silence without a journal line: what the payload alone shows. A Stop in
@@ -2408,21 +2449,28 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
         match stance {
             Stance::Observe => self.watched(&format!("{} (observe)", boundary.what)),
             Stance::Advise => {
-                self.record("advised", &boundary.what);
+                self.record("advised", &with_near_miss(&boundary.what, view.near_miss));
                 // The agent hands off unasked (worktree-task `## Handoff`), so
                 // the note names that step; the line it quotes still works with
                 // no handoff skill installed.
+                let ended = view.near_miss.map_or_else(
+                    || "This turn ended without that line.".to_string(),
+                    near_miss_note,
+                );
                 let remedy = format!(
-                    "The agent hands off by itself at a boundary, as the worktree-task skill's Handoff section says. Without that skill, the handoff is complete when the plan or ticket states the next action. Either way, the turn ends with the line \"{MARKER}; next: `<the exact first prompt>`\". This turn ended without that line. To clear and carry on, reply: hand off now. The clear-relay plugin then clears and submits that prompt. Or /clear yourself."
+                    "The agent hands off by itself at a boundary, as the worktree-task skill's Handoff section says. Without that skill, the handoff is complete when the plan or ticket states the next action. Either way, the turn ends with the line \"{MARKER}; next: `<the exact first prompt>`\". {ended} To clear and carry on, reply: hand off now. The clear-relay plugin then clears and submits that prompt. Or /clear yourself."
                 );
                 Some(Decision::UserNote(decision::phrase(
                     RULE.id, &fact, &remedy,
                 )))
             }
             Stance::Deny => {
-                self.record("denied", &boundary.what);
-                let remedy = format!(
-                    "Hand off now, as the worktree-task skill's Handoff section says. Without that skill, the handoff is complete when the plan or ticket states the next action and the turn ends with one line: \"{MARKER}; next: `<the exact first prompt>`\"."
+                self.record("denied", &with_near_miss(&boundary.what, view.near_miss));
+                let remedy = view.near_miss.map_or_else(
+                    || format!(
+                        "Hand off now, as the worktree-task skill's Handoff section says. Without that skill, the handoff is complete when the plan or ticket states the next action and the turn ends with one line: \"{MARKER}; next: `<the exact first prompt>`\"."
+                    ),
+                    near_miss_remedy,
                 );
                 Some(Decision::Continue(decision::phrase(
                     RULE.id, &fact, &remedy,
@@ -2490,9 +2538,12 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
                 (None, Some(SizeOutcome::Observed))
             }
             Stance::Advise => {
-                self.record("advised", &what);
+                self.record("advised", &with_near_miss(&what, view.near_miss));
+                let ended = view
+                    .near_miss
+                    .map_or_else(String::new, |miss| format!("{} ", near_miss_note(miss)));
                 let remedy = format!(
-                    "The agent can hand off mid-phase, as the worktree-task skill's Handoff section says for a size boundary. To clear and carry on, reply: hand off now. The turn then ends with the line \"{MARKER}; next: `<the exact first prompt>`\", and the clear-relay plugin clears and submits that prompt. Or /clear yourself."
+                    "{ended}The agent can hand off mid-phase, as the worktree-task skill's Handoff section says for a size boundary. To clear and carry on, reply: hand off now. The turn then ends with the line \"{MARKER}; next: `<the exact first prompt>`\", and the clear-relay plugin clears and submits that prompt. Or /clear yourself."
                 );
                 (
                     Some(Decision::UserNote(decision::phrase(
@@ -2502,8 +2553,10 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
                 )
             }
             Stance::Deny => {
-                self.record("denied", &what);
-                let remedy = size_handoff_remedy(k);
+                self.record("denied", &with_near_miss(&what, view.near_miss));
+                let remedy = view
+                    .near_miss
+                    .map_or_else(|| size_handoff_remedy(k), near_miss_remedy);
                 (
                     Some(Decision::Continue(decision::phrase(
                         RULE.id, &fact, &remedy,
@@ -2693,6 +2746,11 @@ struct PayloadFixture {
     ends_with_question: bool,
     waiting_line: bool,
     marker: bool,
+    /// The final message's last line, when the fixture holds it: the replay
+    /// reads it through [`handoff_line`], and a frozen `marker` that
+    /// disagrees fails the case.
+    #[serde(default)]
+    last_line: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -2863,6 +2921,15 @@ impl TryFrom<StopFixture> for StopInputs {
             ));
         }
         let payload = fixture.payload;
+        let handoff = payload.last_line.as_deref().map(handoff_line);
+        if let Some(line) = &handoff {
+            if line.is_armed() != payload.marker {
+                return Err(FixtureError::WrongType(format!(
+                    "payload.marker is {} but last_line reads {line:?}",
+                    payload.marker
+                )));
+            }
+        }
         let view = StopView {
             cwd: payload.cwd.map(PathBuf::from),
             home: Some(PathBuf::from(SYMBOLIC_HOME)),
@@ -2872,6 +2939,7 @@ impl TryFrom<StopFixture> for StopInputs {
             ends_with_question: payload.ends_with_question,
             waiting_line: payload.waiting_line,
             marker: payload.marker,
+            near_miss: handoff.as_ref().and_then(near_miss_of),
         };
         let prior = State {
             turn: fixture.state.turn,
@@ -3614,6 +3682,32 @@ mod tests {
             replay(&case),
             Err(FixtureError::NotCountable("why not".to_string()))
         );
+    }
+
+    #[test]
+    fn a_fixture_last_line_is_read_by_the_grammar_and_checked_against_marker() {
+        let base = replay(&fixture(&boundary_entries()));
+        assert_eq!(base, Ok(true), "the boundary fixture fires");
+        let mut armed = fixture(&boundary_entries());
+        armed["payload"]["last_line"] = json!("safe to /clear; next: `go on`");
+        armed["payload"]["marker"] = json!(true);
+        assert_eq!(replay(&armed), Ok(false));
+        let mut near = fixture(&boundary_entries());
+        near["payload"]["last_line"] = json!("safe to /clear; next: go on");
+        assert_eq!(replay(&near), Ok(true));
+        let mut contradicts = fixture(&boundary_entries());
+        contradicts["payload"]["last_line"] = json!("safe to /clear; next: `go on`");
+        assert!(matches!(
+            replay(&contradicts),
+            Err(FixtureError::WrongType(_))
+        ));
+        let mut contradicts = fixture(&boundary_entries());
+        contradicts["payload"]["last_line"] = json!("safe to /clear; next: go on");
+        contradicts["payload"]["marker"] = json!(true);
+        assert!(matches!(
+            replay(&contradicts),
+            Err(FixtureError::WrongType(_))
+        ));
     }
 
     #[test]
@@ -4888,6 +4982,227 @@ mod size_kind_tests {
 
     fn boundary_turn(size: u64) -> Vec<Value> {
         vec![prompt("p1"), at(size, "b1", "git worktree remove /tmp/wt")]
+    }
+
+    /// A [`Decision`]'s kind, for a failing assertion's message.
+    fn kind(decision: &Decision) -> &'static str {
+        match decision {
+            Decision::Silent => "Silent",
+            Decision::Continue(_) => "Continue",
+            Decision::UserNote(_) => "UserNote",
+            _ => "another decision",
+        }
+    }
+
+    fn view_of(message: &str) -> StopView {
+        let stop = greenbelay_guard::payload::Stop {
+            session: "s1".to_string(),
+            cwd: Some(PathBuf::from("/work")),
+            permission_mode: Some("bypassPermissions".to_string()),
+            last_message: Some(message.to_string()),
+            background_busy: false,
+            stop_hook_active: false,
+            transcript: None,
+        };
+        StopView::of(&stop)
+    }
+
+    /// 836b5b71's last line, 2026-11-19: no backticks around the prompt.
+    const BARE: &str =
+        "Closed t16.\n\nsafe to /clear; next: resume decisions session-boundaries t17-x: file it";
+
+    /// `decide` with the command kind at `command` and the size kind at
+    /// `size`, as [`run`] does otherwise.
+    fn run_at(view: &StopView, entries: &[Value], command: Stance, size: Stance) -> Run {
+        let mut saved = None;
+        let verdict = decide(
+            view,
+            entries,
+            State::default(),
+            || PhaseFact::NoOpenPhase,
+            (|| command, SIZE_BOUNDARY, || size),
+            |_| Repositories::Clean { heads: Vec::new() },
+            |state| {
+                saved = Some(state.clone());
+                true
+            },
+        );
+        Run {
+            verdict,
+            saved,
+            asked_phase: true,
+        }
+    }
+
+    #[test]
+    fn only_an_armed_last_line_silences() {
+        let armed = view_of("Done.\n\nsafe to /clear; next: `resume a b t01-x: go`\n");
+        assert!(armed.says_silence());
+        assert_eq!(armed.near_miss, None);
+        let parked = view_of("Done.\n\nsafe to /clear; parked: next due 2026-11-25");
+        assert!(parked.says_silence());
+        let bare = view_of(BARE);
+        assert!(!bare.says_silence());
+        assert_eq!(bare.near_miss, Some(NearMiss::MissingBackticks));
+        // The marker mid-text used to silence the rule; the last line decides now.
+        let quoted = view_of("It is safe to /clear; next: `x` once merged.\nFirst the review.");
+        assert!(!quoted.says_silence());
+        assert_eq!(quoted.near_miss, None);
+    }
+
+    #[test]
+    fn a_near_miss_at_deny_continues_with_its_reason() {
+        let out = run_at(
+            &view_of(BARE),
+            &boundary_turn(300_000),
+            Stance::Deny,
+            Stance::Observe,
+        );
+        let Decision::Continue(text) = &out.verdict.decision else {
+            panic!("expected a Continue, got {}", kind(&out.verdict.decision));
+        };
+        for needle in [
+            "the clear-relay plugin does not arm on it: the prompt after `next: ` is not wrapped in backticks",
+            "fix only that line",
+            "safe to /clear; next: `<the exact first prompt>`",
+            "safe to /clear; parked: <the parked line relais printed>",
+        ] {
+            assert!(text.contains(needle), "missing {needle:?} in {text}");
+        }
+        assert!(!text.contains("Hand off now"), "{text}");
+        assert!(has_row(
+            &out.verdict,
+            "denied",
+            "worktree remove near-miss:missing-backticks"
+        ));
+    }
+
+    #[test]
+    fn an_armed_line_at_a_boundary_stays_silent() {
+        for message in [
+            "Done.\n\nsafe to /clear; next: `resume a b t01-x: go`",
+            "Done.\n\nsafe to /clear; parked: nothing due",
+        ] {
+            let out = run_at(
+                &view_of(message),
+                &boundary_turn(300_000),
+                Stance::Deny,
+                Stance::Observe,
+            );
+            assert!(
+                matches!(out.verdict.decision, Decision::Silent),
+                "{message}"
+            );
+            assert!(out.verdict.records.is_empty(), "{message}");
+        }
+    }
+
+    #[test]
+    fn the_advise_notes_name_the_near_miss() {
+        let command = run_at(
+            &view_of(BARE),
+            &boundary_turn(300_000),
+            Stance::Advise,
+            Stance::Observe,
+        );
+        let Decision::UserNote(note) = &command.verdict.decision else {
+            panic!("expected a note, got {}", kind(&command.verdict.decision));
+        };
+        assert!(note.contains("This turn ended with a handoff line the clear-relay plugin does not arm on: the prompt after `next: ` is not wrapped in backticks."), "{note}");
+        assert!(!note.contains("ended without that line"), "{note}");
+        assert!(has_row(
+            &command.verdict,
+            "advised",
+            "worktree remove near-miss:missing-backticks"
+        ));
+        let overlong = view_of(&format!("safe to /clear; next: `{}`", "a".repeat(2001)));
+        let size = run(
+            &overlong,
+            &working_turn(450_000),
+            State::default(),
+            PhaseFact::Working,
+            Stance::Advise,
+        );
+        let Decision::UserNote(note) = &size.verdict.decision else {
+            panic!("expected a size note, got {}", kind(&size.verdict.decision));
+        };
+        assert!(
+            note.contains(
+                "This turn ended with a handoff line the clear-relay plugin does not arm on: the prompt is 2001 UTF-16 units, over the 2,000 limit."
+            ),
+            "{note}"
+        );
+        assert!(note.contains("hand off mid-phase"), "{note}");
+        assert!(has_row(
+            &size.verdict,
+            "advised",
+            "size fired 450k near-miss:overlong"
+        ));
+    }
+
+    #[test]
+    fn a_size_near_miss_continues_with_its_reason_not_the_handoff_steps() {
+        let out = run(
+            &view_of("safe to /clear; next: ``"),
+            &working_turn(450_000),
+            State::default(),
+            PhaseFact::Working,
+            Stance::Deny,
+        );
+        let Decision::Continue(text) = &out.verdict.decision else {
+            panic!("expected a Continue");
+        };
+        assert!(
+            text.contains("does not arm on it: the prompt is empty"),
+            "{text}"
+        );
+        assert!(!text.contains("mid-phase at"), "{text}");
+    }
+
+    #[test]
+    fn a_second_near_miss_in_a_continued_turn_gets_no_second_continue() {
+        // Below the size boundary a continued turn is silent.
+        let continued = StopView {
+            stop_hook_active: true,
+            ..view_of(BARE)
+        };
+        let below = run_at(
+            &continued,
+            &boundary_turn(300_000),
+            Stance::Deny,
+            Stance::Deny,
+        );
+        assert!(matches!(below.verdict.decision, Decision::Silent));
+        // Past it, the command Continue spent the size step and set the anchor.
+        let first = run_at(
+            &view_of(BARE),
+            &boundary_turn(450_000),
+            Stance::Deny,
+            Stance::Deny,
+        );
+        assert!(matches!(first.verdict.decision, Decision::Continue(_)));
+        let after = first.saved.expect("the first Continue is saved");
+        let mut entries = boundary_turn(450_000);
+        entries.push(json!({"type": "user", "uuid": "c1", "message": {"role": "user", "content": "Stop hook feedback"}}));
+        entries.push(at(452_000, "e2", "true"));
+        let mut saved = None;
+        let second = decide(
+            &continued,
+            &entries,
+            after,
+            || PhaseFact::Working,
+            (|| Stance::Deny, SIZE_BOUNDARY, || Stance::Deny),
+            |_| Repositories::Clean { heads: Vec::new() },
+            |state| {
+                saved = Some(state.clone());
+                true
+            },
+        );
+        assert!(
+            matches!(second.decision, Decision::Silent),
+            "{}",
+            kind(&second.decision)
+        );
     }
 
     #[test]

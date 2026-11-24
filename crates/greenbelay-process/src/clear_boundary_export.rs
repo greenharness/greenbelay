@@ -676,6 +676,7 @@ impl Exporter<'_> {
                 ends_with_question: false,
                 waiting_line: false,
                 marker: false,
+                near_miss: None,
             },
             prior: State {
                 turn: String::new(),

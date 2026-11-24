@@ -726,6 +726,36 @@ const EMBEDDED_STOP: &[(&str, &str, &str)] = &[
         "size-marker-turn",
         include_str!("../tests/corpus/stop/clear-at-boundary/size-marker-turn.json"),
     ),
+    (
+        "clear-at-boundary",
+        "near-miss-bare-prompt",
+        include_str!("../tests/corpus/stop/clear-at-boundary/near-miss-bare-prompt.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "near-miss-empty-prompt",
+        include_str!("../tests/corpus/stop/clear-at-boundary/near-miss-empty-prompt.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "near-miss-overlong",
+        include_str!("../tests/corpus/stop/clear-at-boundary/near-miss-overlong.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "near-miss-inner-backtick",
+        include_str!("../tests/corpus/stop/clear-at-boundary/near-miss-inner-backtick.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "armed-next",
+        include_str!("../tests/corpus/stop/clear-at-boundary/armed-next.json"),
+    ),
+    (
+        "clear-at-boundary",
+        "armed-parked",
+        include_str!("../tests/corpus/stop/clear-at-boundary/armed-parked.json"),
+    ),
 ];
 
 fn embedded_stop(rule: &str, name: &str) -> Option<&'static str> {
