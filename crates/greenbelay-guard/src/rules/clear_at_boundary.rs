@@ -26,6 +26,136 @@ use crate::shell::Parsed;
 /// What the handoff's last line says; the handoff step prints this constant.
 pub const MARKER: &str = "safe to /clear";
 
+/// The longest prompt the clear-relay plugin submits, in UTF-16 units: the
+/// relay measures a JavaScript string's `.length`.
+pub const MAX_PROMPT_UNITS: usize = 2_000;
+
+/// What the line trims, on both sides of it, here and in the relay: the
+/// language `trim`s differ (Rust strips U+0085, JavaScript U+FEFF).
+const TRIM: &[char] = &[' ', '\t', '\r', '\n'];
+
+/// What an answer's last line is to the clear-relay plugin. The relay
+/// (`plugin/clear-relay/hooks/register.ts`, `handoffLine`) reads the same
+/// grammar, and `plugin/clear-relay/hooks/handoff-cases.ts` pins both.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HandoffLine {
+    /// The last line does not start with [`MARKER`].
+    Absent,
+    /// `safe to /clear; next: `<prompt>``: the relay arms on the prompt.
+    Next(String),
+    /// `safe to /clear; parked: <line>`: the relay submits nothing.
+    Parked,
+    /// A line that starts with [`MARKER`] the relay does not arm on.
+    NearMiss(NearMiss),
+}
+
+impl HandoffLine {
+    /// The relay acts on it: a `next:` prompt or a park.
+    pub fn is_armed(&self) -> bool {
+        matches!(self, Self::Next(_) | Self::Parked)
+    }
+}
+
+/// Why a line that starts with [`MARKER`] does not arm the relay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NearMiss {
+    EmptyParked,
+    NotNextOrParked,
+    EmptyPrompt,
+    MissingBackticks,
+    InnerBacktick,
+    /// The prompt's length, in UTF-16 units.
+    Overlong(usize),
+}
+
+impl NearMiss {
+    /// The stable id, the relay's `reason` and the journal's.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::EmptyParked => "empty-parked",
+            Self::NotNextOrParked => "not-next-or-parked",
+            Self::EmptyPrompt => "empty-prompt",
+            Self::MissingBackticks => "missing-backticks",
+            Self::InnerBacktick => "inner-backtick",
+            Self::Overlong(_) => "overlong",
+        }
+    }
+
+    /// What is wrong, for a sentence that ends "does not arm on it: …".
+    pub fn reason(self) -> String {
+        match self {
+            Self::EmptyParked => "the parked line after `parked:` is empty".to_string(),
+            Self::NotNextOrParked => {
+                format!("`{MARKER}` is followed by neither `; next: ` nor `; parked: `")
+            }
+            Self::EmptyPrompt => "the prompt is empty".to_string(),
+            Self::MissingBackticks => {
+                "the prompt after `next: ` is not wrapped in backticks".to_string()
+            }
+            Self::InnerBacktick => "the prompt holds a backtick".to_string(),
+            Self::Overlong(units) => {
+                format!("the prompt is {units} UTF-16 units, over the 2,000 limit")
+            }
+        }
+    }
+}
+
+/// The handoff line of `answer`: its last line that is not empty once
+/// trimmed. The checks run in order and the first that fails names the
+/// near-miss: the marker; a park (`; parked: <text>`, an empty one
+/// `empty-parked`); `; next: ` with its one space (`; next:` alone is
+/// `empty-prompt`); backticks opening and closing the rest, read untrimmed;
+/// a prompt that is not blank, holds no backtick and is at most
+/// [`MAX_PROMPT_UNITS`] long.
+pub fn handoff_line(answer: &str) -> HandoffLine {
+    let Some(last) = answer
+        .split('\n')
+        .map(|line| line.trim_matches(TRIM))
+        .rfind(|line| !line.is_empty())
+    else {
+        return HandoffLine::Absent;
+    };
+    let Some(rest) = last.strip_prefix(MARKER) else {
+        return HandoffLine::Absent;
+    };
+    let near = HandoffLine::NearMiss;
+    if let Some(parked) = rest.strip_prefix("; parked:") {
+        return if parked.trim_matches(TRIM).is_empty() {
+            near(NearMiss::EmptyParked)
+        } else if parked.starts_with(' ') {
+            HandoffLine::Parked
+        } else {
+            near(NearMiss::NotNextOrParked)
+        };
+    }
+    if rest == "; next:" {
+        return near(NearMiss::EmptyPrompt);
+    }
+    let Some(after) = rest.strip_prefix("; next: ") else {
+        return near(NearMiss::NotNextOrParked);
+    };
+    if after.trim_matches(TRIM).is_empty() {
+        return near(NearMiss::EmptyPrompt);
+    }
+    let Some(prompt) = after
+        .strip_prefix('`')
+        .and_then(|inner| inner.strip_suffix('`'))
+    else {
+        return near(NearMiss::MissingBackticks);
+    };
+    if prompt.trim_matches(TRIM).is_empty() {
+        return near(NearMiss::EmptyPrompt);
+    }
+    if prompt.contains('`') {
+        return near(NearMiss::InnerBacktick);
+    }
+    let units = prompt.encode_utf16().count();
+    if units > MAX_PROMPT_UNITS {
+        return near(NearMiss::Overlong(units));
+    }
+    HandoffLine::Next(prompt.to_string())
+}
+
 pub const RULE: Rule = Rule {
     id: "clear-at-boundary",
     prevents:
@@ -134,6 +264,76 @@ pub fn size_stance() -> Stance {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The relay's case table: one grammar for both readers.
+    const HANDOFF_CASES: &str =
+        include_str!("../../../../plugin/clear-relay/hooks/handoff-cases.ts");
+
+    fn handoff_cases() -> Vec<serde_json::Value> {
+        let block = HANDOFF_CASES
+            .split_once("// handoff-cases:begin\n")
+            .and_then(|(_, rest)| rest.split_once("// handoff-cases:end"))
+            .map(|(block, _)| block)
+            .expect("handoff-cases.ts holds its begin and end markers");
+        serde_json::from_str(block).expect("the block between the markers is strict JSON")
+    }
+
+    /// The case's answer and, for a `next` case, the prompt it submits.
+    fn case_answer(case: &serde_json::Value) -> (String, Option<String>) {
+        if let Some(repeat) = case.get("next_repeat") {
+            let unit = repeat["unit"].as_str().unwrap();
+            let count = usize::try_from(repeat["count"].as_u64().unwrap()).unwrap();
+            let tail = repeat["tail"].as_str().unwrap_or("");
+            let prompt = format!("{}{tail}", unit.repeat(count));
+            return (format!("{MARKER}; next: `{prompt}`"), Some(prompt));
+        }
+        let answer = case["answer"].as_str().unwrap().to_string();
+        let prompt = case["prompt"].as_str().map(str::to_string);
+        (answer, prompt)
+    }
+
+    #[test]
+    fn every_handoff_case_reads_as_the_relay_reads_it() {
+        let cases = handoff_cases();
+        assert!(cases.len() >= 30, "{} cases", cases.len());
+        for case in &cases {
+            let name = case["name"].as_str().unwrap();
+            let (answer, prompt) = case_answer(case);
+            let got = handoff_line(&answer);
+            match case["kind"].as_str().unwrap() {
+                "next" => assert_eq!(got, HandoffLine::Next(prompt.unwrap()), "{name}"),
+                "parked" => assert_eq!(got, HandoffLine::Parked, "{name}"),
+                "absent" => assert_eq!(got, HandoffLine::Absent, "{name}"),
+                "near-miss" => {
+                    let HandoffLine::NearMiss(miss) = got else {
+                        panic!("{name}: {got:?} is not a near-miss");
+                    };
+                    assert_eq!(miss.id(), case["reason"].as_str().unwrap(), "{name}");
+                }
+                other => panic!("{name}: unknown kind {other}"),
+            }
+        }
+    }
+
+    #[test]
+    fn an_overlong_prompt_counts_utf16_units() {
+        let prompt = "😀".repeat(1001);
+        assert_eq!(
+            handoff_line(&format!("{MARKER}; next: `{prompt}`")),
+            HandoffLine::NearMiss(NearMiss::Overlong(2002))
+        );
+        assert!(NearMiss::Overlong(2002)
+            .reason()
+            .contains("2002 UTF-16 units"));
+    }
+
+    #[test]
+    fn only_a_next_or_a_park_is_armed() {
+        assert!(HandoffLine::Next("x".into()).is_armed());
+        assert!(HandoffLine::Parked.is_armed());
+        assert!(!HandoffLine::Absent.is_armed());
+        assert!(!HandoffLine::NearMiss(NearMiss::EmptyPrompt).is_armed());
+    }
 
     fn inputs() -> SizeStanceInputs {
         SizeStanceInputs {

@@ -207,7 +207,7 @@ counts UTF-16 units (`encode_utf16().count()`), because the relay measures
 
 ## Phases
 
-- [ ] Phase 1 — the grammar and its shared table:
+- [x] Phase 1 — the grammar and its shared table:
   `crates/greenbelay-guard/src/rules/clear_at_boundary.rs`,
   `plugin/clear-relay/hooks/handoff-cases.ts`
 - [ ] Phase 2 — the rule reads it, and the near-miss remedies:

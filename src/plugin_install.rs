@@ -34,6 +34,10 @@ const PLUGIN_FILES: &[(&str, &str)] = &[
         include_str!("../plugin/clear-relay/.claude-plugin/plugin.json"),
     ),
     (
+        "hooks/handoff-cases.ts",
+        include_str!("../plugin/clear-relay/hooks/handoff-cases.ts"),
+    ),
+    (
         "hooks/hooks.json",
         include_str!("../plugin/clear-relay/hooks/hooks.json"),
     ),
