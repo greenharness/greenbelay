@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v6.11.0
+
+greenbelay 6.11.0 gives `clear-at-boundary` a size kind (ADR-0083): past 400k
+tokens a turn hands off mid-phase. It ships at `observe`, and `size-evidence`
+keeps what it decides for the follow-up that may move it to `deny` (#321).
+
 - `clear-at-boundary` gains a size kind (ADR-0083): past 400k tokens of
   context (`greenbelay.clear-at-boundary.size-tokens`, at least 200k), a
   `Stop` with no background task and no relais run in flight hands off
