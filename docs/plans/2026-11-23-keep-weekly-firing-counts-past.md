@@ -132,10 +132,10 @@ PR 1 carries Phases 1–2; Phases 3–6 follow in a second PR, so `status` stays
 
 ## Phase 3–4 implementation review
 PR 2 carries Phases 3–4; `status` stays `active`, next Phase 5 (release), then Phase 6 (retro, its own plan).
-- implementation-review: approve-with-changes after 2 deltas; fixed stdout warning, `n`/`f` names, branch tests; deliberate: root-run unreadable test is guarded, not asserted.
-- backend: approve-with-changes after 2 deltas; fixed freeze on unreadable files, mtime floor, partial-week rate, best-effort dir sync; deliberate: the CLI-level freeze guard has no binary test (carried to the follow-up).
-- lang:rust: approve after 2 deltas; fixed u64 saturating counts, `--weeks` bounds, borrows; carried: shared classifier, typed I/O errors, `run_rollup` split, `as Day` casts.
-- unix: approve after 1 delta; fixed `--help`, `--weeks=N`, foreign flags refused, exit 1 on an unknown roll-up version.
+- implementation-review: approve on the final tree, after the rebase deltas; fixed stdout warning, names, flag-argument test helper, branch tests; deliberate: root-run unreadable test is guarded, not asserted.
+- backend: approve-with-changes; fixed freeze on unreadable files, mtime floor, partial-week rate, CHANGELOG section after rebase, lossless `--transcripts`; deliberate: no binary test of the freeze guard (carried); `--transcripts --json` takes `--json` as the value, as getopt does. No non-UTF-8 `--transcripts` test: APFS refuses such names on this host.
+- lang:rust: approve on the rebased tree; fixed u64 saturating counts, `--weeks` bounds, borrows; carried: shared classifier, typed I/O errors, `run_rollup` split, `as Day` casts.
+- unix: approve-with-changes; fixed `--help`, `--weeks=N`, `--transcripts=<dir>`, foreign flags refused, exit 1 on an unknown roll-up version.
 
 ## Decision log
 - 2026-11-23 — roll-up over longer journal (t29). The rule-to-tool table is explicit, because rules declare no tool and the rate needs one denominator per rule.
