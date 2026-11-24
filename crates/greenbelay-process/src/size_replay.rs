@@ -330,7 +330,13 @@ impl Summary {
             match verdict.evidence.as_ref().map(|evidence| evidence.outcome) {
                 Some(SizeOutcome::HeldBackground) => self.held_background += 1,
                 Some(SizeOutcome::HeldRelais) => self.held_relais += 1,
-                Some(_) | None => {}
+                Some(
+                    SizeOutcome::Requested
+                    | SizeOutcome::Advised
+                    | SizeOutcome::Observed
+                    | SizeOutcome::Cap,
+                )
+                | None => {}
             }
             if matches!(verdict.decision, Decision::Continue(_)) {
                 self.fires.push(Fire {

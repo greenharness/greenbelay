@@ -90,6 +90,11 @@ pub struct SizeStanceInputs {
 /// forced to `observe` by the kill switches, the shadow arm, or an explicit
 /// `observe` in the global or the rule's own stance key, and capped by the
 /// rule's ceiling. The rule's compiled `advise` does not lower it.
+///
+/// Its order is not [`crate::stance::resolve`]'s: there the rule's key
+/// overrides `greenbelay.stance`, here an `observe` in either wins, so a
+/// global `observe` quiets the size kind even under a rule key of `deny`.
+/// It errs quiet on purpose: the size kind is new and asks for a handoff.
 pub fn size_stance_of(inputs: SizeStanceInputs) -> Stance {
     let quieted = [inputs.global_stance, inputs.rule_stance].contains(&Some(Stance::Observe));
     if inputs.off || inputs.shadow || quieted {

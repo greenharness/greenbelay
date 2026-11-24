@@ -18,7 +18,6 @@
 //! install` writes; `size-evidence --relay-dir` reads another.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -34,7 +33,7 @@ pub const KEEP_DAYS: u64 = 30;
 pub const ANSWER_WINDOW: Duration = Duration::from_secs(2 * 3600);
 
 /// Which judgement a decision came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Kind {
     /// The size kind itself.
     Size,
@@ -49,10 +48,17 @@ impl Kind {
             Kind::Command => "command",
         }
     }
+
+    /// The kind a day file names; `None` for a word this version never wrote.
+    pub fn parse(text: &str) -> Option<Kind> {
+        [Kind::Size, Kind::Command]
+            .into_iter()
+            .find(|kind| kind.as_str() == text)
+    }
 }
 
 /// What one decision past the size did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Outcome {
     /// A Continue asked for the handoff.
     Requested,
@@ -78,6 +84,21 @@ impl Outcome {
             Outcome::HeldRelais => "held relais",
             Outcome::Cap => "cap",
         }
+    }
+
+    /// The outcome a day file names; `None` for a word this version never
+    /// wrote.
+    pub fn parse(text: &str) -> Option<Outcome> {
+        [
+            Outcome::Requested,
+            Outcome::Advised,
+            Outcome::Observed,
+            Outcome::HeldBackground,
+            Outcome::HeldRelais,
+            Outcome::Cap,
+        ]
+        .into_iter()
+        .find(|outcome| outcome.as_str() == text)
     }
 
     /// What a fire at `stance` did.
@@ -196,9 +217,9 @@ pub struct Row {
     pub stop_uuid: String,
     pub time_ms: u64,
     pub size: u64,
-    pub kind: String,
-    pub stance: String,
-    pub outcome: String,
+    pub kind: Kind,
+    pub stance: Stance,
+    pub outcome: Outcome,
 }
 
 fn parse_row(text: &str) -> Option<Row> {
@@ -209,46 +230,65 @@ fn parse_row(text: &str) -> Option<Row> {
         stop_uuid: text_of("stop_uuid")?,
         time_ms: row["time_ms"].as_u64()?,
         size: row["size"].as_u64()?,
-        kind: text_of("kind")?,
-        stance: text_of("stance")?,
-        outcome: text_of("outcome")?,
+        kind: Kind::parse(row["kind"].as_str()?)?,
+        stance: Stance::parse(row["stance"].as_str()?)?,
+        outcome: Outcome::parse(row["outcome"].as_str()?)?,
     })
+}
+
+/// What [`rows_in`] read back.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReadBack {
+    pub rows: Vec<Row>,
+    /// Day files, or the directory itself, that could not be read.
+    pub unreadable_days: usize,
+    /// Lines that are not a row this version writes (torn, or an unknown
+    /// kind, stance or outcome).
+    pub unparsed_lines: usize,
 }
 
 /// The rows of every day file in `dir` at or after `since_ms`, oldest first,
 /// with repeats dropped: a Stop judged twice (the same session, Stop uuid,
-/// kind and outcome) counts once, at its first time. The second member
-/// counts the day files that could not be read.
-pub fn rows_in(dir: &Path, since_ms: u64) -> (Vec<Row>, usize) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return (Vec::new(), 0);
+/// kind and outcome) counts once, at its first time. A directory that does
+/// not exist holds no rows; one that cannot be read is counted unreadable.
+pub fn rows_in(dir: &Path, since_ms: u64) -> ReadBack {
+    let mut read = ReadBack::default();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return read,
+        Err(_) => {
+            read.unreadable_days += 1;
+            return read;
+        }
     };
-    let mut unreadable = 0;
-    let mut rows: Vec<Row> = Vec::new();
     for entry in entries.flatten() {
         if entry.path().extension().is_none_or(|ext| ext != "jsonl") {
             continue;
         }
-        match std::fs::read_to_string(entry.path()) {
-            Ok(text) => rows.extend(
-                text.lines()
-                    .filter_map(parse_row)
-                    .filter(|row| row.time_ms >= since_ms),
-            ),
-            Err(_) => unreadable += 1,
+        let Ok(text) = std::fs::read_to_string(entry.path()) else {
+            read.unreadable_days += 1;
+            continue;
+        };
+        for line in text.lines().filter(|line| !line.trim().is_empty()) {
+            match parse_row(line) {
+                Some(row) if row.time_ms >= since_ms => read.rows.push(row),
+                Some(_) => {}
+                None => read.unparsed_lines += 1,
+            }
         }
     }
-    rows.sort_by(|a, b| a.time_ms.cmp(&b.time_ms).then_with(|| a.cmp(b)));
+    read.rows
+        .sort_by(|a, b| a.time_ms.cmp(&b.time_ms).then_with(|| a.cmp(b)));
     let mut seen = BTreeSet::new();
-    rows.retain(|row| {
+    read.rows.retain(|row| {
         seen.insert((
             row.session.clone(),
             row.stop_uuid.clone(),
-            row.kind.clone(),
-            row.outcome.clone(),
+            row.kind,
+            row.outcome,
         ))
     });
-    (rows, unreadable)
+    read
 }
 
 /// What happened after one handoff request.
@@ -306,29 +346,32 @@ pub struct Report {
     /// The relay directory the requests were paired against.
     pub relay_dir: PathBuf,
     /// Size fires and command boundaries past the size, by kind and outcome.
-    pub by_outcome: BTreeMap<(String, String), usize>,
+    pub by_outcome: BTreeMap<(Kind, Outcome), usize>,
     pub requests: usize,
     pub submitted: usize,
     pub unheeded: usize,
     pub missing: usize,
     /// Day files that could not be read.
     pub unreadable_days: usize,
+    /// Lines of the day files that are not a row this version writes.
+    pub unparsed_lines: usize,
 }
 
 /// The report over `evidence_dir` and `relay_dir` since `since_ms`.
 pub fn report_in(evidence_dir: &Path, relay_dir: &Path, since_ms: u64) -> Report {
-    let (rows, unreadable_days) = rows_in(evidence_dir, since_ms);
+    let read = rows_in(evidence_dir, since_ms);
     let mut report = Report {
         relay_dir: relay_dir.to_path_buf(),
-        unreadable_days,
+        unreadable_days: read.unreadable_days,
+        unparsed_lines: read.unparsed_lines,
         ..Report::default()
     };
-    for row in &rows {
+    for row in &read.rows {
         *report
             .by_outcome
-            .entry((row.kind.clone(), row.outcome.clone()))
+            .entry((row.kind, row.outcome))
             .or_default() += 1;
-        if row.outcome == Outcome::Requested.as_str() {
+        if row.outcome == Outcome::Requested {
             report.requests += 1;
             match answer(relay_dir, row) {
                 Answer::Submitted => report.submitted += 1,
@@ -346,22 +389,26 @@ pub fn since(now_ms: u64, days: u64) -> u64 {
 }
 
 impl Report {
-    /// The report as the follow-up reads it.
+    /// The report as the follow-up reads it: the answer line first.
     pub fn render(&self, days: u64) -> String {
-        let mut out = format!(
-            "requests {}: submitted {}, unheeded {}, evidence missing {}\n",
-            self.requests, self.submitted, self.unheeded, self.missing
-        );
-        let _ = writeln!(out, "window: last {days} days"); // writing to a String cannot fail
-        for ((kind, outcome), count) in &self.by_outcome {
-            let _ = writeln!(out, "  {kind} {outcome}: {count}"); // writing to a String cannot fail
-        }
-        let _ = writeln!(out, "relay logs read from {}", self.relay_dir.display()); // writing to a String cannot fail
+        let mut lines = vec![
+            format!(
+                "requests {}: submitted {}, unheeded {}, evidence missing {}",
+                self.requests, self.submitted, self.unheeded, self.missing
+            ),
+            format!("window: last {days} days"),
+        ];
+        lines.extend(self.by_outcome.iter().map(|((kind, outcome), count)| {
+            format!("  {} {}: {count}", kind.as_str(), outcome.as_str())
+        }));
+        lines.push(format!("relay logs read from {}", self.relay_dir.display()));
         if self.unreadable_days > 0 {
-            let _ = writeln!(out, "unreadable day files: {}", self.unreadable_days);
-            // writing to a String cannot fail
+            lines.push(format!("unreadable day files: {}", self.unreadable_days));
         }
-        out
+        if self.unparsed_lines > 0 {
+            lines.push(format!("unparsed lines: {}", self.unparsed_lines));
+        }
+        lines.iter().map(|line| format!("{line}\n")).collect()
     }
 }
 
@@ -444,12 +491,12 @@ mod tests {
 
     #[test]
     fn the_report_survives_a_journal_rotation() {
-        // The day files sit under the data directory beside the journal. A
+        // The day files sit under the data_dir directory beside the journal. A
         // journal past its cap rotates on the next record; every request
         // must still read back and still pair with its submission.
-        let data = scratch("rotation");
-        let evidence = data.join("size-evidence");
-        let relay = data.join("relay");
+        let data_dir = scratch("rotation");
+        let evidence = data_dir.join("size-evidence");
+        let relay = data_dir.join("relay");
         std::fs::create_dir_all(&relay).unwrap();
         let request_ms = 3 * DAY;
         append_in(&evidence, "s", &requested("u"), request_ms).unwrap();
@@ -461,9 +508,9 @@ mod tests {
             ),
         )
         .unwrap();
-        std::fs::write(data.join("journal.log"), vec![b'x'; 300 * 1024]).unwrap();
+        std::fs::write(data_dir.join("journal.log"), vec![b'x'; 300 * 1024]).unwrap();
         journal::record_in(
-            &data,
+            &data_dir,
             &journal::Entry {
                 rule: "clear-at-boundary",
                 stance: "deny",
@@ -474,10 +521,28 @@ mod tests {
                 excerpt: "rotation probe",
             },
         );
-        assert!(data.join("journal.log.1").exists(), "the journal rotated");
+        assert!(
+            data_dir.join("journal.log.1").exists(),
+            "the journal rotated"
+        );
         let report = report_in(&evidence, &relay, 0);
         assert_eq!((report.requests, report.submitted), (1, 1));
-        let _ = std::fs::remove_dir_all(&data); // a scratch directory; a leftover is harmless
+        let _ = std::fs::remove_dir_all(&data_dir); // a scratch directory; a leftover is harmless
+    }
+
+    #[test]
+    fn a_line_this_version_never_wrote_is_counted_apart() {
+        let root = scratch("unparsed");
+        append_in(&root, "s", &requested("u"), 3 * DAY).unwrap();
+        let day = root.join(day_file(3 * DAY));
+        let mut text = std::fs::read_to_string(&day).unwrap();
+        text.push_str(&line("s", &requested("v"), 3 * DAY).replace("requested", "renamed"));
+        text.push_str("\n{\"torn\n");
+        std::fs::write(&day, text).unwrap();
+        let read = rows_in(&root, 0);
+        assert_eq!((read.rows.len(), read.unparsed_lines), (1, 2));
+        assert_eq!(read.rows[0].outcome, Outcome::Requested);
+        let _ = std::fs::remove_dir_all(&root); // a scratch directory; a leftover is harmless
     }
 
     #[test]
@@ -485,9 +550,9 @@ mod tests {
         let root = scratch("window");
         append_in(&root, "s", &requested("old"), DAY).unwrap();
         append_in(&root, "s", &requested("new"), 9 * DAY).unwrap();
-        let (rows, unreadable) = rows_in(&root, 2 * DAY);
-        assert_eq!((rows.len(), unreadable), (1, 0));
-        assert_eq!(rows[0].stop_uuid, "new");
+        let read = rows_in(&root, 2 * DAY);
+        assert_eq!((read.rows.len(), read.unreadable_days), (1, 0));
+        assert_eq!(read.rows[0].stop_uuid, "new");
         let _ = std::fs::remove_dir_all(&root); // a scratch directory; a leftover is harmless
     }
 }

@@ -29,6 +29,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::plan_phases::PhaseFact;
+use crate::size_evidence::{Kind as SizeKind, Outcome as SizeOutcome};
 
 pub use greenbelay_guard::rules::clear_at_boundary::MARKER;
 
@@ -2520,8 +2521,6 @@ fn size_handoff_remedy(k: u64) -> String {
     )
 }
 
-use crate::size_evidence::{Kind as SizeKind, Outcome as SizeOutcome};
-
 /// The judgement, free of I/O. `fact` gives the plan's state and is called
 /// only once the context is past [`SIZE`]; `repos` checks the repositories a
 /// boundary touched; `persist` writes the state and says whether it held.
@@ -2563,14 +2562,13 @@ pub(crate) fn decide(
         persist,
         saved: None,
     };
-    let stop_uuid = entries
+    let stop_uuid: Option<String> = entries
         .last()
         .and_then(|entry| entry["uuid"].as_str())
-        .unwrap_or("")
-        .to_string();
+        .map(str::to_string);
     let evidence = |kind: SizeKind, stance: Stance, outcome: SizeOutcome| {
         Some(crate::size_evidence::Evidence {
-            stop_uuid: stop_uuid.clone(),
+            stop_uuid: stop_uuid.clone().unwrap_or_default(),
             size,
             kind,
             stance,
@@ -2603,7 +2601,7 @@ pub(crate) fn decide(
                 let mut after = ledger.saved.clone().unwrap_or(state);
                 after.size_steps_fired = after.size_steps_fired.max(size_step(size, size_tokens));
                 if stance == Stance::Deny {
-                    after.size_anchor = Some(stop_uuid.clone()).filter(|uuid| !uuid.is_empty());
+                    after.size_anchor.clone_from(&stop_uuid);
                 }
                 let _saved = ledger.save(&after);
                 evidence_row = evidence(SizeKind::Command, stance, SizeOutcome::of_fire(stance));

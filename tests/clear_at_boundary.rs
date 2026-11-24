@@ -1111,6 +1111,28 @@ fn a_command_boundary_past_the_size_is_answered_at_the_size_stance() {
 }
 
 #[test]
+fn an_unwritable_evidence_file_is_journalled_and_the_handoff_still_goes() {
+    let world = working_world("size-unwritable");
+    let data_dir = world.claude.join("greenbelay");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    // A regular file where the evidence directory goes: every append fails.
+    std::fs::write(data_dir.join("size-evidence"), "not a directory").unwrap();
+    let transcript = world.transcript("t.jsonl", &mid_phase_turn(450_000));
+    let reply = world.stop("s1", &transcript, json!({}));
+    assert!(reply.blocks(), "{}", reply.stdout);
+    assert!(
+        reply.reason().contains("mid-phase at 450k"),
+        "{}",
+        reply.stdout
+    );
+    assert!(
+        world.journal_has("watched", "size-evidence-unwritable"),
+        "{:?}",
+        world.journal()
+    );
+}
+
+#[test]
 fn a_size_kind_at_observe_never_quiets_a_command_boundary_past_the_size() {
     // The size kind ships at `observe`; a command boundary past 400k is
     // judged at the stricter of the two stances, so the rule's own `deny`
