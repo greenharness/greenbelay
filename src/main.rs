@@ -1343,7 +1343,7 @@ fn run_harness_review(args: &[OsString]) -> ExitCode {
         };
     }
     let today = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-        Ok(d) => (d.as_secs() / 86_400) as civil::Day,
+        Ok(d) => day_of_seconds(d.as_secs()),
         Err(e) => {
             eprintln!("{BIN}: cannot read the clock: {e}");
             return ExitCode::from(2);
@@ -3845,7 +3845,9 @@ fn report_rollup_problem(problem: Option<&greenbelay_guard::rollup::Problem>) {
         Some(Problem::UnknownVersion(version)) => {
             eprintln!("{BIN}: rollup.log has format {version}, skipped; upgrade {BIN}");
         }
-        Some(Problem::Unreadable(why)) => eprintln!("{BIN}: rollup.log unreadable: {why}"),
+        Some(Problem::Unreadable(failure)) => {
+            eprintln!("{BIN}: rollup.log unreadable: {}", failure.why());
+        }
         None => {}
     }
 }
@@ -3859,7 +3861,7 @@ fn rollup_failed_line(unfolded: &[journal::Row]) -> Option<String> {
         .max_by_key(|row| row.ts)?;
     Some(format!(
         "{BIN}: rollup: a fold failed: `rollup-failed` record at {} in the journal",
-        civil::iso((newest.ts / 86_400) as civil::Day)
+        civil::iso(day_of_seconds(newest.ts))
     ))
 }
 
@@ -3896,6 +3898,90 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
         println!("{ROLLUP_USAGE}");
         return ExitCode::SUCCESS;
     }
+    let RollupArgs {
+        quiet,
+        weeks,
+        given,
+    } = match parse_rollup_args(args) {
+        Ok(parsed) => parsed,
+        Err(code) => return code,
+    };
+    let Some(journal_path) = journal::path() else {
+        eprintln!("{BIN}: cannot find the state directory (is HOME set?)");
+        return ExitCode::FAILURE;
+    };
+    let rollup_path = rollup::path_beside(&journal_path);
+    let known: Vec<rollup::Known> = rule_table::RULES
+        .iter()
+        .map(backtest::Subject::Rule)
+        .chain(
+            assertions::ASSERTIONS
+                .iter()
+                .map(backtest::Subject::Assertion),
+        )
+        .map(|subject| rollup::Known {
+            id: subject.id(),
+            replay: subject.replay().as_str(),
+        })
+        .collect();
+    let today = day_of_seconds(unix_now());
+    let current = civil::week_start(today);
+
+    let counted = rollup::load(&journal::paths(), &rollup_path);
+    report_rollup_problem(counted.problem.as_ref());
+    // An unreadable or unknown-format roll-up has no honest counts to print:
+    // retro would read the zeros as real.
+    if counted.problem.is_some() {
+        return ExitCode::FAILURE;
+    }
+    let closed = weeks.or(if given.json { None } else { Some(1) });
+    let shown = rollup::weeks_shown(
+        &counted,
+        &rollup::merged_calls(&counted.rollup, &Default::default()),
+        today,
+        closed,
+    );
+    let freezable = if counted.problem.is_none() {
+        rollup::freezable_weeks(
+            &counted.rollup,
+            &shown,
+            today,
+            rollup::covered_since(&counted),
+        )
+    } else {
+        Vec::new()
+    };
+
+    let live = scan_and_freeze(&rollup_path, &given.transcripts, &freezable, current, quiet);
+
+    let counted = rollup::load(&journal::paths(), &rollup_path);
+    let calls = rollup::merged_calls(&counted.rollup, &live);
+    let report = rollup::build(&counted, &calls, &known, today, &shown);
+    let text = if given.json {
+        format!("{}\n", report.to_json())
+    } else {
+        report.to_text(ui::id_column(rule_table::RULES))
+    };
+    use std::io::Write as _;
+    match std::io::stdout().lock().write_all(text.as_bytes()) {
+        Err(err) if err.kind() != std::io::ErrorKind::BrokenPipe => {
+            eprintln!("{BIN}: cannot write the report: {err}");
+            ExitCode::FAILURE
+        }
+        _ => ExitCode::SUCCESS,
+    }
+}
+
+struct RollupArgs {
+    quiet: bool,
+    weeks: Option<usize>,
+    given: Flags,
+}
+
+/// Parse `rollup`'s arguments; an `Err` is the exit code to leave with, after
+/// the message is printed.
+fn parse_rollup_args(args: &[OsString]) -> Result<RollupArgs, ExitCode> {
+    use greenbelay_guard::rollup;
     let mut quiet = false;
     let mut weeks: Option<usize> = None;
     let mut rest: Vec<OsString> = Vec::new();
@@ -3924,11 +4010,11 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
                             "{BIN}: --weeks takes a number from 1 to {}",
                             rollup::WEEKS_KEPT
                         );
-                        return ExitCode::from(2);
+                        return Err(ExitCode::from(2));
                     }
                     None => {
                         eprintln!("{BIN}: --weeks needs a value");
-                        return ExitCode::from(2);
+                        return Err(ExitCode::from(2));
                     }
                 }
             }
@@ -3947,13 +4033,13 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
                     }
                     _ => {
                         eprintln!("{BIN}: --transcripts needs a directory");
-                        return ExitCode::from(2);
+                        return Err(ExitCode::from(2));
                     }
                 }
             }
             other if other.starts_with('-') => {
                 eprintln!("{BIN}: rollup has no flag `{other}`; try `{BIN} rollup --help`");
-                return ExitCode::from(2);
+                return Err(ExitCode::from(2));
             }
             _ => rest.push(arg.clone()),
         }
@@ -3962,63 +4048,34 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
         Ok(parsed) => parsed,
         Err(why) => {
             eprintln!("{BIN}: {why}");
-            return ExitCode::from(2);
+            return Err(ExitCode::from(2));
         }
     };
     if let Some(extra) = given.rest.first() {
         eprintln!("{BIN}: rollup takes no argument, not `{extra}`");
-        return ExitCode::from(2);
+        return Err(ExitCode::from(2));
     }
-    let Some(journal_path) = journal::path() else {
-        eprintln!("{BIN}: cannot find the state directory (is HOME set?)");
-        return ExitCode::FAILURE;
-    };
-    let rollup_path = rollup::path_beside(&journal_path);
-    let known: Vec<rollup::Known> = rule_table::RULES
-        .iter()
-        .map(backtest::Subject::Rule)
-        .chain(
-            assertions::ASSERTIONS
-                .iter()
-                .map(backtest::Subject::Assertion),
-        )
-        .map(|subject| rollup::Known {
-            id: subject.id(),
-            replay: subject.replay().as_str(),
-        })
-        .collect();
-    let today = (unix_now() / 86_400) as civil::Day;
-    let current = civil::week_start(today);
+    Ok(RollupArgs {
+        quiet,
+        weeks,
+        given,
+    })
+}
 
-    let counted = rollup::load(&journal::paths(), &rollup_path);
-    report_rollup_problem(counted.problem.as_ref());
-    // An unreadable or unknown-format roll-up has no honest counts to print:
-    // retro would read the zeros as real.
-    if counted.problem.is_some() {
-        return ExitCode::FAILURE;
-    }
-    let closed = weeks.or(if given.json { None } else { Some(1) });
-    let shown = rollup::weeks_shown(
-        &counted,
-        &rollup::merged_calls(&counted.rollup, &Default::default()),
-        today,
-        closed,
-    );
-    let freezable = if counted.problem.is_none() {
-        rollup::freezable_weeks(
-            &counted.rollup,
-            &shown,
-            today,
-            rollup::covered_since(&counted),
-        )
-    } else {
-        Vec::new()
-    };
-
+/// Scan the transcripts for tool calls and freeze the closed weeks that can be
+/// frozen; the calls to report are returned.
+fn scan_and_freeze(
+    rollup_path: &std::path::Path,
+    transcripts: &[PathBuf],
+    freezable: &[civil::Day],
+    current: civil::Day,
+    quiet: bool,
+) -> greenbelay_guard::rollup::Calls {
+    use greenbelay_guard::rollup;
     // The scan holds no lock: it is the slow part.
     let mut live = rollup::Calls::new();
     let mut freeze = true;
-    match transcript::roots(&given.transcripts) {
+    match transcript::roots(transcripts) {
         Ok(roots) => {
             use std::io::IsTerminal as _;
             if !quiet && std::io::stderr().is_terminal() {
@@ -4055,30 +4112,14 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
         ),
     }
     if freeze && !freezable.is_empty() {
-        if let Err(err) = rollup::freeze_calls(&rollup_path, &live, &freezable) {
+        if let Err(err) = rollup::freeze_calls(rollup_path, &live, freezable) {
             eprintln!(
                 "{BIN}: warning: calls of closed weeks not stored: {}",
                 err.why()
             );
         }
     }
-
-    let counted = rollup::load(&journal::paths(), &rollup_path);
-    let calls = rollup::merged_calls(&counted.rollup, &live);
-    let report = rollup::build(&counted, &calls, &known, today, &shown);
-    let text = if given.json {
-        format!("{}\n", report.to_json())
-    } else {
-        report.to_text(ui::id_column(rule_table::RULES))
-    };
-    use std::io::Write as _;
-    match std::io::stdout().lock().write_all(text.as_bytes()) {
-        Err(err) if err.kind() != std::io::ErrorKind::BrokenPipe => {
-            eprintln!("{BIN}: cannot write the report: {err}");
-            ExitCode::FAILURE
-        }
-        _ => ExitCode::SUCCESS,
-    }
+    live
 }
 
 /// Closed weeks `status` counts, besides the current one.
@@ -4086,7 +4127,7 @@ const SEEN_WEEKS: i64 = 4;
 
 /// Seconds since the Monday `SEEN_WEEKS` weeks before this week's.
 fn seen_window(now: u64) -> u64 {
-    let today = (now / 86_400) as civil::Day;
+    let today = day_of_seconds(now);
     let start = civil::week_start(today) - 7 * SEEN_WEEKS;
     now.saturating_sub(start as u64 * 86_400)
 }
@@ -4101,8 +4142,13 @@ fn seen_label(now: u64, covered_since: Option<u64>) -> String {
     if since <= now.saturating_sub(seen_window(now)) {
         "seen, last 4 weeks + this week".to_string()
     } else {
-        format!("seen since {}", civil::iso((since / 86_400) as civil::Day))
+        format!("seen since {}", civil::iso(day_of_seconds(since)))
     }
+}
+
+/// The civil day a count of Unix seconds falls in.
+fn day_of_seconds(seconds: u64) -> civil::Day {
+    civil::Day::try_from(seconds / 86_400).unwrap_or(civil::Day::MAX)
 }
 
 fn unix_now() -> u64 {
