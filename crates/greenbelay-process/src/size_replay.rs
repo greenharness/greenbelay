@@ -38,6 +38,7 @@ use crate::clear_boundary::{
     TAIL_CAP, TAIL_FIRST_CHUNK,
 };
 use crate::plan_phases::PhaseFact;
+use crate::size_evidence::Outcome as SizeOutcome;
 
 /// One fire of the size kind in the replay.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,6 +69,10 @@ pub struct Summary {
     pub stops_past_size: usize,
     pub held_background: usize,
     pub held_relais: usize,
+    /// Transcripts that could not be read.
+    pub unreadable_files: usize,
+    /// Stops whose tail could not be read back.
+    pub unreadable_tails: usize,
     pub fires: Vec<Fire>,
     pub first_day: Option<String>,
     pub last_day: Option<String>,
@@ -176,7 +181,7 @@ fn lines_with_offsets(bytes: &[u8]) -> Vec<(u64, Value)> {
     for (at, byte) in bytes.iter().enumerate() {
         if *byte == b'\n' {
             if let Ok(entry) = serde_json::from_slice::<Value>(&bytes[start..at]) {
-                out.push(((at + 1) as u64, entry));
+                out.push((u64::try_from(at + 1).unwrap_or(u64::MAX), entry));
             }
             start = at + 1;
         }
@@ -184,158 +189,162 @@ fn lines_with_offsets(bytes: &[u8]) -> Vec<(u64, Value)> {
     out
 }
 
-/// Replay one transcript file into `summary`. `since` is the first day kept
-/// (`YYYY-MM-DD`); earlier Stops still carry the state forward.
-pub fn replay_file(path: &Path, since: &str, summary: &mut Summary) {
-    let Ok(bytes) = std::fs::read(path) else {
-        return;
-    };
-    summary.files += 1;
-    let entries = lines_with_offsets(&bytes);
-    let session = path
-        .file_stem()
-        .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned());
-    let mut state = State::default();
-    let mut open: BTreeSet<String> = BTreeSet::new();
-    // Every id seen launched, and every id already notified: one notification
-    // is written several times (a queue operation, an attachment, a prompt),
-    // and only its first copy says the task finished.
-    let mut launched_ever: BTreeSet<String> = BTreeSet::new();
-    let mut notified: BTreeSet<String> = BTreeSet::new();
-    let mut mode: Option<String> = None;
-    let mut last_text = String::new();
-    let mut stops_in_turn = 0usize;
-    let mut fired_any = false;
-    // Fires awaiting the wrong check: the index into `summary.fires` and the
-    // ids launched after the fire, whose notifications do not count.
-    let mut watching: Vec<(usize, BTreeSet<String>)> = Vec::new();
-    for (end, entry) in &entries {
-        // Any prompt opens a turn (a task notification too); only a person's
-        // ends the wrong check.
-        if is_prompt(entry) {
-            stops_in_turn = 0;
-        }
-        if is_person_prompt(entry) {
-            watching.clear();
-        }
-        if let Some(found) = entry["permissionMode"].as_str() {
-            mode = Some(found.to_string());
-        }
-        for text in texts_of(entry) {
-            for id in notified_ids(&text) {
-                open.remove(&id);
-                if !notified.insert(id.clone()) {
-                    continue;
-                }
-                for (fire, after) in &watching {
-                    if !after.contains(&id) {
-                        summary.fires[*fire].wrong = true;
-                        if !launched_ever.contains(&id) {
-                            summary.fires[*fire].unseen_launch = true;
+impl Summary {
+    /// Replay one transcript file into this self. `since` is the first day
+    /// kept (`YYYY-MM-DD`); earlier Stops still carry the state forward.
+    pub fn replay_file(&mut self, path: &Path, since: &str) {
+        let Ok(bytes) = std::fs::read(path) else {
+            self.unreadable_files += 1;
+            return;
+        };
+        self.files += 1;
+        let entries = lines_with_offsets(&bytes);
+        let session = path
+            .file_stem()
+            .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned());
+        let mut state = State::default();
+        let mut open: BTreeSet<String> = BTreeSet::new();
+        // Every id seen launched, and every id already notified: one notification
+        // is written several times (a queue operation, an attachment, a prompt),
+        // and only its first copy says the task finished.
+        let mut launched_ever: BTreeSet<String> = BTreeSet::new();
+        let mut notified: BTreeSet<String> = BTreeSet::new();
+        let mut mode: Option<String> = None;
+        let mut last_text = String::new();
+        let mut stops_in_turn = 0usize;
+        let mut fired_any = false;
+        // Fires awaiting the wrong check: the index into `self.fires` and the
+        // ids launched after the fire, whose notifications do not count.
+        let mut watching: Vec<(usize, BTreeSet<String>)> = Vec::new();
+        for (end, entry) in &entries {
+            // Any prompt opens a turn (a task notification too); only a person's
+            // ends the wrong check.
+            if is_prompt(entry) {
+                stops_in_turn = 0;
+            }
+            if is_person_prompt(entry) {
+                watching.clear();
+            }
+            if let Some(found) = entry["permissionMode"].as_str() {
+                mode = Some(found.to_string());
+            }
+            for text in texts_of(entry) {
+                for id in notified_ids(&text) {
+                    open.remove(&id);
+                    if !notified.insert(id.clone()) {
+                        continue;
+                    }
+                    for (fire, after) in &watching {
+                        if !after.contains(&id) {
+                            self.fires[*fire].wrong = true;
+                            if !launched_ever.contains(&id) {
+                                self.fires[*fire].unseen_launch = true;
+                            }
                         }
                     }
                 }
-            }
-            if entry_type(entry) == "user" {
-                let launched = launched_ids(&text);
-                for (_, after) in &mut watching {
-                    after.extend(launched.iter().cloned());
+                if entry_type(entry) == "user" {
+                    let launched = launched_ids(&text);
+                    for (_, after) in &mut watching {
+                        after.extend(launched.iter().cloned());
+                    }
+                    launched_ever.extend(launched.iter().cloned());
+                    open.extend(launched);
                 }
-                launched_ever.extend(launched.iter().cloned());
-                open.extend(launched);
             }
-        }
-        if let Some(text) = assistant_text(entry) {
-            last_text = text;
-        }
-        if !is_stop(entry) {
-            continue;
-        }
-        let day = day_of(entry).unwrap_or_default();
-        let counted = day.as_str() >= since;
-        let view = StopView {
-            cwd: entry["cwd"].as_str().map(PathBuf::from),
-            home: None,
-            permission_mode: mode.clone(),
-            background_busy: !open.is_empty(),
-            stop_hook_active: stops_in_turn > 0,
-            ends_with_question: last_text.trim_end().ends_with('?'),
-            waiting_line: last_text
-                .lines()
-                .any(|line| line.trim().starts_with("WAITING:")),
-            marker: last_text.contains(MARKER),
-        };
-        stops_in_turn += 1;
-        let anchor = state.size_anchor.clone();
-        let Ok(tail) = read_tail_until_at(path, *end, TAIL_FIRST_CHUNK, TAIL_CAP, |tail| {
-            context_size(tail).is_some()
-                && (anchor.is_empty() || position_of(tail, &anchor).is_some())
-        }) else {
-            continue;
-        };
-        if counted {
-            summary.stops += 1;
-            summary.continued_stops += usize::from(view.stop_hook_active);
-            if summary
-                .first_day
-                .as_deref()
-                .is_none_or(|first| day.as_str() < first)
-            {
-                summary.first_day = Some(day.clone());
+            if let Some(text) = assistant_text(entry) {
+                last_text = text;
             }
-            if summary
-                .last_day
-                .as_deref()
-                .is_none_or(|last| day.as_str() > last)
-            {
-                summary.last_day = Some(day.clone());
+            if !is_stop(entry) {
+                continue;
             }
-        }
-        let Some(size) = context_size(&tail.entries) else {
-            summary.stops_without_size += usize::from(counted);
-            continue;
-        };
-        let mut saved = None;
-        let verdict = decide(
-            &view,
-            &tail.entries,
-            state.clone(),
-            || PhaseFact::Working,
-            (|| Stance::Deny, SIZE_BOUNDARY, || Stance::Deny),
-            |_| Repositories::Clean { heads: Vec::new() },
-            |next| {
-                saved = Some(next.clone());
-                true
-            },
-        );
-        if let Some(next) = saved {
-            state = next;
-        }
-        if !counted {
-            continue;
-        }
-        if size >= SIZE_BOUNDARY {
-            summary.stops_past_size += 1;
-        }
-        for (_, what) in &verdict.records {
-            match what.as_str() {
-                "size held background" => summary.held_background += 1,
-                "size held relais" => summary.held_relais += 1,
-                _ => {}
+            let day = day_of(entry).unwrap_or_default();
+            let counted = day.as_str() >= since;
+            let view = StopView {
+                cwd: entry["cwd"].as_str().map(PathBuf::from),
+                home: None,
+                permission_mode: mode.clone(),
+                background_busy: !open.is_empty(),
+                stop_hook_active: stops_in_turn > 0,
+                ends_with_question: last_text.trim_end().ends_with('?'),
+                waiting_line: last_text
+                    .lines()
+                    .any(|line| line.trim().starts_with("WAITING:")),
+                marker: last_text.contains(MARKER),
+            };
+            stops_in_turn += 1;
+            let anchor = state.size_anchor.clone();
+            let Ok(tail) = read_tail_until_at(path, *end, TAIL_FIRST_CHUNK, TAIL_CAP, |tail| {
+                context_size(tail).is_some()
+                    && anchor
+                        .as_deref()
+                        .is_none_or(|anchor| position_of(tail, anchor).is_some())
+            }) else {
+                self.unreadable_tails += usize::from(counted);
+                continue;
+            };
+            if counted {
+                self.stops += 1;
+                self.continued_stops += usize::from(view.stop_hook_active);
+                if self
+                    .first_day
+                    .as_deref()
+                    .is_none_or(|first| day.as_str() < first)
+                {
+                    self.first_day = Some(day.clone());
+                }
+                if self
+                    .last_day
+                    .as_deref()
+                    .is_none_or(|last| day.as_str() > last)
+                {
+                    self.last_day = Some(day.clone());
+                }
             }
-        }
-        if matches!(verdict.decision, Decision::Continue(_)) {
-            summary.fires.push(Fire {
-                session: session.clone(),
-                day,
-                size,
-                continued: view.stop_hook_active,
-                first: !fired_any,
-                wrong: false,
-                unseen_launch: false,
-            });
-            fired_any = true;
-            watching.push((summary.fires.len() - 1, BTreeSet::new()));
+            let Some(size) = context_size(&tail.entries) else {
+                self.stops_without_size += usize::from(counted);
+                continue;
+            };
+            let mut saved = None;
+            let verdict = decide(
+                &view,
+                &tail.entries,
+                state.clone(),
+                || PhaseFact::Working,
+                (|| Stance::Deny, SIZE_BOUNDARY, || Stance::Deny),
+                |_| Repositories::Clean { heads: Vec::new() },
+                |next| {
+                    saved = Some(next.clone());
+                    true
+                },
+            );
+            if let Some(next) = saved {
+                state = next;
+            }
+            if !counted {
+                continue;
+            }
+            if size >= SIZE_BOUNDARY {
+                self.stops_past_size += 1;
+            }
+            match verdict.evidence.as_ref().map(|evidence| evidence.outcome) {
+                Some(SizeOutcome::HeldBackground) => self.held_background += 1,
+                Some(SizeOutcome::HeldRelais) => self.held_relais += 1,
+                Some(_) | None => {}
+            }
+            if matches!(verdict.decision, Decision::Continue(_)) {
+                self.fires.push(Fire {
+                    session: session.clone(),
+                    day,
+                    size,
+                    continued: view.stop_hook_active,
+                    first: !fired_any,
+                    wrong: false,
+                    unseen_launch: false,
+                });
+                fired_any = true;
+                watching.push((self.fires.len() - 1, BTreeSet::new()));
+            }
         }
     }
 }
@@ -366,7 +375,7 @@ pub fn transcripts(root: &Path) -> Vec<PathBuf> {
 pub fn replay(root: &Path, since: &str) -> Summary {
     let mut summary = Summary::default();
     for path in transcripts(root) {
-        replay_file(&path, since, &mut summary);
+        summary.replay_file(&path, since);
     }
     summary
 }
@@ -384,7 +393,8 @@ impl Summary {
         }
     }
 
-    /// The report: coverage, fires per week, the bar.
+    /// The report: the bar first, then the counts behind it, coverage and
+    /// fires per week, each line under 80 columns.
     pub fn render(&self) -> String {
         let days = self.days();
         let fires = self.fires.len();
@@ -392,7 +402,8 @@ impl Summary {
         let unseen = self.fires.iter().filter(|fire| fire.unseen_launch).count();
         let first: Vec<&Fire> = self.fires.iter().filter(|fire| fire.first).collect();
         let first_idle = first.iter().filter(|fire| !fire.wrong).count();
-        let continued = self.fires.iter().filter(|fire| fire.continued).count();
+        let continued: Vec<&Fire> = self.fires.iter().filter(|fire| fire.continued).collect();
+        let continued_wrong = continued.iter().filter(|fire| fire.wrong).count();
         let sessions: BTreeSet<&str> = self.fires.iter().map(|f| f.session.as_str()).collect();
         let mut weeks: BTreeMap<String, usize> = BTreeMap::new();
         for fire in &self.fires {
@@ -407,42 +418,57 @@ impl Summary {
         } else {
             wrong as f64 / fires as f64
         };
-        let mut out = format!(
-            "size replay: {} transcripts, {} Stops over {days} days ({} to {})\n",
-            self.files,
-            self.stops,
-            self.first_day.as_deref().unwrap_or("-"),
-            self.last_day.as_deref().unwrap_or("-"),
-        );
-        out.push_str(&format!(
-            "coverage: {} continued Stops judged; {} Stops had no context size; phase fact unavailable (size kind judged alone, command boundaries past the size not replayed); background rebuilt from launch and notification texts\n",
-            self.continued_stops, self.stops_without_size
-        ));
-        out.push_str(&format!(
-            "past {}k: {} Stops; held background {}, held relais {}\n",
-            SIZE_BOUNDARY / 1000,
-            self.stops_past_size,
-            self.held_background,
-            self.held_relais
-        ));
-        out.push_str(&format!(
-            "fires: {fires} in {} sessions, {per_day:.2} per day; {continued} on continued Stops; first fires {} ({} idle)\n",
-            sessions.len(),
-            first.len(),
-            first_idle
-        ));
+        let meets = per_day >= 1.0 && wrong_share <= 0.10;
+        let lines = [
+            format!(
+                "bar: {} ({per_day:.2} fires a day, {:.1}% held wrongly;",
+                if meets { "met" } else { "not met" },
+                wrong_share * 100.0
+            ),
+            "  needs at least 1 a day and at most 10%)".to_string(),
+            format!(
+                "replayed: {} transcripts, {} Stops, {days} days ({} to {})",
+                self.files,
+                self.stops,
+                self.first_day.as_deref().unwrap_or("-"),
+                self.last_day.as_deref().unwrap_or("-"),
+            ),
+            format!(
+                "unreadable: {} transcripts, {} Stop tails",
+                self.unreadable_files, self.unreadable_tails
+            ),
+            format!("no context size: {} Stops", self.stops_without_size),
+            format!(
+                "not replayed: command boundaries past {}k (no phase fact)",
+                SIZE_BOUNDARY / 1000
+            ),
+            "background: rebuilt from launch and notification texts".to_string(),
+            format!(
+                "past {}k: {} Stops; held: background {}, relais {}",
+                SIZE_BOUNDARY / 1000,
+                self.stops_past_size,
+                self.held_background,
+                self.held_relais
+            ),
+            format!("fires: {fires} in {} sessions", sessions.len()),
+            format!(
+                "  first in their session: {} ({first_idle} idle)",
+                first.len()
+            ),
+            format!("  held wrongly: {wrong} ({unseen} launched where the replay cannot see)"),
+            format!(
+                "  on continued Stops: {}, held wrongly {continued_wrong}",
+                continued.len()
+            ),
+        ];
+        let mut out = String::new();
+        for line in lines {
+            out.push_str(&line);
+            out.push('\n');
+        }
         for (week, count) in &weeks {
             out.push_str(&format!("  week of {week}: {count}\n"));
         }
-        out.push_str(&format!(
-            "held wrongly (a first notification, after the fire and before the next person prompt, of a task launched before it): {wrong} of {fires} ({:.1}%), {unseen} of them a launch the replay never saw\n",
-            wrong_share * 100.0
-        ));
-        let meets = per_day >= 1.0 && wrong_share <= 0.10;
-        out.push_str(&format!(
-            "bar (at least 1 fire per day, at most 10% held wrongly): {}\n",
-            if meets { "met" } else { "not met" }
-        ));
         out
     }
 }
@@ -491,8 +517,8 @@ mod tests {
     fn run(name: &str, entries: &[Value]) -> Summary {
         let path = write(name, entries);
         let mut summary = Summary::default();
-        replay_file(&path, "2026-01-01", &mut summary);
-        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        summary.replay_file(&path, "2026-01-01");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap()); // a scratch directory; a leftover is harmless
         summary
     }
 

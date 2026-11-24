@@ -11,15 +11,18 @@
   while a task launched outside the replayed transcript still ran. `deny`
   waits on the 7-day live evidence (follow-up t03). `plan-phases-open`
   stays silent for the rest of a turn the size Continue spoke in. A command
-  boundary past 400k is answered at the size stance. Once per turn and per
+  boundary past 400k is answered at the stricter of the rule's stance and
+  the size stance, so the size kind at `observe` never quiets it. Once per turn and per
   100k step, at most 3 per session. A `docs(plan): handoff …` commit is never
   a command boundary. To send the agent on:
   `git config --global greenbelay.clear-at-boundary.size-stance deny`.
 - `size-replay [--transcripts <dir>] [--since <day>]`: the size kind replayed
-  Stop by Stop over recorded transcripts, with its coverage and the bar.
-- `size-evidence [--days <n>]`: the size decisions, kept 30 days in their own
-  day files apart from the journal's rotation, each handoff request paired
-  with the clear-relay's `submit`; a missing relay log is counted apart.
+  Stop by Stop over recorded transcripts; the first line says whether the
+  bar is met, then the coverage behind it.
+- `size-evidence [--days <n>] [--relay-dir <dir>]`: the size decisions, kept
+  30 days in their own day files apart from the journal's rotation, each
+  handoff request paired with the clear-relay's `submit`; only an unreadable
+  relay log counts as missing evidence.
 - The corpus case `8145b6c0-1794667260` (a teardown at 518k held on a dirty
   chezmoi checkout) now expects a fire: the size kind drops the
   clean-repository test.

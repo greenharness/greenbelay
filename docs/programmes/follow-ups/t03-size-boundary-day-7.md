@@ -21,7 +21,11 @@ graduate it to `deny`?
 
 - `greenbelay size-evidence --days 7`: the size fires by outcome, the
   handoff requests, how many a clear-relay `submit` answered, how many were
-  unheeded, and how many have no relay log (missing evidence, counted apart).
+  unheeded (a session with no relay log included: the relay logs only once
+  it arms), and how many are missing evidence (the relay directory or a log
+  could not be read). Check the `relay logs read from` line names the
+  plugin's `stateDir`. The report is read by a person; nothing parses it, so
+  it has no `--json` until something does.
 - Heeded: of the `size fired` journal rows still in the journal, how many
   turns ended with `safe to /clear`.
 - Rerun `~/.local/state/sess-audit/tokscan/size400.py`: the share of Opus

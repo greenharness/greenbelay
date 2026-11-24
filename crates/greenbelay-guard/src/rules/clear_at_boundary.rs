@@ -71,30 +71,32 @@ pub fn size_tokens() -> u64 {
     crate::gitconfig::integer_at_least_or(KEY_SIZE_TOKENS, SIZE_TOKENS_FLOOR, SIZE_TOKENS_DEFAULT)
 }
 
-/// What the size stance is resolved from.
+/// What the size stance is resolved from, each key already parsed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SizeStanceInputs<'a> {
+pub struct SizeStanceInputs {
     /// `$GREENBELAY_OFF` set or `greenbelay.enabled=false`.
     pub off: bool,
     /// The session is in this rule's shadow arm.
     pub shadow: bool,
+    /// `greenbelay.stance`, the floor every rule reads, when set.
+    pub global_stance: Option<Stance>,
     /// `greenbelay.clear-at-boundary.stance`, when set.
-    pub rule_stance: Option<&'a str>,
+    pub rule_stance: Option<Stance>,
     /// `greenbelay.clear-at-boundary.size-stance`, when set.
-    pub size_stance: Option<&'a str>,
+    pub size_stance: Option<Stance>,
 }
 
-/// The size kind's stance: `size-stance` (default [`SIZE_STANCE_DEFAULT`]), forced to
-/// `observe` by the kill switches, the shadow arm or an explicit rule stance
-/// of `observe`, and capped by the rule's ceiling. The rule's compiled
-/// `advise` does not lower it.
+/// The size kind's stance: `size-stance` (default [`SIZE_STANCE_DEFAULT`]),
+/// forced to `observe` by the kill switches, the shadow arm, or an explicit
+/// `observe` in the global or the rule's own stance key, and capped by the
+/// rule's ceiling. The rule's compiled `advise` does not lower it.
 pub fn size_stance_of(inputs: SizeStanceInputs) -> Stance {
-    if inputs.off || inputs.shadow || inputs.rule_stance == Some("observe") {
+    let quieted = [inputs.global_stance, inputs.rule_stance].contains(&Some(Stance::Observe));
+    if inputs.off || inputs.shadow || quieted {
         return Stance::Observe;
     }
     inputs
         .size_stance
-        .and_then(Stance::parse)
         .unwrap_or(SIZE_STANCE_DEFAULT)
         .min(RULE.max_stance)
 }
@@ -108,15 +110,15 @@ pub fn size_stance() -> Stance {
     if off {
         return Stance::Observe;
     }
-    let set = |key: &str| Some(config::enumerated_or(key, ALLOWED, "")).filter(|v| !v.is_empty());
-    let rule_key = crate::stance::key_for(&RULE);
-    let rule_stance = set(&rule_key);
-    let size_stance = set(KEY_SIZE_STANCE);
+    // An unset key reads as "", which parses to `None`; a bad value is
+    // reported by `enumerated_or` and also reads as unset.
+    let configured = |key: &str| Stance::parse(config::enumerated_or(key, ALLOWED, ""));
     let stance = size_stance_of(SizeStanceInputs {
         off,
         shadow: false,
-        rule_stance,
-        size_stance,
+        global_stance: configured(crate::stance::KEY_STANCE),
+        rule_stance: configured(&crate::stance::key_for(&RULE)),
+        size_stance: configured(KEY_SIZE_STANCE),
     });
     if stance != Stance::Observe && crate::shadow::drops(RULE.id, RULE.irreversible) {
         return Stance::Observe;
@@ -128,10 +130,11 @@ pub fn size_stance() -> Stance {
 mod tests {
     use super::*;
 
-    fn inputs() -> SizeStanceInputs<'static> {
+    fn inputs() -> SizeStanceInputs {
         SizeStanceInputs {
             off: false,
             shadow: false,
+            global_stance: None,
             rule_stance: None,
             size_stance: None,
         }
@@ -146,8 +149,8 @@ mod tests {
     fn the_compiled_advise_does_not_lower_the_size_stance() {
         assert_eq!(RULE.default_stance, Stance::Advise);
         let advise = SizeStanceInputs {
-            rule_stance: Some("advise"),
-            size_stance: Some("deny"),
+            rule_stance: Some(Stance::Advise),
+            size_stance: Some(Stance::Deny),
             ..inputs()
         };
         assert_eq!(size_stance_of(advise), Stance::Deny);
@@ -165,8 +168,13 @@ mod tests {
                 ..inputs()
             },
             SizeStanceInputs {
-                rule_stance: Some("observe"),
-                size_stance: Some("deny"),
+                rule_stance: Some(Stance::Observe),
+                size_stance: Some(Stance::Deny),
+                ..inputs()
+            },
+            SizeStanceInputs {
+                global_stance: Some(Stance::Observe),
+                size_stance: Some(Stance::Deny),
                 ..inputs()
             },
         ] {
@@ -176,16 +184,12 @@ mod tests {
 
     #[test]
     fn the_size_stance_key_sets_the_stance() {
-        for (value, stance) in [
-            ("observe", Stance::Observe),
-            ("advise", Stance::Advise),
-            ("deny", Stance::Deny),
-        ] {
+        for setting in [Stance::Observe, Stance::Advise, Stance::Deny] {
             let set = SizeStanceInputs {
-                size_stance: Some(value),
+                size_stance: Some(setting),
                 ..inputs()
             };
-            assert_eq!(size_stance_of(set), stance);
+            assert_eq!(size_stance_of(set), setting);
         }
     }
 }

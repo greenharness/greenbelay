@@ -1748,11 +1748,11 @@ pub(crate) struct State {
     pub(crate) size_steps_fired: u32,
     /// The size fires counted against [`MAX_SIZE_FIRES`].
     pub(crate) size_fires: u32,
-    /// The uuid of the tail's last entry at the turn's size Continue, empty
-    /// when none: that turn lasts while the entry is in the tail with no
+    /// The uuid of the tail's last entry at the turn's size Continue, `None`
+    /// when there was none: that turn lasts while the entry is in the tail with no
     /// person prompt after it ([`size_turn_active`]). A uuid, not the
     /// prompt's, because a long turn's prompt can lie past the tail cap.
-    pub(crate) size_anchor: String,
+    pub(crate) size_anchor: Option<String>,
 }
 
 pub(crate) fn parse_pending(pending_json: &Value) -> Option<Pending> {
@@ -1792,7 +1792,11 @@ fn parse_state(text: &str) -> Option<State> {
                 .as_u64()
                 .and_then(|count| u32::try_from(count).ok())
                 .unwrap_or(0),
-            size_anchor: state_json["size_anchor"].as_str().unwrap_or("").to_string(),
+            // An older file wrote `""` for none.
+            size_anchor: state_json["size_anchor"]
+                .as_str()
+                .filter(|anchor| !anchor.is_empty())
+                .map(str::to_string),
         });
     }
     let (head, key) = text.split_once('\n')?;
@@ -1896,12 +1900,13 @@ pub(crate) fn size_turn_active(entries: &[Value], anchor: &str) -> bool {
 /// then, so the handoff Stop ends the turn. Reads only the state file and the
 /// tail, never git.
 pub fn size_fire_active(stop: &Stop) -> bool {
-    let Some(State { size_anchor, .. }) = read_state(&stop.session) else {
+    let Some(State {
+        size_anchor: Some(size_anchor),
+        ..
+    }) = read_state(&stop.session)
+    else {
         return false;
     };
-    if size_anchor.is_empty() {
-        return false;
-    }
     let Some(transcript) = stop.transcript.as_deref() else {
         return false;
     };
@@ -2013,7 +2018,9 @@ pub fn on_stop(
     let anchor = prior.size_anchor.clone();
     let continued = stop.stop_hook_active;
     let Ok(tail) = read_tail_until(transcript, TAIL_FIRST_CHUNK, TAIL_CAP, |entries| {
-        let anchored = anchor.is_empty() || position_of(entries, &anchor).is_some();
+        let anchored = anchor
+            .as_deref()
+            .is_none_or(|anchor| position_of(entries, anchor).is_some());
         if continued {
             // Only the size kind judges a continued turn: no turn window.
             context_size(entries).is_some() && anchored
@@ -2160,7 +2167,7 @@ fn judge_boundary(
     } else {
         u64::MAX
     };
-    let verdict = decide(
+    let mut verdict = decide(
         &view,
         &tail.entries,
         prior,
@@ -2170,7 +2177,14 @@ fn judge_boundary(
         |state| write_state(&stop.session, state).is_ok(),
     );
     if let Some(evidence) = &verdict.evidence {
-        crate::size_evidence::append(&stop.session, evidence);
+        if let Err(error) = crate::size_evidence::append(&stop.session, evidence) {
+            // The evidence is a record: a lost line is journalled, so a
+            // missing request reads as unwritten, and the decision stands.
+            verdict.records.push((
+                "watched".to_string(),
+                format!("size-evidence-unwritable {:?}", error.kind()),
+            ));
+        }
     }
     if let Some(stance) = verdict.stance {
         let repo = view.cwd.as_deref().and_then(Path::file_name).map_or_else(
@@ -2417,9 +2431,11 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
         entries: &[Value],
         mut state: State,
         (size, tokens, stance): (u64, u64, Stance),
-    ) -> (Option<Decision>, Option<&'static str>) {
-        if !state.size_anchor.is_empty() && size_turn_active(entries, &state.size_anchor) {
-            return (None, None);
+    ) -> (Option<Decision>, Option<SizeOutcome>) {
+        if let Some(anchor) = &state.size_anchor {
+            if size_turn_active(entries, anchor) {
+                return (None, None);
+            }
         }
         let step = size_step(size, tokens);
         if step <= state.size_steps_fired {
@@ -2427,27 +2443,26 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
         }
         if view.background_busy {
             self.record("watched", "size held background");
-            return (None, Some("held background"));
+            return (None, Some(SizeOutcome::HeldBackground));
         }
         if relais_flight(entries).in_flight() {
             self.record("watched", "size held relais");
-            return (None, Some("held relais"));
+            return (None, Some(SizeOutcome::HeldRelais));
         }
         state.size_steps_fired = step;
         if state.size_fires >= MAX_SIZE_FIRES {
             let _saved = self.save(&state);
             self.record("watched", "size cap");
-            return (None, Some("cap"));
+            return (None, Some(SizeOutcome::Cap));
         }
-        let anchor = entries
-            .last()
-            .and_then(|entry| entry["uuid"].as_str())
-            .unwrap_or("");
         state.size_fires += u32::from(stance != Stance::Observe);
         state.size_anchor = if stance == Stance::Deny {
-            anchor.to_string()
+            entries
+                .last()
+                .and_then(|entry| entry["uuid"].as_str())
+                .map(str::to_string)
         } else {
-            String::new()
+            None
         };
         if !self.save(&state) {
             return (None, None);
@@ -2461,7 +2476,7 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
         match stance {
             Stance::Observe => {
                 self.record("watched", &format!("{what} (observe)"));
-                (None, Some("observed"))
+                (None, Some(SizeOutcome::Observed))
             }
             Stance::Advise => {
                 self.record("advised", &what);
@@ -2472,7 +2487,7 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
                     Some(Decision::UserNote(decision::phrase(
                         RULE.id, &fact, &remedy,
                     ))),
-                    Some("advised"),
+                    Some(SizeOutcome::Advised),
                 )
             }
             Stance::Deny => {
@@ -2482,7 +2497,7 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
                     Some(Decision::Continue(decision::phrase(
                         RULE.id, &fact, &remedy,
                     ))),
-                    Some("requested"),
+                    Some(SizeOutcome::Requested),
                 )
             }
         }
@@ -2505,17 +2520,19 @@ fn size_handoff_remedy(k: u64) -> String {
     )
 }
 
+use crate::size_evidence::{Kind as SizeKind, Outcome as SizeOutcome};
+
 /// The judgement, free of I/O. `fact` gives the plan's state and is called
 /// only once the context is past [`SIZE`]; `repos` checks the repositories a
 /// boundary touched; `persist` writes the state and says whether it held.
 /// Every failure is silence.
 ///
 /// The stances are the command kind's, the size boundary and the size
-/// stance. Past the boundary the
-/// whole Stop is judged at the size stance: a command boundary first, as
-/// before (decision 7b), then, when none answered, the size kind, which also
-/// judges a `Working` Stop and a Stop of a continued turn. Below it the
-/// judgement is the command kind's alone.
+/// stance. Past the boundary a command boundary is judged first (decision
+/// 7b), at the stricter of the two stances, so a size kind still at
+/// `observe` never quiets it; when none answered, the size kind, at its own
+/// stance, which also judges a `Working` Stop and a Stop of a continued
+/// turn. Below it the judgement is the command kind's alone.
 pub(crate) fn decide(
     view: &StopView,
     entries: &[Value],
@@ -2551,13 +2568,13 @@ pub(crate) fn decide(
         .and_then(|entry| entry["uuid"].as_str())
         .unwrap_or("")
         .to_string();
-    let evidence = |kind: &'static str, stance: Stance, outcome: &str| {
+    let evidence = |kind: SizeKind, stance: Stance, outcome: SizeOutcome| {
         Some(crate::size_evidence::Evidence {
             stop_uuid: stop_uuid.clone(),
             size,
             kind,
-            stance: stance.as_str(),
-            outcome: outcome.to_string(),
+            stance,
+            outcome,
         })
     };
     // A continued turn: only the size kind, and no git for the phase fact.
@@ -2569,9 +2586,14 @@ pub(crate) fn decide(
     if fact == PhaseFact::Working && !past {
         return silent;
     }
-    let stance = if past { size_stance() } else { stance() };
+    let size_stance = if past { size_stance() } else { Stance::Observe };
     let mut state = prior;
     if fact != PhaseFact::Working {
+        let stance = if past {
+            stance().max(size_stance)
+        } else {
+            stance()
+        };
         let decision = ledger.judge(view, entries, state.clone(), (fact, stance, size), repos);
         if let Some(decision) = decision {
             let mut evidence_row = None;
@@ -2581,15 +2603,10 @@ pub(crate) fn decide(
                 let mut after = ledger.saved.clone().unwrap_or(state);
                 after.size_steps_fired = after.size_steps_fired.max(size_step(size, size_tokens));
                 if stance == Stance::Deny {
-                    after.size_anchor.clone_from(&stop_uuid);
+                    after.size_anchor = Some(stop_uuid.clone()).filter(|uuid| !uuid.is_empty());
                 }
                 let _saved = ledger.save(&after);
-                let outcome = match stance {
-                    Stance::Deny => "requested",
-                    Stance::Advise => "advised",
-                    Stance::Observe => "observed",
-                };
-                evidence_row = evidence("command", stance, outcome);
+                evidence_row = evidence(SizeKind::Command, stance, SizeOutcome::of_fire(stance));
             }
             return Verdict {
                 decision,
@@ -2610,8 +2627,9 @@ pub(crate) fn decide(
             state = saved;
         }
     }
+    let stance = size_stance;
     let (decision, outcome) = ledger.judge_size(view, entries, state, (size, size_tokens, stance));
-    let evidence = outcome.and_then(|outcome| evidence("size", stance, outcome));
+    let evidence = outcome.and_then(|outcome| evidence(SizeKind::Size, stance, outcome));
     if ledger.records.is_empty() && decision.is_none() {
         return silent;
     }
@@ -2681,7 +2699,7 @@ struct StateFixture {
     #[serde(default)]
     size_fires: u32,
     #[serde(default)]
-    size_anchor: String,
+    size_anchor: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -3475,7 +3493,7 @@ mod tests {
             }),
             size_steps_fired: 2,
             size_fires: 1,
-            size_anchor: "a".into(),
+            size_anchor: Some("a".into()),
         };
         assert_eq!(parse_state(&render_state(&state)), Some(state));
         // A file written before the size kind reads no size step.
@@ -3485,9 +3503,9 @@ mod tests {
             (
                 before.size_steps_fired,
                 before.size_fires,
-                before.size_anchor.as_str()
+                before.size_anchor.as_deref()
             ),
-            (0, 0, "")
+            (0, 0, None)
         );
     }
 
@@ -4686,14 +4704,14 @@ mod size_kind_tests {
             (
                 saved.size_steps_fired,
                 saved.size_fires,
-                saved.size_anchor.as_str()
+                saved.size_anchor.as_deref()
             ),
-            (1, 1, "e1")
+            (1, 1, Some("e1"))
         );
         let evidence = out.verdict.evidence.expect("evidence");
         assert_eq!(
-            (evidence.kind, evidence.outcome.as_str(), evidence.size),
-            ("size", "requested", 450_000)
+            (evidence.kind, evidence.outcome, evidence.size),
+            (SizeKind::Size, SizeOutcome::Requested, 450_000)
         );
     }
 
@@ -4715,7 +4733,7 @@ mod size_kind_tests {
         assert!(out.saved.is_none());
         assert_eq!(
             out.verdict.evidence.map(|e| e.outcome),
-            Some("held background".to_string())
+            Some(SizeOutcome::HeldBackground)
         );
     }
 
@@ -4877,13 +4895,13 @@ mod size_kind_tests {
         assert!(has_row(&out.verdict, "denied", "worktree remove"));
         let saved = out.saved.expect("saved");
         assert_eq!(
-            (saved.size_steps_fired, saved.size_anchor.as_str()),
-            (1, "b1")
+            (saved.size_steps_fired, saved.size_anchor.as_deref()),
+            (1, Some("b1"))
         );
         let evidence = out.verdict.evidence.expect("evidence");
         assert_eq!(
-            (evidence.kind, evidence.outcome.as_str()),
-            ("command", "requested")
+            (evidence.kind, evidence.outcome),
+            (SizeKind::Command, SizeOutcome::Requested)
         );
         let below = run(
             &view(),
@@ -4942,9 +4960,9 @@ mod size_kind_tests {
             (
                 saved.size_steps_fired,
                 saved.size_fires,
-                saved.size_anchor.as_str()
+                saved.size_anchor.as_deref()
             ),
-            (1, 0, "")
+            (1, 0, None)
         );
     }
 

@@ -16,7 +16,7 @@
 | `push-preview` | `advise` | a push that would publish interface changes no approved localhost preview covers, unless the plan the person approved declares the evidence is enough ([preview approval](preview.md)) |
 | `plan-review-panel` | `deny` | a plan presented at `ExitPlanMode` before its expert review panel ran ([the review panel](plan-review.md)) |
 | `plan-names-no-paths` | `advise` (max advise) | a plan presented at `ExitPlanMode` whose `## Phases` name no file in backticks, so its panel was seated from every area of its repositories instead of the file types it touches; the advice names each phase that names no file ([the review panel](plan-review.md)) |
-| `clear-at-boundary` | `advise` (max deny) | a turn ending at a boundary (a worktree removed, a `sweep.py --apply`, a plan commit) with nothing in flight and the main chain's context past 200k tokens; `deny` sends a `Stop` continuation asking for the handoff and one line starting with the marker `safe to /clear`, `advise` sends a note to the person naming the reply that asks for the handoff line, except at a lone plan commit, where `plan-phases-open` carries the plan on, `observe` journals only; a boundary under background work, relais in flight or an unclean repository is kept as pending and advised at the first idle `Stop` after it; at most 3 advices per session, then silence journalled `watched cap`. Its size kind (ADR-0083): past `size-tokens` (400k) a `Stop` with nothing in flight hands off mid-phase at the size stance (`size-stance`, default `observe` until live evidence graduates it), at any phase fact and in a continued turn, held only by background work or relais in flight; a command boundary past 400k is answered at the size stance too; once per turn and per 100k step, at most 3 per session, journalled `size fired <N>k`, `size held background\|relais`, `size cap` |
+| `clear-at-boundary` | `advise` (max deny) | a turn ending at a boundary (a worktree removed, a `sweep.py --apply`, a plan commit) with nothing in flight and the main chain's context past 200k tokens; `deny` sends a `Stop` continuation asking for the handoff and one line starting with the marker `safe to /clear`, `advise` sends a note to the person naming the reply that asks for the handoff line, except at a lone plan commit, where `plan-phases-open` carries the plan on, `observe` journals only; a boundary under background work, relais in flight or an unclean repository is kept as pending and advised at the first idle `Stop` after it; at most 3 advices per session, then silence journalled `watched cap`. Its size kind (ADR-0083): past `size-tokens` (400k) a `Stop` with nothing in flight hands off mid-phase at the size stance (`size-stance`, default `observe` until live evidence graduates it), at any phase fact and in a continued turn, held only by background work or relais in flight; a command boundary past 400k is answered at the stricter of the rule's stance and the size stance; once per turn and per 100k step, at most 3 per session, journalled `size fired <N>k`, `size held background\|relais`, `size cap` |
 | `plan-phases-open` | `deny` | a turn ending while the plan this branch carries still has an open phase that is not a `🧑 decision:` — the agent is sent on to it |
 | `implementation-review` | `advise` | a push of a branch that carries a plan, whose diff no independent reviewer has read for the tree being pushed ([the implementation review](implementation-review.md)) |
 | `push-browser-check` | `advise` (max deny) | a push of interface changes whose tree no `browser-check` agent of this session, or of one of its side transcripts, has looked at; a landed approved plan declaring `## Browser check` → `none: <reason>` passes ([the push browser check](push-browser-check.md)) |
@@ -145,14 +145,19 @@ starts `mid-phase at <N>k`, commit it alone as `docs(plan): handoff <phase>`
 the rest of the turn, at any phase. At `advise` the person gets a note; at
 `observe` it journals only. It fires once per turn, again only at each further
 100k, at most 3 times per session. Past the size, a command boundary is
-answered at the size stance as well; below it the command kind is unchanged.
+answered at the stricter of the rule's stance and the size stance, so a size
+kind at `observe` never quiets it; below it the command kind is unchanged.
 `$GREENBELAY_OFF`, `greenbelay.enabled=false`, the shadow arm and an explicit
-`greenbelay.clear-at-boundary.stance observe` force it to `observe`; the
+`observe` in `greenbelay.stance` or `greenbelay.clear-at-boundary.stance`
+force the size stance to `observe`; the
 rule's compiled `advise` does not lower it. Each size decision is also kept,
 for 30 days and apart from the journal's rotation, in
 `size-evidence/<day>.jsonl` beside the journal; `greenbelay size-evidence
-[--days <n>]` pairs each handoff request with the clear-relay's `submit`
-line and counts a missing relay log apart from an unheeded request.
+[--days <n>] [--relay-dir <dir>]` pairs each handoff request with the
+clear-relay's `submit` line within 2 h: a session with no relay log is an
+unheeded request (the relay writes one only once it arms), and only an
+unreadable relay directory or log counts as missing evidence. A day file
+that cannot be written is journalled `watched size-evidence-unwritable`.
 Rollback: `git config --global greenbelay.clear-at-boundary.size-stance observe`.
 
 The `clear-relay` Claude Code plugin, which `install --write` places, acts on

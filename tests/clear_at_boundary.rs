@@ -1111,6 +1111,24 @@ fn a_command_boundary_past_the_size_is_answered_at_the_size_stance() {
 }
 
 #[test]
+fn a_size_kind_at_observe_never_quiets_a_command_boundary_past_the_size() {
+    // The size kind ships at `observe`; a command boundary past 400k is
+    // judged at the stricter of the two stances, so the rule's own `deny`
+    // still sends the handoff, and the compiled `advise` still notes it.
+    let world = World::new("size-command-observe");
+    world.config("[greenbelay \"clear-at-boundary\"]\n\tstance = deny\n");
+    let big = world.transcript("big.jsonl", &turn(TEARDOWN, 450_000));
+    let reply = world.stop("s1", &big, json!({}));
+    assert!(reply.blocks(), "{}", reply.stdout);
+    let unset = World::new("size-command-unset");
+    unset.config("");
+    let big = unset.transcript("big.jsonl", &turn(TEARDOWN, 450_000));
+    let reply = unset.stop("s1", &big, json!({}));
+    assert!(!reply.blocks(), "{}", reply.stdout);
+    assert!(reply.note().is_some(), "{}", reply.stdout);
+}
+
+#[test]
 fn the_size_stance_key_observes() {
     let world = working_world("size-observe");
     world.config("[greenbelay \"clear-at-boundary\"]\n\tsize-stance = observe\n");

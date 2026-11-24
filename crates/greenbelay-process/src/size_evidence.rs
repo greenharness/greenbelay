@@ -4,18 +4,27 @@
 //! that answered it, so each size decision is also one line in a day file
 //! under `<data dir>/size-evidence/`, kept [`KEEP_DAYS`] days.
 //!
-//! [`report`] reads the day files back, drops repeated lines, and pairs each
-//! request with the clear-relay's `submit` line of the same session after
-//! it. A session whose clear-relay log is missing is counted apart from one
-//! whose log shows no submission: missing evidence is not an unheeded
-//! request.
+//! [`report_in`] reads the day files back, drops repeated lines, and pairs
+//! each request with the clear-relay's `submit` line of the same session
+//! after it. The relay writes a session's log only once it arms, so a session
+//! with no log in a readable relay directory is an unheeded request; only an
+//! unreadable relay directory, or a log that cannot be read, is missing
+//! evidence.
+//!
+//! The clear-relay log is the plugin's (`plugin/clear-relay/hooks/register.ts`,
+//! `log`): `<stateDir>/clear-relay/<Claude session id>.jsonl`, one JSON object
+//! per line, read here for `event` (`"submit"`) and `time` (ms since the
+//! epoch). [`relay_dir`] is the plugin's default `stateDir`, the one `greenbelay
+//! install` writes; `size-evidence --relay-dir` reads another.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use greenbelay_guard::civil;
 use greenbelay_guard::journal;
+use greenbelay_guard::rules::Stance;
 use serde_json::Value;
 
 /// How long a day file is kept: past the 14 days the follow-up needs.
@@ -24,6 +33,63 @@ pub const KEEP_DAYS: u64 = 30;
 /// How long after a request a clear-relay submission still answers it.
 pub const ANSWER_WINDOW: Duration = Duration::from_secs(2 * 3600);
 
+/// Which judgement a decision came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// The size kind itself.
+    Size,
+    /// A command boundary past the size.
+    Command,
+}
+
+impl Kind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Kind::Size => "size",
+            Kind::Command => "command",
+        }
+    }
+}
+
+/// What one decision past the size did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    /// A Continue asked for the handoff.
+    Requested,
+    /// A note told the person.
+    Advised,
+    /// Journalled only.
+    Observed,
+    /// A background task was running.
+    HeldBackground,
+    /// A relais run was in flight.
+    HeldRelais,
+    /// The session's fires were spent.
+    Cap,
+}
+
+impl Outcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Outcome::Requested => "requested",
+            Outcome::Advised => "advised",
+            Outcome::Observed => "observed",
+            Outcome::HeldBackground => "held background",
+            Outcome::HeldRelais => "held relais",
+            Outcome::Cap => "cap",
+        }
+    }
+
+    /// What a fire at `stance` did.
+    pub fn of_fire(stance: Stance) -> Outcome {
+        match stance {
+            Stance::Deny => Outcome::Requested,
+            Stance::Advise => Outcome::Advised,
+            Stance::Observe => Outcome::Observed,
+        }
+    }
+}
+
 /// One size decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Evidence {
@@ -31,21 +97,28 @@ pub struct Evidence {
     pub stop_uuid: String,
     /// The context size, in tokens.
     pub size: u64,
-    /// `size`, or `command` for a command boundary answered at the size
-    /// stance.
-    pub kind: &'static str,
+    pub kind: Kind,
     /// The effective stance.
-    pub stance: &'static str,
-    /// `requested` (a Continue), `advised`, `observed`, `held background`,
-    /// `held relais` or `cap`.
-    pub outcome: String,
+    pub stance: Stance,
+    pub outcome: Outcome,
 }
 
-fn dir() -> Option<PathBuf> {
+/// The live evidence directory, `<data dir>/size-evidence`.
+pub fn dir() -> Option<PathBuf> {
     Some(journal::dir()?.join("size-evidence"))
 }
 
-fn now_ms() -> u64 {
+/// The clear-relay plugin's log directory at its default `stateDir`.
+pub fn relay_dir() -> Option<PathBuf> {
+    Some(
+        greenbelay_guard::settings::state_root()?
+            .join(greenbelay_guard::names::DATA_DIR)
+            .join("clear-relay"),
+    )
+}
+
+/// The time now, in ms since the epoch.
+pub fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| {
@@ -66,18 +139,18 @@ pub(crate) fn line(session: &str, evidence: &Evidence, time_ms: u64) -> String {
         "stop_uuid": evidence.stop_uuid,
         "time_ms": time_ms,
         "size": evidence.size,
-        "kind": evidence.kind,
-        "stance": evidence.stance,
-        "outcome": evidence.outcome,
+        "kind": evidence.kind.as_str(),
+        "stance": evidence.stance.as_str(),
+        "outcome": evidence.outcome.as_str(),
     })
     .to_string()
 }
 
-/// Append one decision to today's file. A write that fails is lost: the
+/// Append one decision to today's file. The caller journals a failure; the
 /// evidence is a record and never changes the decision.
-pub fn append(session: &str, evidence: &Evidence) {
-    let Some(dir) = dir() else { return };
-    let _ = append_in(&dir, session, evidence, now_ms()); // a lost line is a lost record, not a failure of the Stop
+pub fn append(session: &str, evidence: &Evidence) -> std::io::Result<()> {
+    let dir = dir().ok_or_else(|| std::io::Error::other("no data directory"))?;
+    append_in(&dir, session, evidence, now_ms())
 }
 
 pub(crate) fn append_in(
@@ -144,18 +217,27 @@ fn parse_row(text: &str) -> Option<Row> {
 
 /// The rows of every day file in `dir` at or after `since_ms`, oldest first,
 /// with repeats dropped: a Stop judged twice (the same session, Stop uuid,
-/// kind and outcome) counts once, at its first time.
-pub fn rows_in(dir: &Path, since_ms: u64) -> Vec<Row> {
+/// kind and outcome) counts once, at its first time. The second member
+/// counts the day files that could not be read.
+pub fn rows_in(dir: &Path, since_ms: u64) -> (Vec<Row>, usize) {
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
+        return (Vec::new(), 0);
     };
-    let mut rows: Vec<Row> = entries
-        .flatten()
-        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "jsonl"))
-        .filter_map(|entry| std::fs::read_to_string(entry.path()).ok())
-        .flat_map(|text| text.lines().filter_map(parse_row).collect::<Vec<_>>())
-        .filter(|row| row.time_ms >= since_ms)
-        .collect();
+    let mut unreadable = 0;
+    let mut rows: Vec<Row> = Vec::new();
+    for entry in entries.flatten() {
+        if entry.path().extension().is_none_or(|ext| ext != "jsonl") {
+            continue;
+        }
+        match std::fs::read_to_string(entry.path()) {
+            Ok(text) => rows.extend(
+                text.lines()
+                    .filter_map(parse_row)
+                    .filter(|row| row.time_ms >= since_ms),
+            ),
+            Err(_) => unreadable += 1,
+        }
+    }
     rows.sort_by(|a, b| a.time_ms.cmp(&b.time_ms).then_with(|| a.cmp(b)));
     let mut seen = BTreeSet::new();
     rows.retain(|row| {
@@ -166,7 +248,7 @@ pub fn rows_in(dir: &Path, since_ms: u64) -> Vec<Row> {
             row.outcome.clone(),
         ))
     });
-    rows
+    (rows, unreadable)
 }
 
 /// What happened after one handoff request.
@@ -175,16 +257,21 @@ pub enum Answer {
     /// A clear-relay `submit` of the same session followed within
     /// [`ANSWER_WINDOW`].
     Submitted,
-    /// The session's clear-relay log exists and shows no such submission.
+    /// No such submission: the session's log shows none, or the relay never
+    /// armed and wrote no log.
     Unheeded,
-    /// No clear-relay log for the session: the evidence is missing.
+    /// The relay directory or the session's log cannot be read.
     Missing,
 }
 
-/// The times, in ms, of the `submit` lines of a clear-relay log; `None` when
-/// the log cannot be read.
+/// The times, in ms, of the `submit` lines of a clear-relay log: empty when
+/// there is no log, `None` when it cannot be read.
 fn submit_times(log: &Path) -> Option<Vec<u64>> {
-    let text = std::fs::read_to_string(log).ok()?;
+    let text = match std::fs::read_to_string(log) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(Vec::new()),
+        Err(_) => return None,
+    };
     Some(
         text.lines()
             .filter_map(|line| serde_json::from_str::<Value>(line).ok())
@@ -196,6 +283,9 @@ fn submit_times(log: &Path) -> Option<Vec<u64>> {
 
 /// The answer to a request, from the clear-relay logs in `relay_dir`.
 pub fn answer(relay_dir: &Path, request: &Row) -> Answer {
+    if !relay_dir.is_dir() {
+        return Answer::Missing;
+    }
     let Some(times) = submit_times(&relay_dir.join(format!("{}.jsonl", request.session))) else {
         return Answer::Missing;
     };
@@ -213,30 +303,32 @@ pub fn answer(relay_dir: &Path, request: &Row) -> Answer {
 /// The counts the follow-up reads.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Report {
-    /// Size fires and command boundaries past the size, by outcome.
-    pub by_outcome: Vec<(String, String, usize)>,
+    /// The relay directory the requests were paired against.
+    pub relay_dir: PathBuf,
+    /// Size fires and command boundaries past the size, by kind and outcome.
+    pub by_outcome: BTreeMap<(String, String), usize>,
     pub requests: usize,
     pub submitted: usize,
     pub unheeded: usize,
     pub missing: usize,
+    /// Day files that could not be read.
+    pub unreadable_days: usize,
 }
 
 /// The report over `evidence_dir` and `relay_dir` since `since_ms`.
 pub fn report_in(evidence_dir: &Path, relay_dir: &Path, since_ms: u64) -> Report {
-    let rows = rows_in(evidence_dir, since_ms);
-    let mut report = Report::default();
+    let (rows, unreadable_days) = rows_in(evidence_dir, since_ms);
+    let mut report = Report {
+        relay_dir: relay_dir.to_path_buf(),
+        unreadable_days,
+        ..Report::default()
+    };
     for row in &rows {
-        match report
+        *report
             .by_outcome
-            .iter_mut()
-            .find(|(kind, outcome, _)| *kind == row.kind && *outcome == row.outcome)
-        {
-            Some((_, _, count)) => *count += 1,
-            None => report
-                .by_outcome
-                .push((row.kind.clone(), row.outcome.clone(), 1)),
-        }
-        if row.outcome == "requested" {
+            .entry((row.kind.clone(), row.outcome.clone()))
+            .or_default() += 1;
+        if row.outcome == Outcome::Requested.as_str() {
             report.requests += 1;
             match answer(relay_dir, row) {
                 Answer::Submitted => report.submitted += 1,
@@ -245,29 +337,30 @@ pub fn report_in(evidence_dir: &Path, relay_dir: &Path, since_ms: u64) -> Report
             }
         }
     }
-    report.by_outcome.sort();
     report
 }
 
-/// [`report_in`] over the live directories, for the last `days` days.
-pub fn report(days: u64) -> Option<Report> {
-    let evidence_dir = dir()?;
-    let relay_dir = greenbelay_guard::settings::state_root()?.join("clear-relay");
-    let since = now_ms().saturating_sub(days * 86_400_000);
-    Some(report_in(&evidence_dir, &relay_dir, since))
+/// The start of a window of `days` days ending at `now_ms`.
+pub fn since(now_ms: u64, days: u64) -> u64 {
+    now_ms.saturating_sub(days.saturating_mul(86_400_000))
 }
 
 impl Report {
     /// The report as the follow-up reads it.
     pub fn render(&self, days: u64) -> String {
-        let mut out = format!("size evidence, last {days} days\n");
-        for (kind, outcome, count) in &self.by_outcome {
-            out.push_str(&format!("  {kind} {outcome}: {count}\n"));
-        }
-        out.push_str(&format!(
+        let mut out = format!(
             "requests {}: submitted {}, unheeded {}, evidence missing {}\n",
             self.requests, self.submitted, self.unheeded, self.missing
-        ));
+        );
+        let _ = writeln!(out, "window: last {days} days"); // writing to a String cannot fail
+        for ((kind, outcome), count) in &self.by_outcome {
+            let _ = writeln!(out, "  {kind} {outcome}: {count}"); // writing to a String cannot fail
+        }
+        let _ = writeln!(out, "relay logs read from {}", self.relay_dir.display()); // writing to a String cannot fail
+        if self.unreadable_days > 0 {
+            let _ = writeln!(out, "unreadable day files: {}", self.unreadable_days);
+            // writing to a String cannot fail
+        }
         out
     }
 }
@@ -290,38 +383,38 @@ mod tests {
         Evidence {
             stop_uuid: uuid.to_string(),
             size: 450_000,
-            kind: "size",
-            stance: "deny",
-            outcome: "requested".to_string(),
+            kind: Kind::Size,
+            stance: Stance::Deny,
+            outcome: Outcome::Requested,
         }
     }
 
     const DAY: u64 = 86_400_000;
 
     #[test]
-    fn requests_pair_with_submissions_and_missing_logs_count_apart() {
+    fn requests_pair_with_submissions_and_a_session_without_a_log_is_unheeded() {
         let root = scratch("pair");
         let evidence = root.join("evidence");
         let relay = root.join("relay");
         std::fs::create_dir_all(&relay).unwrap();
-        let t = 20 * DAY;
-        append_in(&evidence, "s-heeded", &requested("u1"), t).unwrap();
+        let request_ms = 20 * DAY;
+        append_in(&evidence, "s-heeded", &requested("u1"), request_ms).unwrap();
         // The same Stop judged twice is one request.
-        append_in(&evidence, "s-heeded", &requested("u1"), t + 5).unwrap();
-        append_in(&evidence, "s-unheeded", &requested("u2"), t).unwrap();
-        append_in(&evidence, "s-nolog", &requested("u3"), t).unwrap();
+        append_in(&evidence, "s-heeded", &requested("u1"), request_ms + 5).unwrap();
+        append_in(&evidence, "s-unheeded", &requested("u2"), request_ms).unwrap();
+        append_in(&evidence, "s-nolog", &requested("u3"), request_ms).unwrap();
         // A request the next day lands in its own file.
-        append_in(&evidence, "s-late", &requested("u4"), t + DAY).unwrap();
+        append_in(&evidence, "s-late", &requested("u4"), request_ms + DAY).unwrap();
         std::fs::write(
             relay.join("s-heeded.jsonl"),
-            format!("{{\"event\":\"arm\",\"time\":{t}}}\n{{\"event\":\"submit\",\"named\":null,\"time\":{}}}\n", t + 60_000),
+            format!("{{\"event\":\"arm\",\"time\":{request_ms}}}\n{{\"event\":\"submit\",\"named\":null,\"time\":{}}}\n", request_ms + 60_000),
         )
         .unwrap();
         std::fs::write(
             relay.join("s-unheeded.jsonl"),
             format!(
                 "{{\"event\":\"submit\",\"named\":null,\"time\":{}}}\n",
-                t - 1
+                request_ms - 1
             ),
         )
         .unwrap();
@@ -329,25 +422,62 @@ mod tests {
         let report = report_in(&evidence, &relay, 0);
         assert_eq!(report.requests, 4);
         assert_eq!(report.submitted, 1);
-        assert_eq!(report.unheeded, 2);
-        assert_eq!(report.missing, 1);
+        // s-unheeded's submit came before the request; s-nolog never armed.
+        assert_eq!(report.unheeded, 3);
+        assert_eq!(report.missing, 0);
         assert_eq!(std::fs::read_dir(&evidence).unwrap().count(), 2);
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&root); // a scratch directory; a leftover is harmless
+    }
+
+    #[test]
+    fn an_unreadable_relay_directory_is_missing_evidence() {
+        let root = scratch("norelay");
+        let evidence = root.join("evidence");
+        append_in(&evidence, "s", &requested("u"), 3 * DAY).unwrap();
+        let report = report_in(&evidence, &root.join("absent"), 0);
+        assert_eq!(
+            (report.requests, report.missing, report.unheeded),
+            (1, 1, 0)
+        );
+        let _ = std::fs::remove_dir_all(&root); // a scratch directory; a leftover is harmless
     }
 
     #[test]
     fn the_report_survives_a_journal_rotation() {
-        // The day files live outside the journal: rotating the journal
-        // (moving its files away) leaves every request readable.
-        let root = scratch("rotation");
-        let evidence = root.join("size-evidence");
-        let journal_file = root.join("journal.tsv");
-        std::fs::write(&journal_file, "header\nrow\n").unwrap();
-        append_in(&evidence, "s", &requested("u"), 3 * DAY).unwrap();
-        std::fs::rename(&journal_file, root.join("journal.tsv.1")).unwrap();
-        let report = report_in(&evidence, &root.join("relay"), 0);
-        assert_eq!((report.requests, report.missing), (1, 1));
-        let _ = std::fs::remove_dir_all(&root);
+        // The day files sit under the data directory beside the journal. A
+        // journal past its cap rotates on the next record; every request
+        // must still read back and still pair with its submission.
+        let data = scratch("rotation");
+        let evidence = data.join("size-evidence");
+        let relay = data.join("relay");
+        std::fs::create_dir_all(&relay).unwrap();
+        let request_ms = 3 * DAY;
+        append_in(&evidence, "s", &requested("u"), request_ms).unwrap();
+        std::fs::write(
+            relay.join("s.jsonl"),
+            format!(
+                "{{\"event\":\"submit\",\"named\":null,\"time\":{}}}\n",
+                request_ms + 1
+            ),
+        )
+        .unwrap();
+        std::fs::write(data.join("journal.log"), vec![b'x'; 300 * 1024]).unwrap();
+        journal::record_in(
+            &data,
+            &journal::Entry {
+                rule: "clear-at-boundary",
+                stance: "deny",
+                outcome: "watched",
+                session: "s",
+                repo: "-",
+                mode: "-",
+                excerpt: "rotation probe",
+            },
+        );
+        assert!(data.join("journal.log.1").exists(), "the journal rotated");
+        let report = report_in(&evidence, &relay, 0);
+        assert_eq!((report.requests, report.submitted), (1, 1));
+        let _ = std::fs::remove_dir_all(&data); // a scratch directory; a leftover is harmless
     }
 
     #[test]
@@ -355,9 +485,9 @@ mod tests {
         let root = scratch("window");
         append_in(&root, "s", &requested("old"), DAY).unwrap();
         append_in(&root, "s", &requested("new"), 9 * DAY).unwrap();
-        let rows = rows_in(&root, 2 * DAY);
-        assert_eq!(rows.len(), 1);
+        let (rows, unreadable) = rows_in(&root, 2 * DAY);
+        assert_eq!((rows.len(), unreadable), (1, 0));
         assert_eq!(rows[0].stop_uuid, "new");
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&root); // a scratch directory; a leftover is harmless
     }
 }
