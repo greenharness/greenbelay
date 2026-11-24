@@ -1,7 +1,7 @@
 +++
 type = "task"
 mode = "afk"
-status = "open"
+status = "closed"
 blocked_by = []
 repos = ["greenbelay"]
 +++
@@ -106,3 +106,33 @@ three sessions in a scratch repo: the third session, started by the
 clear-relay, is told the owner's name without asking; the board shows one
 owner with name, ref and UUID; a push is attributed to its session in the
 journal; and no session is credited for work another landed.
+
+## Resolution
+
+Built in one plan, `docs/plans/2026-11-24-one-owner-per-worktree.md`, on
+branch `prog/follow-ups/t02-three-sessions-one-owner`, released as
+greenbelay 6.13.0 (6.11.0 and 6.12.0 shipped meanwhile).
+
+- **One namespace.** greenbelay reads Claude Code's
+  `~/.claude/sessions/<pid>.json` best-effort at `peerProtocol` 1 (a recorded
+  exception to ADR-0039: the host's store, no published query), which joins
+  the UUID to the SendMessage name and the pid. The short ref is not in it;
+  a session reports it with `greenbelay owner claim --ref`.
+- **A claim is a record.** Owner records per worktree (the first write) and
+  per ticket (an observed `relais programme claim`, or `owner claim
+  --ticket`), race-free, with a state: live, cleared (same process, new
+  session: the name outlives the `/clear`, as f107 showed), gone, stale,
+  unknown. The board and `work-overlap` show the owner's name, ref and UUID.
+- **The resume is checked.** The `UserPromptSubmit` hook, not the relay
+  plugin, checks a `resume <repo> <programme> <ticket>` prompt: a live owner
+  is named with SendMessage before any work, a cleared one is not credited,
+  and the owner's own process after a `/clear` takes the ticket over.
+- **Credit has a source.** `pushes.log` records the session of each push or
+  land that left the machine; `greenbelay who-pushed <branch|sha>` answers.
+
+The acceptance is `tests/three_sessions_one_owner.rs`, the f107 replay in a
+scratch repository: both orders of A′ and C, the board's one owner, B
+credited and C not. Limits (README, `docs/owners.md`): a ticket worked on a
+feature branch with no ticket record is not found; only `resume …` prompts
+are checked; a squash merge is not mapped back to its branch. Follow-ups:
+[t06](t06-one-owner-day-7.md), and the relais and decisions inbox items.
