@@ -315,6 +315,25 @@ under `NO_COLOR` and when stdout is not a TTY (reuse guard/ui.rs). The board's i
   neither the pid nor the old UUID. A takeover there would also hand
   ownership to a cleared session that never resumes the work, which is
   f107's credit error.
+- 2026-11-24 (implementation): deviations from the body above.
+  - The release is 6.13.0: 6.11.0 and 6.12.0 shipped on main meanwhile.
+  - The push log has its own reader in `owner/pushes.rs`, sharing
+    `push_landed`'s refused-flag list, instead of `push_landed::read_push`.
+    `read_push` takes `git -C <dir> push` for three operands and refuses it,
+    while this plan's own check names that shape; teaching it `-C` would
+    point the `push-landed` assertion, whose directory ignores `-C`, at the
+    wrong repository.
+  - The crediting runs in the guard crate (`owner::pushes::credit_after_bash`),
+    not in `src/hook.rs`: the binary cannot reach `pub(crate)` items.
+  - The owner CLI and `who-pushed` live in `owner/cli.rs`, exempted from the
+    one-stdout-writer test like the other command-line verbs. Done messages
+    (`claimed`, `released`, `already free`) go to stderr; stdout carries only
+    `show` and `who-pushed` data.
+  - Board lines wrap at 78 columns between chunks that never split, so the
+    example `owner: … / <uuid>, claimed 2h ago` takes two lines when it
+    does not fit; `/` travels with the UUID.
+  - A record that does not read holds its slot (exit 3, journal `unknown`);
+    only `--steal` replaces it. The plan had left that case open.
 
 ## Verification
 
@@ -360,12 +379,42 @@ Each check lists what is driven, then what should be observed.
   - After A′'s first write, the board shows exactly one owner, A′, with
     name and UUID; A's ref is dropped on takeover and shown again only after A′ runs `owner claim --ref`.
   - `who-pushed` names B and not C.
-- Live, after the release: the session running the check runs
+
+## Verification results
+
+Observed on the final tree before the push (input → expected → actual):
+
+- Phase 1: `host_session` and `owner` unit tests → five states, no `*.key`
+  opened, one winner per race, a SIGKILLed lock holder freed → all pass.
+- Phase 2: `tests/owner_hooks.rs`, `tests/owner_cli.rs` → record created on
+  A's write; B's write told `alpha-name` and SendMessage; B's claim exits 3
+  → all pass.
+- Phase 3: board unit tests (fixture registry, mode-000 `*.key`) → each
+  state line, every line ≤ 78 columns, the JSON `owner` field → pass. Live:
+  `greenbelay board --repo greenbelay` → this worktree's `owner:` line with
+  this session's registry name `single-owner-worktree-ticket` and UUID
+  `a8957506-…`, then `live, message it`, nothing on stderr; `board | head -1`
+  → exit 0.
+- Phase 4: the prompt tests (live other, successor under a stale registry,
+  cleared other, fallback, other repository, disagreement, no caller,
+  driver prompt) → pass. Live: a resume of this ticket as this session →
+  silent, journalled `work-owner advise own`.
+- Phase 5: real `git push` output into a scratch remote, `git -C`, an
+  unchanged repeat, a detached land waited twice → two lines for B, none
+  for C, one for the launcher → pass. Live: `who-pushed` of this branch →
+  `no pushes recorded for …`, exit 1.
+- Phase 6: `tests/three_sessions_one_owner.rs` → both orders, the no-ticket
+  limit, one owner on the board with the ref dropped and re-reported, B
+  credited and not C → 3 of 3 pass.
+- Workspace: clippy `-D warnings` and `cargo test --workspace` → clean; the
+  commit gate's 28 checks → passed.
+
+## After release (7 days)
+
+- Live, right after the install: the session running the check runs
   `greenbelay owner show --json` and the board. Both should name its own
   registry `name` and current `sessionId`, with `"state":"live"` and
   `live, message it`.
-
-## After release (7 days)
 
 - Count `work-owner` journal entries by state, and resume prompts that
   matched a record against those that stayed silent.
