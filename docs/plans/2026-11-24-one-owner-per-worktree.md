@@ -90,6 +90,8 @@ since, or gone.
   `implement <plan> in <repo>` is a follow-up.
 - Mapping a squash-merge commit on `main` back to its branch. That needs
   the forge. `who-pushed` answers by branch or pushed sha.
+- Windows (added 2026-11-24, at the implementation review): the caller
+  walk is unix-only, so the owner feature makes no claim there.
 - Refusing anything. Every new output is advice (`Advise` / context),
   journalled under the new `work-owner` rule at stance `advise`.
 
