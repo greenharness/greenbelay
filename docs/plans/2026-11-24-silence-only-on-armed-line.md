@@ -327,4 +327,11 @@ actual.
     an upper bound: the rule speaks only at a boundary past 200k with
     nothing in flight.
 
+## Implementation review
+
+- implementation-review: approve after the Delta (round 1 had 1 blocking, the overlong `units` split, and 2 low; all fixed). 123k tokens, 125 s.
+- backend approve, lang:typescript approve, tui approve: every round-1 finding fixed; tui's "UTF-16 units" in the toast is kept, deliberate: one reason text for the hook and the relay. 280k tokens, 240 s.
+- lang:rust approve: `LastLine` replaces `marker` beside `near_miss`, and the limit is read from the constant. Kept, deliberate: the `Next(String)` allocation (one per Stop) and the `near-miss:<id>` suffix (the plan pins it). 73k tokens, 53 s.
+- unix approve in round 1, carried by ancestry. Next: Phase 4, the decisions records, after this PR merges, which waits for t22's Resolution (due 2026-11-25).
+
 <!-- panel: repos=greenbelay,decisions reviewers=backend,lang:rust,lang:typescript,tui,unix,codex body-sha=2afacd0e818a -->
