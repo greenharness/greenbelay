@@ -216,7 +216,7 @@ counts UTF-16 units (`encode_utf16().count()`), because the relay measures
   `crates/greenbelay-process/src/clear_boundary_export.rs`,
   `crates/greenbelay-guard/tests/corpus/clear-at-boundary.cases`,
   `crates/greenbelay-guard/tests/corpus/stop/clear-at-boundary/*.json`
-- [ ] Phase 3 — the relay classifies, logs and toasts near-misses:
+- [x] Phase 3 — the relay classifies, logs and toasts near-misses:
   `plugin/clear-relay/hooks/register.ts`,
   `plugin/clear-relay/hooks/register.test.ts`, `CHANGELOG.md`
 - [ ] Phase 4 — the programme records (decisions, at the ticket's close):

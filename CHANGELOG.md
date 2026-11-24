@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- `clear-at-boundary` stays silent only when the turn's last line is one the
+  clear-relay plugin acts on: `safe to /clear; next: `<prompt>`` or
+  `safe to /clear; parked: <line>`. It used to be silent whenever the text
+  held `safe to /clear` anywhere, so a bare prompt without backticks
+  (session 836b5b71) left the session neither cleared nor told. A
+  near-miss line is judged: at `deny` the Continue names what is wrong and
+  asks to fix only that line, the advise notes name it, and the journal row
+  ends `near-miss:<id>` (`missing-backticks`, `empty-prompt`,
+  `inner-backtick`, `overlong`, `empty-parked`, `not-next-or-parked`). The
+  hook and the relay read one grammar, pinned by
+  `plugin/clear-relay/hooks/handoff-cases.ts` (session-boundaries t30).
+- clear-relay logs a `near-miss` entry (its reason and line) and shows a
+  toast saying why it did not arm, instead of staying silent. It no longer
+  arms on a prompt holding a backtick (follow-ups f70). The relay runs from the
+  plugin cache. After installing this release, run `greenbelay install
+  --write`, then any `claude plugin` commands `greenbelay doctor` prints.
+  Until then an old relay still arms a prompt with a backtick in it, while
+  the hook asks for the line to be fixed.
 - The `Stop` deadline (2 s) can be overridden with `GREENBELAY_STOP_DEADLINE_MS`
   for tests. The `Stop` tests pin it long, so a jammed host no longer turns
   the cap test's fourth boundary into `watched timeout` (follow-ups t05).
