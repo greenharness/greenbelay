@@ -13,9 +13,18 @@ Reached when no ticket here is open.
 
 ## Decisions so far
 
-- Nothing yet.
+- [t05](t05-clear-at-boundary-cap-test-flake.md): the cap test's clock was
+  the Stop's 2-second deadline; the Stop tests pin
+  `GREENBELAY_STOP_DEADLINE_MS` long, and the shipped deadline stays 2 s.
 
 ## Handoff
+
+2026-11-24, t05 closed: the cap test flaked because the Stop's 2-second
+deadline ran out on a jammed host (`watched timeout`, no cap row). The
+Stop tests now pin `GREENBELAY_STOP_DEADLINE_MS` at 60 s.
+
+- Next: t02, ready now. t01 is due 2026-11-28; t03 and t04 are due
+  2026-11-30.
 
 2026-11-24: the size-kind PR (ADR-0083) filed
 [t03](t03-size-boundary-day-7.md), the live check that decides whether

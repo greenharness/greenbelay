@@ -1710,6 +1710,16 @@ pub fn boundary_key(command: &str, heads: &[(PathBuf, String)]) -> String {
 /// The one deadline every git child of a Stop shares.
 pub const DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// The Stop's deadline: [`DEADLINE`], or `GREENBELAY_STOP_DEADLINE_MS` for
+/// tests, which pin it long so a jammed host does not turn a judged boundary
+/// into `watched timeout`.
+pub fn deadline() -> std::time::Duration {
+    std::env::var(greenbelay_guard::env_var!("STOP_DEADLINE_MS"))
+        .ok()
+        .and_then(|millis| millis.parse::<u64>().ok())
+        .map_or(DEADLINE, std::time::Duration::from_millis)
+}
+
 fn state_dir() -> Option<PathBuf> {
     Some(journal::dir()?.join("clear-at-boundary"))
 }

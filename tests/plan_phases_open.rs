@@ -121,6 +121,8 @@ impl World {
             .env("GIT_CONFIG_GLOBAL", &self.global)
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env_remove("GREENBELAY_OFF")
+            // Long, so a jammed host cannot turn a Stop into a timeout.
+            .env("GREENBELAY_STOP_DEADLINE_MS", "60000")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
