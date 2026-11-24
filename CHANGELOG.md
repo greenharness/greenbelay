@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v6.12.0
+
+greenbelay 6.12.0 adds `greenbelay rollup`: weekly firings and rates per rule
+from the roll-up 6.10.0 started, with each rule's tool calls from the
+transcripts; `status` says how far back its counts reach (#325).
+
 - The `Stop` deadline (2 s) can be overridden with `GREENBELAY_STOP_DEADLINE_MS`
   for tests. The `Stop` tests pin it long, so a jammed host no longer turns
   the cap test's fourth boundary into `watched timeout` (follow-ups t05).
