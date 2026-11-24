@@ -447,7 +447,7 @@ pub fn fold_generation(generation: &Path, rollup: &Path) -> Result<Folded, FoldE
             elapsed.as_secs().saturating_add(SECONDS_PER_DAY)
         }); // a clock before the epoch drops nothing
     if current.fold_text(&text, ceiling) {
-        write_atomic(rollup, &current.render()).map_err(|e| FoldError::Io(io_why(&e)))?;
+        write_atomic(rollup, &current.render()).map_err(|err| FoldError::Io(io_why(&err)))?;
     }
     Ok(match current.dropped_future {
         0 => Folded::Counted,
@@ -622,7 +622,7 @@ pub fn freeze_calls(
         written.push(week);
     }
     if !written.is_empty() {
-        write_atomic(path, &current.render()).map_err(|e| FoldError::Io(io_why(&e)))?;
+        write_atomic(path, &current.render()).map_err(|err| FoldError::Io(io_why(&err)))?;
     }
     Ok(written)
 }
@@ -870,8 +870,12 @@ impl Report {
                 civil::iso(week.week)
             };
             for rule in &week.rules {
-                let calls = rule.calls.map_or("-".to_string(), |n| n.to_string());
-                let rate = rule.rate().map_or("-".to_string(), |r| format!("{r:.1}"));
+                let calls = rule
+                    .calls
+                    .map_or("-".to_string(), |count| count.to_string());
+                let rate = rule
+                    .rate()
+                    .map_or("-".to_string(), |rate| format!("{rate:.1}"));
                 out.push_str(&format!(
                     "{label:<22}{:<rule_width$}{:>8}{calls:>8}{rate:>10}\n",
                     rule.rule,
@@ -1081,12 +1085,22 @@ mod tests {
         assert_eq!(weeks.len(), 104);
     }
 
-    fn call_line(id: &str, tool: &str, day: &str, sidechain: bool) -> String {
+    fn transcript_line(id: &str, tool: &str, day: &str, is_sidechain: &str) -> String {
         format!(
             "{{\"timestamp\":\"{day}T10:00:00.000Z\",\"sessionId\":\"s\",\"cwd\":\"/p\",\
-             \"isSidechain\":{sidechain},\"message\":{{\"content\":[{{\"type\":\"tool_use\",\
+             \"isSidechain\":{is_sidechain},\"message\":{{\"content\":[{{\"type\":\"tool_use\",\
              \"id\":\"{id}\",\"name\":\"{tool}\",\"input\":{{}}}}]}}}}\n"
         )
+    }
+
+    /// A tool call in the main conversation's transcript.
+    fn call_line(id: &str, tool: &str, day: &str) -> String {
+        transcript_line(id, tool, day, "false")
+    }
+
+    /// A tool call in a subagent's transcript.
+    fn sidechain_call_line(id: &str, tool: &str, day: &str) -> String {
+        transcript_line(id, tool, day, "true")
     }
 
     fn transcript_roots(dir: &Path) -> crate::transcript::Roots {
@@ -1103,15 +1117,15 @@ mod tests {
         fs::create_dir_all(&sub).unwrap();
         fs::write(
             dir.join("projects/p/s.jsonl"),
-            call_line("t1", "Bash", "2023-11-14", false),
+            call_line("t1", "Bash", "2023-11-14"),
         )
         .unwrap();
         fs::write(
             sub.join("agent-a.jsonl"),
             format!(
                 "{}{}",
-                call_line("t2", "Bash", "2023-11-15", true),
-                call_line("t3", "Read", "2023-11-15", true)
+                sidechain_call_line("t2", "Bash", "2023-11-15"),
+                sidechain_call_line("t3", "Read", "2023-11-15")
             ),
         )
         .unwrap();
@@ -1130,7 +1144,7 @@ mod tests {
         let rollup = dir.join("rollup.log");
         fs::create_dir_all(dir.join("projects/p")).unwrap();
         let transcript = dir.join("projects/p/s.jsonl");
-        fs::write(&transcript, call_line("t1", "Bash", "2023-11-14", false)).unwrap();
+        fs::write(&transcript, call_line("t1", "Bash", "2023-11-14")).unwrap();
         let today = MONDAY_DAY + 8;
         let roots = transcript_roots(&dir);
 
@@ -1150,8 +1164,8 @@ mod tests {
             &transcript,
             format!(
                 "{}{}",
-                call_line("t1", "Bash", "2023-11-14", false),
-                call_line("t2", "Bash", "2023-11-15", false)
+                call_line("t1", "Bash", "2023-11-14"),
+                call_line("t2", "Bash", "2023-11-15")
             ),
         )
         .unwrap();
@@ -1212,10 +1226,10 @@ mod tests {
             );
         }
         let mut all = Calls::new();
-        if let Some(n) = calls {
+        if let Some(count) = calls {
             all.entry(MONDAY_DAY)
                 .or_default()
-                .insert("Bash".to_string(), n);
+                .insert("Bash".to_string(), count);
         }
         let known = [
             Known {
@@ -1280,7 +1294,7 @@ mod tests {
         let dir = scratch("unreadable-transcript");
         fs::create_dir_all(dir.join("projects/p")).unwrap();
         let locked = dir.join("projects/p/locked.jsonl");
-        fs::write(&locked, call_line("t1", "Bash", "2023-11-14", false)).unwrap();
+        fs::write(&locked, call_line("t1", "Bash", "2023-11-14")).unwrap();
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
         let scanned = crate::transcript::calls_by_week(&transcript_roots(&dir), None).unwrap();
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o600)).unwrap();
@@ -1295,7 +1309,7 @@ mod tests {
         let dir = scratch("mtime-floor");
         fs::create_dir_all(dir.join("projects/p")).unwrap();
         let old = dir.join("projects/p/old.jsonl");
-        fs::write(&old, call_line("t1", "Bash", "2023-11-14", false)).unwrap();
+        fs::write(&old, call_line("t1", "Bash", "2023-11-14")).unwrap();
         let long_ago = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
         fs::File::options()
             .write(true)

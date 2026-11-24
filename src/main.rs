@@ -3903,14 +3903,18 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
     while let Some(arg) = iter.next() {
         let text = arg.to_string_lossy().into_owned();
         let (name, inline) = match text.split_once('=') {
-            Some((name, value)) if name.starts_with("--") => (name, Some(value.to_string())),
+            Some((name, inline_value)) if name.starts_with("--") => {
+                (name, Some(inline_value.to_string()))
+            }
             _ => (text.as_str(), None),
         };
         match name {
             "-q" | "--quiet" => quiet = true,
             "--weeks" => {
-                let given =
-                    inline.or_else(|| iter.next().map(|v| v.to_string_lossy().into_owned()));
+                let given = inline.or_else(|| {
+                    iter.next()
+                        .map(|arg_value| arg_value.to_string_lossy().into_owned())
+                });
                 match given.as_deref().map(str::parse::<usize>) {
                     Some(Ok(count)) if (1..=rollup::WEEKS_KEPT as usize).contains(&count) => {
                         weeks = Some(count);
@@ -3930,10 +3934,16 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
             }
             "--json" => rest.push(arg.clone()),
             "--transcripts" => {
-                match inline.or_else(|| iter.next().map(|v| v.to_string_lossy().into_owned())) {
+                // The two-word form passes the path through untouched; only the
+                // `=` form has been through text.
+                let dir: Option<OsString> = match inline {
+                    Some(inline_value) => Some(OsString::from(inline_value)),
+                    None => iter.next().cloned(),
+                };
+                match dir {
                     Some(dir) if !dir.is_empty() => {
                         rest.push(OsString::from("--transcripts"));
-                        rest.push(OsString::from(dir));
+                        rest.push(dir);
                     }
                     _ => {
                         eprintln!("{BIN}: --transcripts needs a directory");
@@ -4018,7 +4028,7 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
                 .iter()
                 .copied()
                 .min()
-                .map_or(current, |w| w.min(current));
+                .map_or(current, |first_week| first_week.min(current));
             match transcript::calls_by_week(&roots, Some(first)) {
                 Ok(scanned) => {
                     if scanned.unreadable > 0 {
@@ -4036,19 +4046,19 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
                         .filter(|(week, _)| *week == current || freezable.contains(week))
                         .collect();
                 }
-                Err(e) => eprintln!("{BIN}: {}", e.explain()),
+                Err(err) => eprintln!("{BIN}: {}", err.explain()),
             }
         }
-        Err(e) => eprintln!(
+        Err(err) => eprintln!(
             "{BIN}: warning: {}; calls come from the frozen weeks only",
-            e.explain()
+            err.explain()
         ),
     }
     if freeze && !freezable.is_empty() {
-        if let Err(e) = rollup::freeze_calls(&rollup_path, &live, &freezable) {
+        if let Err(err) = rollup::freeze_calls(&rollup_path, &live, &freezable) {
             eprintln!(
                 "{BIN}: warning: calls of closed weeks not stored: {}",
-                e.why()
+                err.why()
             );
         }
     }
@@ -4063,8 +4073,8 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
     };
     use std::io::Write as _;
     match std::io::stdout().lock().write_all(text.as_bytes()) {
-        Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => {
-            eprintln!("{BIN}: cannot write the report: {e}");
+        Err(err) if err.kind() != std::io::ErrorKind::BrokenPipe => {
+            eprintln!("{BIN}: cannot write the report: {err}");
             ExitCode::FAILURE
         }
         _ => ExitCode::SUCCESS,
