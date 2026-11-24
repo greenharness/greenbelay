@@ -999,15 +999,15 @@ fn owner_text(seen: &SeenOwner, now_epoch: u64) -> String {
         SeenOwner::Held { owner, state } => {
             let claimed = ago(now_epoch.saturating_sub(owner.claimed_at));
             let holder = owner.holder();
-            let session = format!("{},", owner.identity.session);
+            // `/` travels with the UUID, so a break never leaves it dangling.
+            let session = format!("/ {},", owner.identity.session);
             let claimed = format!("claimed {claimed} ago");
             let mut out = wrapped_chunks(
                 6,
-                ["owner:"].into_iter().chain(holder.split(' ')).chain([
-                    "/",
-                    session.as_str(),
-                    claimed.as_str(),
-                ]),
+                ["owner:"]
+                    .into_iter()
+                    .chain(holder.split(' '))
+                    .chain([session.as_str(), claimed.as_str()]),
             );
             out.push_str(&wrapped(8, &state.describe()));
             out
@@ -1217,8 +1217,8 @@ mod tests {
         impl Drop for Fixture {
             fn drop(&mut self) {
                 let key = self.store.registry.join("99.key");
-                let _ = std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600));
-                let _ = std::fs::remove_dir_all(&self.root);
+                let _ = std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)); // scratch fixture: a failure only leaves a temp file
+                let _ = std::fs::remove_dir_all(&self.root); // scratch fixture: a failure only leaves a temp dir
             }
         }
 
@@ -1232,7 +1232,7 @@ mod tests {
         fn fixture(tag: &str) -> Fixture {
             let root =
                 std::env::temp_dir().join(format!("gb-board-owner-{}-{tag}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&root);
+            let _ = std::fs::remove_dir_all(&root); // a leftover of an earlier run; absent is the usual case
             let registry = root.join("sessions");
             std::fs::create_dir_all(&registry).unwrap();
             for tree in ["live", "cleared", "gone", "unknown", "unreadable", "free"] {

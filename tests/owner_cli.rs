@@ -93,13 +93,60 @@ fn a_second_claim_is_refused_with_the_holder_and_the_next_command() {
     let second = scene.owner(BETA_PID, &["claim"]);
     assert_eq!(second.status.code(), Some(3));
     let said = text(&second.stderr);
-    assert!(
-        said.contains("refused: alpha-name [417dc6] holds worktree, live. Message it: SendMessage to \"alpha-name\". To take over anyway: greenbelay owner claim --steal"),
-        "{said}"
-    );
+    for part in [
+        "refused: alpha-name [417dc6] holds worktree ",
+        ", live. Message it: SendMessage to \"alpha-name\". To take over anyway: greenbelay owner claim --steal",
+    ] {
+        assert!(said.contains(part), "{part}: {said}");
+    }
     assert_eq!(text(&second.stdout), "");
 
+    let ticket = scene.owner(ALPHA_PID, &["claim", "--ticket", "repo/follow-ups/t02"]);
+    assert_eq!(ticket.status.code(), Some(0), "{}", text(&ticket.stderr));
+    let refused = scene.owner(
+        BETA_PID,
+        &["claim", "--ticket", "repo/follow-ups/t02", "--steal"],
+    );
+    assert_eq!(refused.status.code(), Some(0), "{}", text(&refused.stderr));
+    assert!(text(&refused.stdout).is_empty(), "done is said on stderr");
+
     let stolen = scene.owner(BETA_PID, &["claim", "--steal"]);
+    assert_eq!(stolen.status.code(), Some(0), "{}", text(&stolen.stderr));
+}
+
+#[test]
+fn an_unreadable_record_holds_until_a_steal_and_a_gone_owner_is_free() {
+    let scene = Scene::new("unreadable");
+    let first = scene.owner(ALPHA_PID, &["claim", "--ticket", "repo/follow-ups/t09"]);
+    assert_eq!(first.status.code(), Some(0), "{}", text(&first.stderr));
+    let record = scene
+        .root
+        .join("config/greenbelay/owners/ticket/repo/follow-ups/t09.json");
+    std::fs::write(&record, "{\"v\":2}").unwrap();
+    // A holds the worktree, so only the ticket's unreadable record refuses.
+    let refused = scene.owner(ALPHA_PID, &["claim", "--ticket", "repo/follow-ups/t09"]);
+    assert_eq!(refused.status.code(), Some(3));
+    let said = text(&refused.stderr);
+    assert!(said.contains("does not read"), "{said}");
+    assert!(
+        said.contains("greenbelay owner claim --ticket repo/follow-ups/t09 --steal"),
+        "{said}"
+    );
+    assert_eq!(std::fs::read_to_string(&record).unwrap(), "{\"v\":2}");
+    let shown = scene.owner(
+        BETA_PID,
+        &["show", "--ticket", "repo/follow-ups/t09", "--json"],
+    );
+    let value: serde_json::Value = serde_json::from_str(&text(&shown.stdout)).unwrap();
+    assert_eq!(value["state"], "unknown");
+    assert!(
+        value["session"].is_null() && value.get("name").is_some(),
+        "{value}"
+    );
+    let stolen = scene.owner(
+        BETA_PID,
+        &["claim", "--ticket", "repo/follow-ups/t09", "--steal"],
+    );
     assert_eq!(stolen.status.code(), Some(0), "{}", text(&stolen.stderr));
 }
 
@@ -161,7 +208,7 @@ fn a_usage_error_exits_2_and_help_documents_the_codes() {
     let help = scene.owner(ALPHA_PID, &["--help"]);
     assert_eq!(help.status.code(), Some(0));
     let said = text(&help.stdout);
-    for part in ["exit status", "3  another live session"] {
+    for part in ["exit status", "3  another session holds it"] {
         assert!(said.contains(part), "{part}: {said}");
     }
 }

@@ -289,9 +289,20 @@ pub enum Contest {
 pub enum Outcome {
     Claimed,
     Refreshed,
-    TakenOver { from: Box<Identity> },
-    HeldBy { owner: Box<Owner>, state: State },
+    TakenOver {
+        from: Box<Identity>,
+    },
+    HeldBy {
+        owner: Box<Owner>,
+        state: State,
+    },
     LockBusy,
+    /// A record is there but does not read as one (another version, an
+    /// edit, a permission error): it holds the slot, and only a steal
+    /// replaces it.
+    Unreadable {
+        path: PathBuf,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -423,6 +434,11 @@ fn claim_at(
                 }
             }
             Record::Unreadable => {
+                if !matches!(contest, Contest::Steal) {
+                    return Ok(Outcome::Unreadable {
+                        path: record.to_path_buf(),
+                    });
+                }
                 replace(record, &fresh)?;
                 return Ok(Outcome::Claimed);
             }

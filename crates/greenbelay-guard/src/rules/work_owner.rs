@@ -153,10 +153,12 @@ pub enum ResumeOwner {
     /// Nothing to say; the word is the journal's.
     Silent(&'static str),
     /// This process held it before its `/clear`. `taken_over` when the ticket
-    /// record now names this session.
+    /// record now names this session; `failed` says why it does not when the
+    /// takeover was tried.
     Continued {
         old: String,
         taken_over: bool,
+        failed: Option<String>,
     },
     /// Another live session holds it.
     OwnedBy {
@@ -181,6 +183,9 @@ impl ResumeOwner {
             ResumeOwner::Continued {
                 taken_over: true, ..
             } => "taken-over",
+            ResumeOwner::Continued {
+                failed: Some(_), ..
+            } => "error",
             ResumeOwner::Continued { .. } => "continued",
             ResumeOwner::OwnedBy { .. } => "live",
             ResumeOwner::Cleared { .. } => "cleared",
@@ -271,8 +276,19 @@ pub fn resume_owner(
     }
     if record.identity.same_process(&me) {
         let old = record.identity.session.clone();
-        let taken_over = from_ticket && take_over(store, key, &record, me, now);
-        return ResumeOwner::Continued { old, taken_over };
+        let (taken_over, failed) = if from_ticket {
+            match take_over(store, key, &record, me, now) {
+                Ok(()) => (true, None),
+                Err(why) => (false, Some(why)),
+            }
+        } else {
+            (false, None)
+        };
+        return ResumeOwner::Continued {
+            old,
+            taken_over,
+            failed,
+        };
     }
     match state {
         State::Gone | State::Stale => ResumeOwner::Silent(state_word(&state)),
@@ -298,19 +314,34 @@ pub fn resume_owner(
     }
 }
 
-fn take_over(store: &Store, key: &TicketKey, record: &Owner, me: Identity, now: u64) -> bool {
+/// Take the ticket record over for this process's new session; the error
+/// says why it was not.
+fn take_over(
+    store: &Store,
+    key: &TicketKey,
+    record: &Owner,
+    me: Identity,
+    now: u64,
+) -> Result<(), String> {
     let Place::Ticket { map_dir } = &record.place else {
-        return false;
+        return Err("the record is not a ticket record".into());
     };
     let claim = Claim {
         repo_identity: record.repo_identity.clone(),
         branch: record.branch.clone(),
         identity: me,
     };
-    matches!(
-        owner::claim_ticket(store, key, map_dir, &claim, Contest::Respect, now),
-        Ok(Outcome::TakenOver { .. })
-    )
+    match owner::claim_ticket(store, key, map_dir, &claim, Contest::Respect, now) {
+        Ok(Outcome::TakenOver { .. } | Outcome::Claimed | Outcome::Refreshed) => Ok(()),
+        Ok(Outcome::LockBusy) => Err("its lock is busy".into()),
+        Ok(Outcome::HeldBy { owner, .. }) => {
+            Err(format!("{} took it meanwhile", owner.identity.session))
+        }
+        Ok(Outcome::Unreadable { path }) => {
+            Err(format!("its record {} does not read", path.display()))
+        }
+        Err(failure) => Err(failure.to_string()),
+    }
 }
 
 /// What the resume check says: the context for the model, and a note of at
@@ -323,6 +354,18 @@ pub fn resume_text(
     let ticket = key.ticket();
     match said {
         ResumeOwner::Silent(_) => None,
+        ResumeOwner::Continued {
+            old,
+            failed: Some(why),
+            ..
+        } => Some((
+            format!(
+                "you continue {ticket}, held by this process as {old} before /clear; its record still names {old} ({why}): run `{} owner claim --ticket {}` to take it",
+                crate::bin!(),
+                key.shown()
+            ),
+            None,
+        )),
         ResumeOwner::Continued { old, .. } => Some((
             format!("you continue {ticket}, held by this process as {old} before /clear"),
             None,
@@ -333,10 +376,13 @@ pub fn resume_text(
                 .as_ref()
                 .map(|path| format!("worktree {}, ", path.display()))
                 .unwrap_or_default();
-            let name = &owner.identity.name;
+            let message = match owner.identity.name.as_str() {
+                "" => "message it".to_owned(),
+                name => format!("message it with SendMessage to \"{name}\""),
+            };
             Some((
                 format!(
-                    "{ticket} is owned by {} / {} ({place}seen {seen} ago): message it with SendMessage to \"{name}\" before any work; take it over only when it releases it or the person says so.",
+                    "{ticket} is owned by {} / {} ({place}seen {seen} ago): {message} before any work; take it over only when it releases it or the person says so.",
                     owner.holder(),
                     owner.identity.session,
                 ),

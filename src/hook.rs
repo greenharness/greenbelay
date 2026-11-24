@@ -398,8 +398,20 @@ fn claim_worktree(
             return;
         }
     }
+    // No registered session above the hook (a hook run outside Claude
+    // Code): said and walked for once per session and repository, not on
+    // every write.
+    let no_caller = format!("work-owner-no-caller {}", place.repo_identity.display());
+    if crate::lsp::was_told(session, &no_caller) {
+        return;
+    }
     let Some(identity) = caller_identity(session) else {
-        held("unknown");
+        if matches!(
+            crate::lsp::told(session, &no_caller),
+            crate::lsp::Told::First
+        ) {
+            held("unknown");
+        }
         return;
     };
     let claim = owner::Claim {
@@ -419,6 +431,13 @@ fn claim_worktree(
         Ok(Outcome::Refreshed) => {}
         Ok(Outcome::LockBusy) => held("lock-busy"),
         Ok(Outcome::HeldBy { state, .. }) => held(rules::work_owner::state_word(&state)),
+        Ok(Outcome::Unreadable { path }) => journal_owner(
+            "unknown",
+            session,
+            mode,
+            cwd,
+            &format!("unreadable record {}", path.display()),
+        ),
         Err(failure) => journal_owner("error", session, mode, cwd, &failure.to_string()),
     }
 }
@@ -563,6 +582,12 @@ fn observe_programme_claim(bash: &Bash) {
             Ok(Outcome::TakenOver { .. }) => record("taken-over", &shown),
             Ok(Outcome::Refreshed) => {}
             Ok(Outcome::LockBusy) => record("lock-busy", &shown),
+            Ok(Outcome::Unreadable { path }) => {
+                record(
+                    "unknown",
+                    &format!("{shown}: unreadable record {}", path.display()),
+                );
+            }
             Ok(Outcome::HeldBy { state, .. }) => {
                 record(rules::work_owner::state_word(&state), &shown);
             }
@@ -619,7 +644,8 @@ fn work_overlap(
         op,
         &format!("{} in {}", freshest.session, freshest.worktree.display()),
     );
-    let owners = rules::work_overlap::peer_owners(&live, epoch_seconds(now));
+    let store = greenbelay_guard::owner::Store::ambient();
+    let owners = rules::work_overlap::peer_owners(store.as_ref(), &live, epoch_seconds(now));
     match stance {
         Stance::Observe => Decision::Silent,
         // The ceiling is advise (`max_stance`); a deny stance still advises.

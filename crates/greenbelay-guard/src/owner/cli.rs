@@ -32,7 +32,11 @@ exit status:
   0  claimed, released (or already free), or an owner shown
   1  no owner recorded (show), or any other failure
   2  usage error
-  3  another live session holds it (claim, release); claim --steal takes over
+  3  another session holds it, live or of unknown liveness, or its record
+     does not read (claim, release); claim --steal takes over
+
+claim takes the worktree, then the ticket: an exit 3 on the ticket leaves
+the worktree claimed. What was done is said on stderr.
 "
 );
 
@@ -193,21 +197,45 @@ fn describe_holder(owner: &Owner) -> String {
     owner.holder()
 }
 
-fn refuse(target: &Target, owner: &Owner, state: &State) -> u8 {
-    let how = match state {
-        State::Live => "live",
-        State::Unknown => "unknown (host registry unreadable)",
-        State::Cleared { .. } => "cleared",
-        State::Gone => "gone",
-        State::Stale => "stale",
-    };
-    let name = &owner.identity.name;
-    eprintln!(
-            "refused: {} holds {}, {how}. Message it: SendMessage to \"{name}\". To take over anyway: {} owner claim --steal",
-            describe_holder(owner),
-            target.word(),
+/// The `owner claim` that takes `target`, with `extra` flags.
+fn claim_command(target: &Target, extra: &str) -> String {
+    match target {
+        Target::Worktree(_) => format!("{} owner claim{extra}", crate::bin!()),
+        Target::Ticket(_) => format!(
+            "{} owner claim --ticket {}{extra}",
             crate::bin!(),
-        );
+            target.shown()
+        ),
+    }
+}
+
+fn refuse(target: &Target, owner: &Owner, state: &State) -> u8 {
+    let holder = describe_holder(owner);
+    let place = format!("{} {}", target.word(), target.shown());
+    match state {
+        State::Live | State::Unknown => {
+            let how = if matches!(state, State::Live) {
+                "live"
+            } else {
+                "liveness unknown (host registry unreadable)"
+            };
+            let message = match owner.identity.name.as_str() {
+                "" => String::new(),
+                name => format!(" Message it: SendMessage to \"{name}\"."),
+            };
+            eprintln!(
+                "refused: {holder} holds {place}, {how}.{message} To take over anyway: {}",
+                claim_command(target, " --steal"),
+            );
+        }
+        State::Cleared { .. } | State::Gone | State::Stale => {
+            eprintln!(
+                "refused: you do not hold {place}; its owner {holder} is {}, so it is free: {}",
+                state.word(),
+                claim_command(target, ""),
+            );
+        }
+    }
     EXIT_HELD
 }
 
@@ -274,10 +302,20 @@ fn claim(options: Options) -> u8 {
         };
         match outcome {
             Ok(Outcome::Claimed | Outcome::Refreshed) => {
-                println!("claimed {} {}", target.word(), target.shown());
+                eprintln!("claimed {} {}", target.word(), target.shown());
+            }
+            Ok(Outcome::Unreadable { path }) => {
+                eprintln!(
+                    "refused: the record for {} {} does not read ({}); to replace it: {}",
+                    target.word(),
+                    target.shown(),
+                    path.display(),
+                    claim_command(target, " --steal"),
+                );
+                return EXIT_HELD;
             }
             Ok(Outcome::TakenOver { from }) => {
-                println!(
+                eprintln!(
                     "claimed {} {} (took over from {})",
                     target.word(),
                     target.shown(),
@@ -318,10 +356,10 @@ fn release_command(options: Options) -> u8 {
         };
         match release(&store, &slot, &host.session, now) {
             Ok(Released::Released) => {
-                println!("released {} {}", target.word(), target.shown());
+                eprintln!("released {} {}", target.word(), target.shown());
             }
             Ok(Released::AlreadyFree) => {
-                println!("already free: {} {}", target.word(), target.shown());
+                eprintln!("already free: {} {}", target.word(), target.shown());
             }
             Ok(Released::HeldBy { owner, state }) => return refuse(target, &owner, &state),
             Ok(Released::LockBusy) => {
@@ -375,7 +413,19 @@ fn show(options: Options) -> u8 {
             if options.json {
                 println!(
                     "{}",
-                    json!({"place": target.word(), "target": target.shown(), "state": "unknown"})
+                    json!({
+                        "place": target.word(),
+                        "target": target.shown(),
+                        "session": null,
+                        "name": null,
+                        "ref": null,
+                        "pid": null,
+                        "started_at": null,
+                        "branch": null,
+                        "claimed_at": null,
+                        "refreshed_at": null,
+                        "state": "unknown",
+                    })
                 );
             } else {
                 println!("owner: unknown\nstate: unknown: the record is unreadable");
@@ -488,6 +538,9 @@ pub fn who_pushed(args: &[String]) -> u8 {
         })
         .collect();
     if found.is_empty() {
+        if as_json {
+            println!("[]");
+        }
         eprintln!("no pushes recorded for {target} (the log keeps about the last 2 MB of pushes)");
         return EXIT_FAILED;
     }

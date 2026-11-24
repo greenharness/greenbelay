@@ -131,19 +131,24 @@ pub enum Standing {
 /// The owners of `peers`, in order: the name from the host registry (or the
 /// owner record when the registry no longer knows the peer's UUID), and the
 /// standing of the peer's worktree record when it names the peer.
-pub fn peer_owners(peers: &[Peer], now_seconds: u64) -> Vec<PeerOwner> {
-    let store = crate::owner::Store::ambient();
+/// The owner each peer is, read from `store` and the registry it names;
+/// `None` (no store) leaves every peer unnamed.
+pub fn peer_owners(
+    store: Option<&crate::owner::Store>,
+    peers: &[Peer],
+    now_seconds: u64,
+) -> Vec<PeerOwner> {
     peers
         .iter()
         .map(|peer| {
+            let Some(store) = store else {
+                return PeerOwner::default();
+            };
             let mut owner = PeerOwner {
-                name: crate::host_session::lookup(&peer.session)
+                name: crate::host_session::lookup_in(&store.registry, &peer.session)
                     .map(|host| host.name)
                     .filter(|name| !name.is_empty()),
                 ..PeerOwner::default()
-            };
-            let Some(store) = &store else {
-                return owner;
             };
             let crate::owner::Reading::Held {
                 owner: record,

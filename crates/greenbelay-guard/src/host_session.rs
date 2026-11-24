@@ -14,7 +14,9 @@ use std::time::{Duration, Instant};
 const REGISTRY_DIR_VAR: &str = "GREENBELAY_HOST_SESSIONS_DIR";
 const SUPPORTED_PEER_PROTOCOL: u64 = 1;
 /// Replaces the process the caller walk starts from. For tests: the hook and
-/// the command run as children of the test, which has no registry file.
+/// the command run as children of the test, which has no registry file. Read
+/// only beside `GREENBELAY_HOST_SESSIONS_DIR`, the test sandbox's registry,
+/// so a command cannot pass for another process against the real one.
 const CALLER_PID_VAR: &str = crate::env_var!("TEST_CALLER_PID");
 /// The caller is at most this many processes up, the starting one included.
 const CALLER_LEVELS: u32 = 4;
@@ -71,8 +73,10 @@ pub fn lookup_pid(pid: u32) -> Option<HostSession> {
 /// The session this process runs under: the nearest ancestor with a registry
 /// file, at most four levels up.
 pub fn caller() -> Option<HostSession> {
+    let sandboxed = std::env::var_os(REGISTRY_DIR_VAR).is_some_and(|dir| !dir.is_empty());
     let start = match std::env::var(CALLER_PID_VAR)
         .ok()
+        .filter(|_| sandboxed)
         .and_then(|text| text.trim().parse::<u32>().ok())
     {
         Some(pid) => pid,

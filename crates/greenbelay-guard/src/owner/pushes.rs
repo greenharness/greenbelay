@@ -184,7 +184,14 @@ pub fn append(store: &Store, push: &Pushed) -> std::io::Result<()> {
         lock.push(".lock");
         if let Ok(Some(_guard)) = crate::lock::lock_within(Path::new(&lock), LOCK_BUDGET) {
             if std::fs::metadata(&path).is_ok_and(|meta| meta.len() >= ROTATE_AT) {
-                std::fs::rename(&path, path.with_extension("log.1"))?;
+                // A failed move skips this rotation, never the line.
+                if let Err(failure) = std::fs::rename(&path, path.with_extension("log.1")) {
+                    eprintln!(
+                        "{}: pushes.log: could not rotate {}: {failure}",
+                        crate::bin!(),
+                        path.display()
+                    );
+                }
             }
         }
     }
@@ -240,13 +247,11 @@ pub fn save_launcher(
     crate::atomic::write_atomic(&path, &body.to_string())
 }
 
-/// The launcher of `receipt`'s land, removed as it is read, so a second
-/// wait on the same receipt credits no one again. `None` when no launch was
-/// recorded, or another wait took it first.
-pub fn take_launcher(store: &Store, receipt: &str) -> Option<(Identity, PathBuf)> {
+/// The launcher of `receipt`'s land. `None` when no launch was recorded, or
+/// a wait already credited it ([`forget_launcher`]).
+pub fn launcher(store: &Store, receipt: &str) -> Option<(Identity, PathBuf)> {
     let path = launch_file(store, receipt);
     let text = std::fs::read_to_string(&path).ok()?;
-    std::fs::remove_file(&path).ok()?;
     let value: serde_json::Value = serde_json::from_str(&text).ok()?;
     if value.get("receipt")?.as_str()? != receipt {
         return None;
@@ -264,6 +269,15 @@ pub fn take_launcher(store: &Store, receipt: &str) -> Option<(Identity, PathBuf)
     };
     let repo = PathBuf::from(value.get("repo_identity")?.as_str()?);
     Some((identity, repo))
+}
+
+/// Drop `receipt`'s launcher once its push is in the log, so a second wait
+/// on the same receipt credits no one again.
+pub fn forget_launcher(store: &Store, receipt: &str) -> std::io::Result<()> {
+    match std::fs::remove_file(launch_file(store, receipt)) {
+        Err(failure) if failure.kind() != std::io::ErrorKind::NotFound => Err(failure),
+        _ => Ok(()),
+    }
 }
 
 /// What one Bash call published, credited: one journal line each. `caller`
@@ -298,8 +312,18 @@ pub fn credit_after_bash(
         bash.stdout.as_deref().unwrap_or_default()
     );
     let mut said = Vec::new();
+    // `true` once the push is in the log, written now or already there (a
+    // hook run twice for one call, or two waits on one receipt).
     let mut credit = |identity: Identity, repo_identity: PathBuf, branch: String, sha: String| {
         let shown = format!("pushed {branch} {sha}");
+        let already = read_all(store).last().is_some_and(|newest| {
+            newest.identity.session == identity.session
+                && newest.branch == branch
+                && newest.sha == sha
+        });
+        if already {
+            return true;
+        }
         let push = Pushed {
             at: now,
             identity,
@@ -308,8 +332,14 @@ pub fn credit_after_bash(
             sha,
         };
         match append(store, &push) {
-            Ok(()) => said.push(shown),
-            Err(failure) => said.push(format!("error: {}: {failure}", log_path(store).display())),
+            Ok(()) => {
+                said.push(shown);
+                true
+            }
+            Err(failure) => {
+                said.push(format!("error: {}: {failure}", log_path(store).display()));
+                false
+            }
         }
     };
     if let Some(push) = read_push(&parsed) {
@@ -357,8 +387,12 @@ pub fn credit_after_bash(
             .and_then(|text| crate::land::read_receipt(&text))
             .filter(|receipt| receipt.status == "landed");
         if let Some(receipt) = landed {
-            if let Some((identity, repo)) = take_launcher(store, &path) {
-                credit(identity, repo, receipt.branch, receipt.pushed);
+            if let Some((identity, repo)) = launcher(store, &path) {
+                if credit(identity, repo, receipt.branch, receipt.pushed) {
+                    if let Err(failure) = forget_launcher(store, &path) {
+                        said.push(format!("error: launch of {path}: {failure}"));
+                    }
+                }
             }
         }
         return said;
