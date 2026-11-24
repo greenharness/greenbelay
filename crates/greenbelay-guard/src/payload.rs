@@ -90,6 +90,8 @@ pub struct Prompt {
     pub text: String,
     pub session: String,
     pub prompt_id: String,
+    /// Where the session is; empty when the payload has no `cwd`.
+    pub cwd: PathBuf,
 }
 
 /// An `AskUserQuestion` call, before or after the person answered.
@@ -488,6 +490,7 @@ pub fn parse(raw: &str) -> Event {
             text: str_at("prompt"),
             session: str_at("session_id"),
             prompt_id: str_at("prompt_id"),
+            cwd: cwd.clone(),
         })),
         Some("PreToolUse")
             if v.get("tool_name").and_then(|x| x.as_str()) == Some("ExitPlanMode") =>

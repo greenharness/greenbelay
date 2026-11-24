@@ -101,7 +101,8 @@ impl Identity {
         }
     }
 
-    fn same_process(&self, other: &Identity) -> bool {
+    /// The same process: pid and start time, whatever session it runs now.
+    pub fn same_process(&self, other: &Identity) -> bool {
         self.pid == other.pid && self.started_at == other.started_at
     }
 }
@@ -153,6 +154,23 @@ impl TicketKey {
             programme: programme.to_owned(),
             ticket: ticket.to_owned(),
         })
+    }
+
+    pub fn repo(&self) -> &str {
+        &self.repo
+    }
+
+    pub fn programme(&self) -> &str {
+        &self.programme
+    }
+
+    pub fn ticket(&self) -> &str {
+        &self.ticket
+    }
+
+    /// `repo/programme/ticket`.
+    pub fn shown(&self) -> String {
+        format!("{}/{}/{}", self.repo, self.programme, self.ticket)
     }
 }
 
@@ -516,6 +534,26 @@ pub fn read_worktree(store: &Store, worktree: &Path, now: u64) -> Reading {
 
 pub fn read_ticket(store: &Store, key: &TicketKey, now: u64) -> Reading {
     read_slot(store, &Slot::Ticket(key.clone()), now)
+}
+
+/// Every readable worktree record, with its state; an unreadable one is left
+/// out, as is the whole list when the directory cannot be read.
+pub fn worktree_owners(store: &Store, now: u64) -> Vec<(Owner, State)> {
+    let Ok(entries) = std::fs::read_dir(store.root.join("worktree")) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|extension| extension != "json") {
+            continue;
+        }
+        if let Record::Present(owner) = read_record(&path) {
+            let state = state_of(store, &owner, now);
+            found.push((*owner, state));
+        }
+    }
+    found
 }
 
 fn read_slot(store: &Store, slot: &Slot, now: u64) -> Reading {

@@ -116,6 +116,60 @@ impl Scene {
         )
     }
 
+    /// A linked worktree of `repo` (created when missing) on `branch`.
+    fn linked(&self, repo: &str, name: &str, branch: &str) -> PathBuf {
+        let primary = self.root.join(repo);
+        let admin = primary.join(".git/worktrees").join(name);
+        std::fs::create_dir_all(&admin).unwrap();
+        if !primary.join(".git/HEAD").exists() {
+            std::fs::write(primary.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        }
+        std::fs::write(admin.join("HEAD"), format!("ref: refs/heads/{branch}\n")).unwrap();
+        std::fs::write(admin.join("commondir"), "../..\n").unwrap();
+        let tree = self.root.join(format!("{repo}-{name}"));
+        std::fs::create_dir_all(&tree).unwrap();
+        std::fs::write(tree.join(".git"), format!("gitdir: {}\n", admin.display())).unwrap();
+        tree
+    }
+
+    /// An observed `relais programme claim follow-ups t02 --dir …` by
+    /// `session` in process `pid`: the ticket record `repo/follow-ups/t02`.
+    fn claim_ticket(&self, pid: u32, session: &str) {
+        let dir = self.primary.join("docs/programmes/follow-ups");
+        let cwd = serde_json::Value::String(self.feature.display().to_string());
+        let command = serde_json::Value::String(format!(
+            "relais programme claim follow-ups t02 --dir {}",
+            dir.display()
+        ));
+        self.hook(
+            pid,
+            &format!(
+                r#"{{"hook_event_name":"PostToolUse","tool_name":"Bash","cwd":{cwd},
+                     "session_id":"{session}","permission_mode":"default","tool_use_id":"t1",
+                     "tool_input":{{"command":{command}}},
+                     "tool_response":{{"stdout":"claimed","stderr":"","interrupted":false}}}}"#
+            ),
+        );
+    }
+
+    /// The prompt hook's reply, parsed; `Null` when it printed nothing.
+    fn prompt(&self, caller_pid: u32, session: &str, text: &str) -> serde_json::Value {
+        let cwd = serde_json::Value::String(self.primary.display().to_string());
+        let text = serde_json::Value::String(text.to_owned());
+        let out = self.hook(
+            caller_pid,
+            &format!(
+                r#"{{"hook_event_name":"UserPromptSubmit","prompt":{text},"cwd":{cwd},
+                     "session_id":"{session}","prompt_id":"p1"}}"#
+            ),
+        );
+        if out.trim().is_empty() {
+            return serde_json::Value::Null;
+        }
+        assert_eq!(out.trim().lines().count(), 1, "one JSON object: {out}");
+        serde_json::from_str(out.trim()).unwrap()
+    }
+
     fn records(&self, kind: &str) -> Vec<PathBuf> {
         let mut found = Vec::new();
         let mut pending = vec![self.root.join("config/greenbelay/owners").join(kind)];
@@ -225,5 +279,166 @@ fn an_observed_programme_claim_writes_the_ticket_record() {
             .any(|path| path.ends_with("repo/follow-ups/t02.json")),
         "{:?}",
         scene.records("ticket")
+    );
+}
+
+const RESUME: &str = "resume repo follow-ups t02: Three sessions on one task";
+const SESSION_C: &str = "cccccccc-0000-4000-8000-000000000003";
+const GAMMA_PID: u32 = 40_003;
+
+fn context(reply: &serde_json::Value) -> String {
+    assert_eq!(
+        reply["hookSpecificOutput"]["hookEventName"], "UserPromptSubmit",
+        "{reply}"
+    );
+    reply["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[test]
+fn a_resume_of_a_ticket_a_live_session_owns_names_the_owner_and_warns_the_person() {
+    let scene = Scene::new("resume-live");
+    scene.claim_ticket(ALPHA_PID, SESSION_A);
+    scene.register(GAMMA_PID, SESSION_C, "gamma-name");
+    let reply = scene.prompt(GAMMA_PID, SESSION_C, RESUME);
+    let said = context(&reply);
+    for part in [
+        "work-owner",
+        "t02 is owned by alpha-name",
+        SESSION_A,
+        "SendMessage to \"alpha-name\"",
+    ] {
+        assert!(said.contains(part), "{part}: {said}");
+    }
+    let note = reply["systemMessage"].as_str().unwrap();
+    assert!(note.starts_with("WARNING:"), "{note}");
+    assert!(note.lines().count() <= 2, "{note}");
+    assert_eq!(
+        scene.only_record("ticket")["identity"]["session"],
+        SESSION_A
+    );
+}
+
+#[test]
+fn the_owners_own_process_after_a_clear_continues_and_takes_the_ticket_over() {
+    let scene = Scene::new("resume-successor");
+    scene.claim_ticket(ALPHA_PID, SESSION_A);
+    let successor = "dddddddd-0000-4000-8000-000000000004";
+    // The registry has not caught up: ALPHA's file still names SESSION_A.
+    let said = context(&scene.prompt(ALPHA_PID, successor, RESUME));
+    assert!(
+        said.contains(&format!(
+            "you continue t02, held by this process as {SESSION_A} before /clear"
+        )),
+        "{said}"
+    );
+    assert_eq!(
+        scene.only_record("ticket")["identity"]["session"],
+        successor
+    );
+}
+
+#[test]
+fn an_owner_whose_process_cleared_is_named_and_not_credited() {
+    let scene = Scene::new("resume-cleared");
+    scene.claim_ticket(ALPHA_PID, SESSION_A);
+    let successor = "dddddddd-0000-4000-8000-000000000004";
+    scene.register(ALPHA_PID, successor, "alpha-name");
+    scene.register(GAMMA_PID, SESSION_C, "gamma-name");
+    let reply = scene.prompt(GAMMA_PID, SESSION_C, RESUME);
+    let said = context(&reply);
+    for part in [
+        format!("{SESSION_A} held t02"),
+        "its process alpha-name has cleared".to_owned(),
+        format!("now runs {successor}"),
+        "do not credit it".to_owned(),
+    ] {
+        assert!(said.contains(&part), "{part}: {said}");
+    }
+    assert!(reply["systemMessage"]
+        .as_str()
+        .unwrap()
+        .starts_with("WARNING:"));
+    assert_eq!(
+        scene.only_record("ticket")["identity"]["session"],
+        SESSION_A
+    );
+}
+
+#[test]
+fn without_a_ticket_record_the_worktree_on_the_prog_branch_of_that_repository_answers() {
+    let scene = Scene::new("resume-fallback");
+    let tree = scene.linked("repo", "t02", "prog/follow-ups/t02");
+    scene.write_in(ALPHA_PID, SESSION_A, &tree);
+    scene.register(GAMMA_PID, SESSION_C, "gamma-name");
+    let said = context(&scene.prompt(GAMMA_PID, SESSION_C, RESUME));
+    assert!(said.contains("t02 is owned by alpha-name"), "{said}");
+    assert!(
+        said.contains(&format!("worktree {}", tree.display())),
+        "{said}"
+    );
+}
+
+#[test]
+fn the_same_branch_in_another_repository_is_not_this_tickets_owner() {
+    let scene = Scene::new("resume-other-repo");
+    let tree = scene.linked("other", "t02", "prog/follow-ups/t02");
+    scene.write_in(ALPHA_PID, SESSION_A, &tree);
+    scene.register(GAMMA_PID, SESSION_C, "gamma-name");
+    assert_eq!(
+        scene.prompt(GAMMA_PID, SESSION_C, RESUME),
+        serde_json::Value::Null
+    );
+}
+
+#[test]
+fn records_that_disagree_are_all_named_and_nothing_is_taken_over() {
+    let scene = Scene::new("resume-disagree");
+    scene.claim_ticket(ALPHA_PID, SESSION_A);
+    let tree = scene.linked("repo", "t02", "prog/follow-ups/t02");
+    scene.write_in(BETA_PID, SESSION_B, &tree);
+    let successor = "dddddddd-0000-4000-8000-000000000004";
+    let reply = scene.prompt(ALPHA_PID, successor, RESUME);
+    let said = context(&reply);
+    for part in ["disagree", SESSION_A, SESSION_B, "take nothing over"] {
+        assert!(said.contains(part), "{part}: {said}");
+    }
+    assert!(reply["systemMessage"]
+        .as_str()
+        .unwrap()
+        .starts_with("WARNING:"));
+    assert_eq!(
+        scene.only_record("ticket")["identity"]["session"],
+        SESSION_A
+    );
+}
+
+#[test]
+fn no_registered_caller_is_unknown_never_owned_by() {
+    let scene = Scene::new("resume-no-caller");
+    scene.claim_ticket(ALPHA_PID, SESSION_A);
+    let said = context(&scene.prompt(49_999, SESSION_C, RESUME));
+    assert!(said.contains("ownership of t02 is unknown"), "{said}");
+    assert!(!said.contains("owned by"), "{said}");
+}
+
+#[test]
+fn a_driver_prompt_and_an_unowned_ticket_are_silent() {
+    let scene = Scene::new("resume-silent");
+    scene.register(GAMMA_PID, SESSION_C, "gamma-name");
+    assert_eq!(
+        scene.prompt(GAMMA_PID, SESSION_C, RESUME),
+        serde_json::Value::Null
+    );
+    scene.claim_ticket(ALPHA_PID, SESSION_A);
+    assert_eq!(
+        scene.prompt(
+            GAMMA_PID,
+            SESSION_C,
+            "resume repo follow-ups drive: t02 t03"
+        ),
+        serde_json::Value::Null
     );
 }

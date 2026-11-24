@@ -178,7 +178,7 @@ fn decide(raw: &str) -> Decision {
         Event::Prompt(prompt) => {
             crate::preview::on_prompt(&prompt);
             crate::plan_phases::on_prompt(&prompt);
-            Decision::Silent
+            resume_owner(&prompt)
         }
         Event::PreAsk(ask) => {
             crate::implementation_review::on_pre_ask(&ask);
@@ -420,6 +420,44 @@ fn claim_worktree(
         Ok(Outcome::LockBusy) => held("lock-busy"),
         Ok(Outcome::HeldBy { state, .. }) => held(rules::work_owner::state_word(&state)),
         Err(failure) => journal_owner("error", session, mode, cwd, &failure.to_string()),
+    }
+}
+
+/// A `resume <repo> <programme> <ticket>` prompt, before the session reads it:
+/// who owns that ticket, and whether that owner is still the session that did
+/// the work. A successor of the owner's own process takes the ticket over.
+fn resume_owner(prompt: &crate::payload::Prompt) -> Decision {
+    use greenbelay_guard::owner;
+    let rule = &rules::work_owner::RULE;
+    if crate::stance::switched_off() {
+        return Decision::Silent;
+    }
+    let Some(key) = rules::work_owner::resume_target(&prompt.text) else {
+        return Decision::Silent;
+    };
+    let Some(store) = owner::Store::ambient() else {
+        return Decision::Silent;
+    };
+    let seconds = epoch_seconds(clock());
+    let caller = greenbelay_guard::host_session::caller();
+    let said =
+        rules::work_owner::resume_owner(&store, &key, caller.as_ref(), &prompt.session, seconds);
+    journal_owner(
+        said.journal_word(),
+        &prompt.session,
+        "",
+        &prompt.cwd,
+        &key.shown(),
+    );
+    if crate::stance::resolve(rule) == Stance::Observe {
+        return Decision::Silent;
+    }
+    match rules::work_owner::resume_text(&key, &said, seconds) {
+        Some((context, note)) => Decision::PromptContext {
+            context: decision::phrase(rule.id, &context, ""),
+            note,
+        },
+        None => Decision::Silent,
     }
 }
 
@@ -1157,7 +1195,8 @@ fn on_post_bash(bash: &Bash) -> Decision {
             | Decision::Context(_)
             | Decision::AssertAfterFailure(_)
             | Decision::Continue(_)
-            | Decision::UserNote(_)),
+            | Decision::UserNote(_)
+            | Decision::PromptContext { .. }),
             Some(_),
         ) => claims,
         (claims, None) => claims,
@@ -1268,7 +1307,8 @@ fn on_post_bash_failure(bash: &Bash) -> Decision {
             | Decision::Context(_)
             | Decision::Assert(_)
             | Decision::Continue(_)
-            | Decision::UserNote(_)),
+            | Decision::UserNote(_)
+            | Decision::PromptContext { .. }),
             Some(_),
         ) => claims,
         (claims, None) => claims,
@@ -1948,7 +1988,8 @@ fn combine(decisions: impl IntoIterator<Item = Decision>) -> Decision {
             | Decision::Assert(text)
             | Decision::AssertAfterFailure(text)
             | Decision::Continue(text)
-            | Decision::UserNote(text) => texts.push(text),
+            | Decision::UserNote(text)
+            | Decision::PromptContext { context: text, .. } => texts.push(text),
         }
     }
     if texts.is_empty() {
@@ -3704,7 +3745,8 @@ mod write_tests {
             | Decision::Assert(t)
             | Decision::AssertAfterFailure(t)
             | Decision::Continue(t)
-            | Decision::UserNote(t) => ("other", t),
+            | Decision::UserNote(t)
+            | Decision::PromptContext { context: t, .. } => ("other", t),
         }
     }
 

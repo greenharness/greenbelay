@@ -275,7 +275,7 @@ under `NO_COLOR` and when stdout is not a TTY (reuse guard/ui.rs). The board's i
     `crates/greenbelay-guard/src/activity.rs`.
 - [x] Phase 3: the board's owner line and JSON field.
   File: `crates/greenbelay-process/src/board.rs`.
-- [ ] Phase 4: the resume-prompt owner check, with `Decision::PromptContext`.
+- [x] Phase 4: the resume-prompt owner check, with `Decision::PromptContext`.
   Files: `src/hook.rs`, `crates/greenbelay-guard/src/decision.rs`,
   `crates/greenbelay-guard/src/payload.rs`.
 - [ ] Phase 5: push attribution, `greenbelay who-pushed`, and the board's
