@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+Sessions on one task agree on who owns it: owner records per worktree and
+programme ticket, a resume-prompt check, and push attribution
+(`docs/plans/2026-11-24-one-owner-per-worktree.md`).
+
+- Owner records under `<data dir>/owners/`: a session's first write in a
+  worktree claims it (`git config greenbelay.work-owner.auto-claim false`
+  turns that off), an observed `relais programme claim` claims the ticket,
+  and `greenbelay owner claim|release|show` does either by hand (exit 3 when a
+  live session holds it). Liveness comes from Claude Code's
+  `~/.claude/sessions/<pid>.json`, read best-effort at `peerProtocol` 1: live,
+  cleared (same process, new session), gone, stale (8 h) or unknown. Claims
+  are race-free (`link()`, then `flock` and a re-read).
+- `work-owner` (advise, new): a `resume <repo> <programme> <ticket>` prompt is
+  told who owns the ticket, by name and UUID, and whether that owner is live
+  (message it) or has cleared (do not credit it), with a `WARNING:` note for
+  the person; the owner's own process after a `/clear` takes the ticket over.
+  New `UserPromptSubmit` context output.
+- `work-overlap` names the other session's owner name and ref, and says
+  "cleared since, do not credit it" for a cleared owner.
+- `greenbelay board`: each worktree shows its owner and state, each branch
+  who pushed it last; `--json` gains `owner` and `pushed`.
+- `greenbelay who-pushed <branch|sha>`: pushes are recorded in
+  `<data dir>/pushes.log` only on publication evidence (a ref-update line, or
+  a land receipt that says `landed`); a detached land credits its launcher,
+  once.
+
 ## v6.12.0
 
 greenbelay 6.12.0 adds `greenbelay rollup`: weekly firings and rates per rule

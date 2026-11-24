@@ -17,6 +17,7 @@
 - [The push browser check](push-browser-check.md)
 - [The session notice](session-notice.md)
 - [The board: session activity](board.md)
+- [Owners: who holds the work](owners.md)
 - [Configuration](configuration.md)
 
 # Design

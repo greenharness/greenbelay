@@ -139,7 +139,13 @@ unmerged branch, with or without a plan, costs no git call beyond the single
   plans for it;
 - `programme <slug> ticket <id>` for a `prog/<slug>/<id>` branch;
 - the sessions whose latest activity line names that worktree, with the full
-  session id and the age of the activity file's modification time.
+  session id and the age of the activity file's modification time;
+- for a worktree with an owner record, `owner: <name> [ref] / <uuid>, claimed
+  <age> ago` and, on its own line, the owner's state (`live, message it`,
+  `cleared since: …`, `gone`, `stale, …`, `unknown: …`), every line wrapped at
+  78 columns without cutting a word ([owners](owners.md));
+- `pushed by <name> / <uuid8> <age> ago`, the newest push of that branch in
+  that repository recorded in `pushes.log`.
 
 **Merged**: a live candidate branch (a worktree's branch, or a live branch
 with no worktree) is merged when its whole change from the merge-base
@@ -172,7 +178,9 @@ comes first.
 A repository with nothing in flight and nothing landed prints nothing unless
 it was named with `--repo`. `--json` prints an array of `{repo, path,
 worktrees: [{path, branch, merged, plans, programme_ticket, sessions: [{id,
-last_seen_secs}]}], landed: [{sha, subject, age_secs}]}`; `merged` is a boolean; `plans` is an array of titles (empty when none); `path` is null for a
-branch with no worktree, `programme_ticket` is `<slug>/<id>` or null. Exit 0
+last_seen_secs}], owner, pushed}], landed: [{sha, subject, age_secs}]}`; `merged` is a boolean; `plans` is an array of titles (empty when none); `path` is null for a
+branch with no worktree, `programme_ticket` is `<slug>/<id>` or null; `owner` is null or `{session,
+name, ref, pid, state, claimed_at, now_session?}` (`now_session` for a cleared
+owner), and `pushed` null or `{session, name, sha, at}`. Exit 0
 unless the command itself fails; an unreadable repository is reported on
 stderr and skipped.
