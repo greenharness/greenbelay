@@ -40,6 +40,8 @@ greenbelay install          # prints the settings block, writes nothing
 greenbelay install --write  # merges it into ~/.claude/settings.json
 greenbelay doctor           # is it installed, runnable, and actually firing?
 greenbelay status           # every rule, its stance, and what it has seen
+                            # (last 4 weeks + this week once the roll-up covers them)
+greenbelay rollup           # firings per week and rule, kept past the journal
 ```
 
 ## The inbox read contract

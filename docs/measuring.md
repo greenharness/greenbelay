@@ -68,6 +68,29 @@ greenbelay backtest --rule pipe-to-tail --json
 greenbelay backtest --transcripts ~/.claude/projects   # where they live
 ```
 
+### The roll-up: firings the journal no longer holds
+
+The journal keeps about three days. `greenbelay rollup` prints what survived
+rotation: one row per week and rule, `week rule firings calls rate/1000`, for
+the current week and the last closed one; `--weeks <n>` widens it and `--json`
+prints every week (format `greenbelay-rollup-v1`; retro reads it for the rules
+whose `replay` is `none`).
+
+```sh
+greenbelay rollup
+greenbelay rollup --weeks 4 --json
+greenbelay rollup --transcripts ~/.claude/projects -q
+```
+
+`calls` is the week's count of the tool the rule fires on (Bash, Read, or all
+tools for a rule that fires on several), counted from the transcripts,
+subagents included. A closed week's calls are stored the first time they are
+computed, within a week of closing, and never rescanned, because Claude Code
+prunes old transcripts. A rule with no honest tool (a Stop event, an
+assertion) and a week not stored print `-`: unknown is not zero. Counts start
+at the first fold; nothing before it comes back, so the first week may be
+marked `(partial)`.
+
 A weekly series is the thing to read, not a total. A habit that is halving on
 its own does not need a `deny`; the model is already correcting. A flat line
 over weeks is a habit that will not correct itself, and that is what promotion

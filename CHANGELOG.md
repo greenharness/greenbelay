@@ -5,6 +5,25 @@
 - The `Stop` deadline (2 s) can be overridden with `GREENBELAY_STOP_DEADLINE_MS`
   for tests. The `Stop` tests pin it long, so a jammed host no longer turns
   the cap test's fourth boundary into `watched timeout` (follow-ups t05).
+- New `greenbelay rollup [--weeks <n>] [--json] [--transcripts <dir>] [-q]`:
+  firings per week and rule from `rollup.log` plus the unfolded journal, with
+  each rule's tool calls (counted from the transcripts, subagents included,
+  frozen for a closed week) and the rate per 1,000. `--json` is
+  `greenbelay-rollup-v1`. A rule with no honest tool, a week not stored, or
+  the first week when counts start after its Monday, prints `-` / `null`.
+  `--weeks` takes 1 to 104 (`--weeks=<n>` too); any other flag is refused with
+  exit 2. A roll-up of an unknown format version, or an unreadable one, exits
+  1 with no report. A closed week's calls are stored only when every
+  transcript file read whole.
+- A `rollup-failed` record carries its reason: `lock-busy`,
+  `rollup-format-unknown`, `future-ts-<n>` (records stamped a day or more ahead
+  of the clock, `n` of them, left out of the roll-up), or an I/O error. The
+  roll-up file's rename is now followed by a best-effort sync of its directory.
+- `status` reads roll-up plus journal, and its column says `seen, last 4 weeks
+  + this week` once the roll-up covers the four closed weeks, `seen since
+  <date>` before; a `rollup-failed` record newer than the roll-up is named.
+  Shadow rows stay out, and journal records at or below the roll-up's
+  watermark are not counted twice.
 
 ## v6.11.0
 

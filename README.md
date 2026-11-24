@@ -62,7 +62,8 @@ context with nothing in flight it tells you a `/clear` would pay, and at
 `deny` it has the agent write the handoff so the `clear-relay` plugin can
 `/clear` and carry on. A rule is promoted from your own
 transcripts, not from an argument: `mine`, `backtest`, `explain`,
-`corpus check`, `backtest --compliance`, then `graduate`. Demoting is one
+`corpus check`, `backtest --compliance`, then `graduate`. `rollup` keeps
+the weekly firing counts the journal's rotation would delete. Demoting is one
 command with no questions. `greenbelay rules` lists every rule with the
 stance in force on your machine and its measured rate.
 

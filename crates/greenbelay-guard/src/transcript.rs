@@ -152,6 +152,9 @@ pub struct Stats {
     /// alone would call two commands adjacent across ten minutes of reading
     /// files.
     pub events: u64,
+    /// Files that could not be opened, and files whose read failed midway.
+    /// A count built over either is a lower bound, not a total.
+    pub unreadable: u64,
 }
 
 /// What the transcript says became of a call.
@@ -385,7 +388,20 @@ where
 /// have no predecessor. Corrections that straddle that seam are missed. The
 /// direction of the error is the safe one — a shape looks better behaved than
 /// it was, never worse.
-pub fn for_each_transcript<F>(scan: &Scan, mut f: F) -> Result<Stats, ScanError>
+pub fn for_each_transcript<F>(scan: &Scan, f: F) -> Result<Stats, ScanError>
+where
+    F: FnMut(&[Record]),
+{
+    walk_transcripts(scan, None, f)
+}
+
+/// [`for_each_transcript`], skipping a file last modified before `not_before`:
+/// it cannot hold an entry from after that moment.
+fn walk_transcripts<F>(
+    scan: &Scan,
+    not_before: Option<std::time::SystemTime>,
+    mut f: F,
+) -> Result<Stats, ScanError>
 where
     F: FnMut(&[Record]),
 {
@@ -393,7 +409,14 @@ where
     let mut seen: HashSet<String> = HashSet::new();
 
     for path in files(scan.roots) {
+        if let Some(floor) = not_before {
+            let modified = fs::metadata(&path).and_then(|meta| meta.modified());
+            if matches!(modified, Ok(at) if at < floor) {
+                continue;
+            }
+        }
         let Ok(file) = fs::File::open(&path) else {
+            stats.unreadable += 1;
             continue;
         };
         stats.files += 1;
@@ -408,7 +431,10 @@ where
             let read = match reader.read_line(&mut line) {
                 Ok(0) => break,
                 Ok(n) => n,
-                Err(_) => break,
+                Err(_) => {
+                    stats.unreadable += 1;
+                    break;
+                }
             };
             stats.bytes += read as u64;
             stats.lines += 1;
@@ -523,6 +549,44 @@ where
         }
     }
     Ok(stats)
+}
+
+/// Tool calls per UTC week and tool name, from every transcript under the
+/// roots, subagent files included (the hook fires inside subagents too).
+/// Deduplicated on `tool_use.id` and bucketed on the entry's own timestamp, by
+/// the same walk as [`for_each_transcript`]. `since` drops calls on earlier days.
+pub fn calls_by_week(roots: &Roots, since: Option<Day>) -> Result<CallScan, ScanError> {
+    let mut weeks: std::collections::BTreeMap<Day, std::collections::BTreeMap<String, u64>> =
+        std::collections::BTreeMap::new();
+    let scan = Scan {
+        roots,
+        tool: "Bash",
+        since,
+    };
+    let not_before = since
+        .and_then(|day| u64::try_from(day).ok())
+        .map(|day| std::time::UNIX_EPOCH + std::time::Duration::from_secs(day * 86_400));
+    let stats = walk_transcripts(&scan, not_before, |records| {
+        for record in records {
+            *weeks
+                .entry(crate::civil::week_start(record.day))
+                .or_default()
+                .entry(record.tool.clone())
+                .or_default() += 1;
+        }
+    })?;
+    Ok(CallScan {
+        weeks,
+        unreadable: stats.unreadable,
+    })
+}
+
+/// Tool calls per week and tool, and how many files the walk could not read
+/// whole: with any, the counts are lower bounds and must not be frozen.
+#[derive(Debug)]
+pub struct CallScan {
+    pub weeks: std::collections::BTreeMap<Day, std::collections::BTreeMap<String, u64>>,
+    pub unreadable: u64,
 }
 
 /// The `tool_use_id` of a result line, or `None` when this is not one.
