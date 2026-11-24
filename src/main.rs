@@ -3928,7 +3928,19 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
                     }
                 }
             }
-            "--json" | "--transcripts" => rest.push(arg.clone()),
+            "--json" => rest.push(arg.clone()),
+            "--transcripts" => {
+                match inline.or_else(|| iter.next().map(|v| v.to_string_lossy().into_owned())) {
+                    Some(dir) if !dir.is_empty() => {
+                        rest.push(OsString::from("--transcripts"));
+                        rest.push(OsString::from(dir));
+                    }
+                    _ => {
+                        eprintln!("{BIN}: --transcripts needs a directory");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
             other if other.starts_with('-') => {
                 eprintln!("{BIN}: rollup has no flag `{other}`; try `{BIN} rollup --help`");
                 return ExitCode::from(2);

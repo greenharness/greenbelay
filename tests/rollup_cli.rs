@@ -9,7 +9,7 @@ impl Home {
     fn new(name: &str) -> Home {
         let dir =
             std::env::temp_dir().join(format!("greenbelay-ru-it-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&dir); // a fresh scratch dir: absent is the usual case
         std::fs::create_dir_all(dir.join("projects/p")).expect("projects dir");
         std::fs::create_dir_all(dir.join("greenbelay")).expect("state dir");
         Home(dir)
@@ -35,7 +35,7 @@ impl Home {
 
 impl Drop for Home {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        let _ = std::fs::remove_dir_all(&self.0); // Drop cannot report; a leftover temp dir is harmless
     }
 }
 
@@ -70,6 +70,17 @@ fn weeks_takes_an_inline_value_and_a_transcripts_dir() {
     let (code, out, err) = home.run(&["--weeks=3", "--json", "--transcripts", &dir]);
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("\"format\":\"greenbelay-rollup-v1\""), "{out}");
+}
+
+#[test]
+fn transcripts_takes_an_inline_value() {
+    let home = Home::new("inline-transcripts");
+    let inline = format!("--transcripts={}", home.0.display());
+    let (code, out, err) = home.run(&["--json", &inline]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("\"format\":\"greenbelay-rollup-v1\""), "{out}");
+    let (code, _, _) = home.run(&["--transcripts="]);
+    assert_eq!(code, 2);
 }
 
 #[test]
