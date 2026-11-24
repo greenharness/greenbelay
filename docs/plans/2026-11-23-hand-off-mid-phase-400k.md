@@ -299,6 +299,24 @@ the command-boundary path, which it does not change below 400k, and before
 - skills: the repository's own checks. decisions: `aval resolve
   work.programme-map` names the new record.
 
+## Handoff
+
+2026-11-24, Phase 3: the size kind, its evidence, the replay runner, tests,
+corpus, docs and follow-ups t03–t05 are in one commit, `feat(clear-at-boundary):
+the size kind`. The replay (`greenbelay size-replay --since 2026-10-24`, 423
+transcripts, 13,447 Stops): 84 fires, 2.71 a day; 13 (15.5%) came while a
+task launched outside the replayed transcript still ran (tasks from before a
+`/clear`), against a bar of 10%, and that fact is not in one transcript. So
+`size-stance` ships at `observe` (`SIZE_STANCE_DEFAULT`); t03 re-judges
+`deny` on the live evidence. Replay runs 1–3 over-counted (notification
+prompts did not open a turn; tasks launched after the fire; repeated copies
+of one notification; Monitor launches); each is fixed and tested.
+
+Next: rebase on origin/main (t02 landed), update the follow-ups map Handoff,
+remove inbox lines 4bca21ec and 8efa358a, `greengate agents-md`, push, PR,
+F4b review (backend, lang:rust, unix, tui, architect), merge, release 6.11.0,
+`greenbelay install`.
+
 ## Code review
 
 - greenbelay: backend, lang:rust, unix, tui, architect
