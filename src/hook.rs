@@ -423,6 +423,36 @@ fn claim_worktree(
     }
 }
 
+/// A push or land this call published is credited to the calling session in
+/// `pushes.log`; a detached land's launch saves its launcher, credited at the
+/// wait. Journalled under `work-owner`.
+fn credit_pushes(bash: &Bash) {
+    use greenbelay_guard::owner;
+    if crate::stance::switched_off() {
+        return;
+    }
+    let Some(store) = owner::Store::ambient() else {
+        return;
+    };
+    let seconds = epoch_seconds(clock());
+    let said =
+        owner::pushes::credit_after_bash(&store, bash, seconds, || caller_identity(&bash.session));
+    for shown in said {
+        let outcome = if shown.starts_with("error") {
+            "error"
+        } else {
+            "pushed"
+        };
+        journal_owner(
+            outcome,
+            &bash.session,
+            &bash.permission_mode,
+            &bash.cwd,
+            &shown,
+        );
+    }
+}
+
 /// A `resume <repo> <programme> <ticket>` prompt, before the session reads it:
 /// who owns that ticket, and whether that owner is still the session that did
 /// the work. A successor of the owner's own process takes the ticket over.
@@ -1184,6 +1214,7 @@ fn joined_output(bash: &Bash) -> Option<String> {
 /// way it does at a session opening.
 fn on_post_bash(bash: &Bash) -> Decision {
     observe_programme_claim(bash);
+    credit_pushes(bash);
     let claims = on_post_bash_claims(bash);
     match (claims, suppressions_after_bash(bash)) {
         (Decision::Assert(a), Some(b)) => Decision::Assert(format!("{a}\n\n{b}")),

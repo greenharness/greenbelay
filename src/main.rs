@@ -189,6 +189,9 @@ usage: ",
                         which session owns a worktree or a programme ticket;
                         `owner --help` documents the exit codes (0 done, 1 none
                         recorded or failed, 2 usage, 3 held by a live session)
+  who-pushed <branch|sha> [--repo <r>] [--json]
+                        which session published a branch or commit, newest
+                        first (exit 1 when none is recorded)
   quiet [--max-bytes N[k]] -- <cmd…>
                         run a command with its output in a log file: one line
                         on a pass, the failure on a fail, the real exit code.
@@ -267,12 +270,13 @@ enum Sub {
     Shipped,
     Board,
     Owner,
+    WhoPushed,
     Open,
     Suppressions,
     Migrate,
 }
 
-const SUBCOMMANDS: [(&str, Sub); 37] = [
+const SUBCOMMANDS: [(&str, Sub); 38] = [
     ("hook", Sub::Hook),
     ("install", Sub::Install),
     ("uninstall", Sub::Uninstall),
@@ -307,6 +311,7 @@ const SUBCOMMANDS: [(&str, Sub); 37] = [
     ("shipped", Sub::Shipped),
     ("board", Sub::Board),
     ("owner", Sub::Owner),
+    ("who-pushed", Sub::WhoPushed),
     ("open", Sub::Open),
     ("suppressions", Sub::Suppressions),
     ("migrate", Sub::Migrate),
@@ -855,6 +860,13 @@ fn main() -> ExitCode {
                     .map(|arg| arg.to_string_lossy().into_owned())
                     .collect();
                 ExitCode::from(greenbelay_guard::owner::command::run(&words))
+            }
+            Sub::WhoPushed => {
+                let words: Vec<String> = args
+                    .iter()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect();
+                ExitCode::from(greenbelay_guard::owner::command::who_pushed(&words))
             }
             Sub::Open => open::run(&args),
             Sub::Suppressions => suppressions::run(&args, index_handoff, hook_index),

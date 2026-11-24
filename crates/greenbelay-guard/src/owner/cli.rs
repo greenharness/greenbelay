@@ -427,3 +427,132 @@ fn print_owner(target: &Target, owner: &Owner, state: &State, now: u64, as_json:
     );
     println!("state: {}", state.describe());
 }
+
+pub const WHO_PUSHED_HELP: &str = concat!(
+    "usage: ",
+    crate::bin!(),
+    " who-pushed <branch|sha> [--repo <r>] [--json]
+
+Each recorded push of a branch, or of a commit (a sha prefix of at least 7
+characters), newest first, one line each:
+  <ago>  <name>  <uuid8>  <state>  <branch>  <sha7>
+--repo keeps the pushes of the repository named <r>; --json prints one array
+with the full session UUID. A push is recorded only when it left the machine
+(a ref-update line, or a land receipt that says landed).
+
+exit status:
+  0  pushes shown
+  1  no push recorded for it, or any other failure
+  2  usage error
+"
+);
+
+/// The exit status of `who-pushed <args>`.
+pub fn who_pushed(args: &[String]) -> u8 {
+    let mut target: Option<&str> = None;
+    let mut repo: Option<&str> = None;
+    let mut as_json = false;
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        match word.as_str() {
+            "--help" | "-h" => {
+                print!("{WHO_PUSHED_HELP}");
+                return EXIT_OK;
+            }
+            "--json" => as_json = true,
+            "--repo" => match words.next() {
+                Some(name) => repo = Some(name),
+                None => return who_usage("--repo needs a repository name"),
+            },
+            flag if flag.starts_with("--repo=") => repo = flag.strip_prefix("--repo="),
+            flag if flag.starts_with('-') => return who_usage(&format!("unknown option `{flag}`")),
+            operand if target.is_none() => target = Some(operand),
+            extra => return who_usage(&format!("one branch or sha, not also `{extra}`")),
+        }
+    }
+    let Some(target) = target else {
+        return who_usage("name a branch or a sha");
+    };
+    let Some(store) = Store::ambient() else {
+        eprintln!("{}: who-pushed: no data directory", crate::bin!());
+        return EXIT_FAILED;
+    };
+    let now = seconds_now();
+    let is_sha = target.len() >= 7 && target.chars().all(|c| c.is_ascii_hexdigit());
+    let found: Vec<super::pushes::Pushed> = super::pushes::read_all(&store)
+        .into_iter()
+        .rev()
+        .filter(|push| push.branch == target || (is_sha && push.sha.starts_with(target)))
+        .filter(|push| {
+            repo.is_none_or(|name| crate::activity::repo_name_of(&push.repo_identity) == name)
+        })
+        .collect();
+    if found.is_empty() {
+        eprintln!("no pushes recorded for {target} (the log keeps about the last 2 MB of pushes)");
+        return EXIT_FAILED;
+    }
+    let state_of = |push: &super::pushes::Pushed| -> &'static str {
+        match host_session::liveness_in(
+            &store.registry,
+            &host_session::Recorded {
+                uuid: push.identity.session.clone(),
+                pid: push.identity.pid,
+                started_at: push.identity.started_at,
+            },
+        ) {
+            host_session::Liveness::Live => "live",
+            host_session::Liveness::Cleared { .. } => "cleared",
+            host_session::Liveness::Gone => "gone",
+            host_session::Liveness::Unknown => "unknown",
+        }
+    };
+    if as_json {
+        let rows: Vec<Value> = found
+            .iter()
+            .map(|push| {
+                json!({
+                    "at": push.at,
+                    "session": push.identity.session,
+                    "name": push.identity.name,
+                    "pid": push.identity.pid,
+                    "state": state_of(push),
+                    "repo": crate::activity::repo_name_of(&push.repo_identity),
+                    "branch": push.branch,
+                    "sha": push.sha,
+                })
+            })
+            .collect();
+        println!("{}", Value::Array(rows));
+        return EXIT_OK;
+    }
+    for push in &found {
+        let ago = crate::activity::ago(
+            UNIX_EPOCH + Duration::from_secs(now),
+            UNIX_EPOCH + Duration::from_secs(push.at),
+        );
+        let name = if push.identity.name.is_empty() {
+            "-"
+        } else {
+            push.identity.name.as_str()
+        };
+        println!(
+            "{ago} ago  {name}  {}  {}  {}  {}",
+            push.identity
+                .session
+                .get(..8)
+                .unwrap_or(&push.identity.session),
+            state_of(push),
+            push.branch,
+            push.sha.get(..7).unwrap_or(&push.sha),
+        );
+    }
+    EXIT_OK
+}
+
+fn who_usage(message: &str) -> u8 {
+    eprintln!(
+        "{}: who-pushed: {message}\n{WHO_PUSHED_HELP}",
+        crate::bin!()
+    );
+    EXIT_USAGE
+}

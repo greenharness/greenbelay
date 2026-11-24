@@ -141,6 +141,8 @@ struct Entry {
     merged: bool,
     /// The worktree's owner record, when it has one.
     owner: Option<SeenOwner>,
+    /// The newest recorded push of this branch in this repository.
+    pushed: Option<owner::pushes::Pushed>,
 }
 
 /// A worktree's owner record as the board read it.
@@ -588,11 +590,27 @@ fn report(
     let (default_ref_name, default_name) = default.clone().unwrap_or_default();
     let now_epoch = now.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let store = Store::ambient();
+    let pushes = store
+        .as_ref()
+        .map(owner::pushes::read_all)
+        .unwrap_or_default();
     let identity = git::stdout_in(
         dir,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
     )
     .map(|c| real(Path::new(&c)));
+    let pushed_of = |branch: &str| {
+        pushes
+            .iter()
+            .rev()
+            .find(|push| {
+                push.branch == branch
+                    && identity
+                        .as_ref()
+                        .is_some_and(|i| real(&push.repo_identity) == *i)
+            })
+            .cloned()
+    };
     let here: Vec<&Seen> = sessions
         .iter()
         .filter(|s| {
@@ -672,9 +690,11 @@ fn report(
         let owner = store
             .as_ref()
             .and_then(|store| seen_owner(store, &tree.path, now_epoch));
+        let pushed = pushed_of(&branch);
         entries.push(Entry {
             path: Some(tree.path),
             merged: tree.branch.as_ref().is_some_and(|b| merged.contains(b)),
+            pushed,
             branch,
             plans,
             sessions: tree_sessions,
@@ -695,6 +715,7 @@ fn report(
             sessions: named,
             merged: false,
             owner: None,
+            pushed: pushed_of(branch),
         });
     }
     entries.extend(sibling_plans(
@@ -896,6 +917,7 @@ fn sibling_plans(
                     sessions: Vec::new(),
                     merged: false,
                     owner: None,
+                    pushed: None,
                 });
             }
         }
@@ -1046,6 +1068,24 @@ fn to_text_at(reports: &[Report], since: Duration, now_epoch: u64) -> String {
                 _ => String::new(),
             };
             out.push_str(&format!("    {} [{}]{label}\n", place, entry.branch));
+            if let Some(push) = &entry.pushed {
+                let name = if push.identity.name.is_empty() {
+                    "-"
+                } else {
+                    push.identity.name.as_str()
+                };
+                out.push_str(&wrapped(
+                    6,
+                    &format!(
+                        "pushed by {name} / {} {} ago",
+                        push.identity
+                            .session
+                            .get(..8)
+                            .unwrap_or(&push.identity.session),
+                        ago(now_epoch.saturating_sub(push.at))
+                    ),
+                ));
+            }
             if let Some(ticket) = entry.programme_ticket() {
                 let (slug, id) = ticket.split_once('/').unwrap_or((&ticket, ""));
                 out.push_str(&format!("      programme {slug} ticket {id}\n"));
@@ -1101,6 +1141,12 @@ fn to_json(reports: &[Report]) -> String {
                         "programme_ticket": entry.programme_ticket(),
                         "sessions": sessions,
                         "owner": entry.owner.as_ref().map(owner_json),
+                        "pushed": entry.pushed.as_ref().map(|push| json!({
+                            "session": push.identity.session,
+                            "name": push.identity.name,
+                            "sha": push.sha,
+                            "at": push.at,
+                        })),
                     })
                 })
                 .collect();
@@ -1133,6 +1179,7 @@ mod tests {
             sessions: Vec::new(),
             merged: false,
             owner: None,
+            pushed: None,
         };
         assert_eq!(
             entry("prog/x/t02").programme_ticket().as_deref(),
@@ -1264,6 +1311,7 @@ mod tests {
                         plans: Vec::new(),
                         sessions: Vec::new(),
                         merged: false,
+                        pushed: None,
                     }
                 })
                 .collect();

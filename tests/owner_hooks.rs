@@ -170,6 +170,60 @@ impl Scene {
         serde_json::from_str(out.trim()).unwrap()
     }
 
+    /// `greenbelay <args>` in this scene's sandbox: (exit code, stdout, stderr).
+    fn run(&self, args: &[&str]) -> (i32, String, String) {
+        let out = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
+            .args(args)
+            .env("HOME", self.root.join("home"))
+            .env("CLAUDE_CONFIG_DIR", self.root.join("config"))
+            .env("GREENBELAY_HOST_SESSIONS_DIR", self.root.join("sessions"))
+            .env("GIT_CONFIG_GLOBAL", self.root.join("gitconfig"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env_remove("XDG_STATE_HOME")
+            .env_remove("GREENBELAY_OFF")
+            .output()
+            .expect("the binary runs");
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    }
+
+    /// A PostToolUse for a Bash `command` that exited 0 in `cwd`, with the
+    /// output it printed.
+    fn bash_done(
+        &self,
+        pid: u32,
+        session: &str,
+        cwd: &Path,
+        command: &str,
+        stdout: &str,
+        stderr: &str,
+    ) {
+        let cwd = serde_json::Value::String(cwd.display().to_string());
+        let command = serde_json::Value::String(command.to_owned());
+        let stdout = serde_json::Value::String(stdout.to_owned());
+        let stderr = serde_json::Value::String(stderr.to_owned());
+        self.hook(
+            pid,
+            &format!(
+                r#"{{"hook_event_name":"PostToolUse","tool_name":"Bash","cwd":{cwd},
+                     "session_id":"{session}","permission_mode":"default","tool_use_id":"tp",
+                     "tool_input":{{"command":{command}}},
+                     "tool_response":{{"stdout":{stdout},"stderr":{stderr},"interrupted":false}}}}"#
+            ),
+        );
+    }
+
+    fn pushes(&self) -> Vec<String> {
+        std::fs::read_to_string(self.root.join("config/greenbelay/pushes.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
     fn records(&self, kind: &str) -> Vec<PathBuf> {
         let mut found = Vec::new();
         let mut pending = vec![self.root.join("config/greenbelay/owners").join(kind)];
@@ -441,4 +495,144 @@ fn a_driver_prompt_and_an_unowned_ticket_are_silent() {
         ),
         serde_json::Value::Null
     );
+}
+
+/// `git <args>` in `dir`, which must succeed: (stdout, stderr).
+fn git(dir: &Path, args: &[&str]) -> (String, String) {
+    let out = Command::new("git")
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "init.defaultBranch=main",
+        ])
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// A real repository `work` on `feat/x` with one commit, and a bare `origin`.
+fn real_repo(scene: &Scene) -> PathBuf {
+    let origin = scene.root.join("origin.git");
+    let work = scene.root.join("work");
+    std::fs::create_dir_all(&origin).unwrap();
+    std::fs::create_dir_all(&work).unwrap();
+    git(&origin, &["init", "-q", "--bare"]);
+    git(&work, &["init", "-q"]);
+    git(
+        &work,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    git(&work, &["commit", "-q", "--allow-empty", "-m", "one"]);
+    git(&work, &["switch", "-q", "-c", "feat/x"]);
+    work
+}
+
+#[test]
+fn a_push_is_credited_to_its_session_and_an_unchanged_repeat_to_no_one() {
+    let scene = Scene::new("push");
+    let work = real_repo(&scene);
+    let (_, created) = git(&work, &["push", "origin", "feat/x"]);
+    let first = git(&work, &["rev-parse", "HEAD"]).0.trim().to_owned();
+    scene.bash_done(
+        BETA_PID,
+        SESSION_B,
+        &work,
+        "git push origin feat/x",
+        "",
+        &created,
+    );
+    git(&work, &["commit", "-q", "--allow-empty", "-m", "two"]);
+    let (_, updated) = git(&work, &["push", "origin", "feat/x"]);
+    let second = git(&work, &["rev-parse", "HEAD"]).0.trim().to_owned();
+    // pushed from elsewhere, by path
+    let cwd = scene.root.clone();
+    let command = format!("git -C {} push origin feat/x", work.display());
+    scene.bash_done(BETA_PID, SESSION_B, &cwd, &command, "", &updated);
+    // a later commit does not move what was recorded; then an unchanged
+    // repeat push by another session says "Everything up-to-date"
+    git(&work, &["commit", "-q", "--allow-empty", "-m", "three"]);
+    git(&work, &["reset", "-q", "--hard", "HEAD~1"]);
+    let (_, nothing) = git(&work, &["push", "origin", "feat/x"]);
+    assert!(nothing.contains("Everything up-to-date"), "{nothing}");
+    scene.register(GAMMA_PID, SESSION_C, "gamma-name");
+    scene.bash_done(
+        GAMMA_PID,
+        SESSION_C,
+        &work,
+        "git push origin feat/x",
+        "",
+        &nothing,
+    );
+    let lines = scene.pushes();
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(
+        lines.iter().all(|line| line.contains(SESSION_B)),
+        "{lines:?}"
+    );
+    assert!(lines[0].ends_with(&first), "{lines:?}");
+    assert!(lines[1].ends_with(&second), "{lines:?}");
+    let (code, out, _) = scene.run(&["who-pushed", "feat/x"]);
+    assert_eq!(code, 0);
+    assert!(out.lines().all(|line| line.contains("beta-name")), "{out}");
+    assert!(!out.contains("gamma-name"), "{out}");
+    let (code, json, _) = scene.run(&["who-pushed", &second[..10], "--json"]);
+    assert_eq!(code, 0);
+    let rows: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(rows[0]["session"], SESSION_B);
+    let (code, _, err) = scene.run(&["who-pushed", "feat/none"]);
+    assert_eq!(code, 1);
+    assert!(err.starts_with("no pushes recorded for feat/none"), "{err}");
+}
+
+#[test]
+fn a_detached_land_is_credited_once_to_its_launcher_not_to_the_waiter() {
+    let scene = Scene::new("land");
+    let work = real_repo(&scene);
+    let receipt = scene.root.join("receipt-1.json");
+    let printed = format!(
+        "landing in the background; then: amont land --wait '{}'\n",
+        receipt.display()
+    );
+    scene.bash_done(
+        BETA_PID,
+        SESSION_B,
+        &work,
+        "amont land --detach",
+        &printed,
+        "",
+    );
+    // B clears; C waits on the receipt, twice
+    scene.register(
+        BETA_PID,
+        "eeeeeeee-0000-4000-8000-000000000005",
+        "beta-name",
+    );
+    scene.register(GAMMA_PID, SESSION_C, "gamma-name");
+    std::fs::write(
+        &receipt,
+        r#"{"started":1,"branch":"feat/x","pushed":"0123456789abcdef0123456789abcdef01234567","status":"landed"}"#,
+    )
+    .unwrap();
+    let wait = format!("amont land --wait '{}'", receipt.display());
+    scene.bash_done(GAMMA_PID, SESSION_C, &work, &wait, "landed", "");
+    scene.bash_done(GAMMA_PID, SESSION_C, &work, &wait, "landed", "");
+    let lines = scene.pushes();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].contains(SESSION_B), "{lines:?}");
+    assert!(lines[0].ends_with("0123456789abcdef0123456789abcdef01234567"));
 }

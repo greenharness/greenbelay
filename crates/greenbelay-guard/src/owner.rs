@@ -719,6 +719,10 @@ fn parse(text: &str) -> Option<Owner> {
 #[path = "owner/cli.rs"]
 pub mod command;
 
+/// Who published what: `pushes.log` and the launchers of detached lands.
+#[path = "owner/pushes.rs"]
+pub mod pushes;
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
