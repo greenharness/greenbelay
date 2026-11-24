@@ -29,7 +29,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::civil;
-use crate::journal::{self, Arm};
+use crate::journal::{self, Arm, Bucket};
 
 pub const FORMAT: &str = "greenbelay-rollup-v1";
 
@@ -59,8 +59,8 @@ pub struct Key {
     pub rule: String,
     pub stance: String,
     pub outcome: String,
-    /// `live` or `shadow`; the arm stays in the key so a reader drops shadow.
-    pub arm: String,
+    /// The arm stays in the key so a reader drops shadow.
+    pub arm: Arm,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -92,8 +92,29 @@ pub enum Loaded {
 pub enum FoldError {
     /// `rollup.log.lock` is held by someone else.
     Busy,
-    /// An I/O failure; the text is one whitespace-free token.
-    Io(String),
+    /// An I/O failure; [`FoldError::why`] renders it as one whitespace-free token.
+    Io(IoFailure),
+}
+
+/// An I/O failure: what kind, and on which file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IoFailure {
+    pub kind: std::io::ErrorKind,
+    pub path: PathBuf,
+}
+
+impl IoFailure {
+    fn new(error: &std::io::Error, path: &Path) -> IoFailure {
+        IoFailure {
+            kind: error.kind(),
+            path: path.to_path_buf(),
+        }
+    }
+
+    /// The kind as one whitespace-free token, as the journal writes it.
+    pub fn why(&self) -> String {
+        self.kind.to_string().replace(char::is_whitespace, "-")
+    }
 }
 
 impl FoldError {
@@ -101,7 +122,7 @@ impl FoldError {
     pub fn why(&self) -> String {
         match self {
             FoldError::Busy => "lock-busy".to_string(),
-            FoldError::Io(why) => why.clone(),
+            FoldError::Io(failure) => failure.why(),
         }
     }
 }
@@ -116,19 +137,15 @@ pub enum Folded {
     DroppedFuture(u64),
 }
 
-fn io_why(error: &std::io::Error) -> String {
-    error.kind().to_string().replace(char::is_whitespace, "-")
-}
-
 /// Read `path`. A missing or empty file is an empty roll-up; an unreadable one
-/// is an `Err` carrying the reason.
-pub fn read(path: &Path) -> Result<Loaded, String> {
+/// is an `Err` carrying the [`IoFailure`] (kind and path).
+pub fn read(path: &Path) -> Result<Loaded, IoFailure> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Ok(Loaded::Rollup(Rollup::default()));
         }
-        Err(e) => return Err(io_why(&e)),
+        Err(e) => return Err(IoFailure::new(&e, path)),
     };
     Ok(parse(&text))
 }
@@ -161,12 +178,15 @@ impl Rollup {
                 let (Some(week), Ok(count)) = (civil::day_of(week), count.parse::<u64>()) else {
                     return false;
                 };
+                let Some(arm) = Arm::from_name(arm) else {
+                    return false;
+                };
                 let key = Key {
                     week,
                     rule: (*rule).to_string(),
                     stance: (*stance).to_string(),
                     outcome: (*outcome).to_string(),
-                    arm: (*arm).to_string(),
+                    arm,
                 };
                 *self.rows.entry(key).or_default() += count;
                 true
@@ -195,7 +215,7 @@ impl Rollup {
                 key.rule,
                 key.stance,
                 key.outcome,
-                key.arm
+                key.arm.name()
             ));
         }
         for ((week, tool), count) in &self.calls {
@@ -228,7 +248,7 @@ impl Rollup {
             if row.ts <= floor {
                 continue;
             }
-            if !is_firing(&row.stance, &row.outcome) {
+            if Bucket::of(&row.stance, &row.outcome).is_none() {
                 continue;
             }
             let key = Key {
@@ -236,11 +256,7 @@ impl Rollup {
                 rule: row.rule,
                 stance: row.stance,
                 outcome: row.outcome,
-                arm: match row.arm {
-                    Arm::Live => "live",
-                    Arm::Shadow => "shadow",
-                }
-                .to_string(),
+                arm: row.arm,
             };
             *self.rows.entry(key).or_default() += 1;
         }
@@ -268,15 +284,6 @@ impl Rollup {
         self.rows.retain(|key, _| key.week >= cutoff);
         self.calls.retain(|(week, _), _| *week >= cutoff);
     }
-}
-
-/// The buckets `journal::tally` counts: a decision outcome, or an unconfirmed
-/// or unverified stance (whose outcome field carries the reason). Notes such
-/// as `rules-checked` and the `F` records about the journal itself are not
-/// firings.
-fn is_firing(stance: &str, outcome: &str) -> bool {
-    matches!(stance, "unconfirmed" | "unverified")
-        || matches!(outcome, "denied" | "advised" | "watched")
 }
 
 /// The calls a report divides by: tool name counts per week.
@@ -435,7 +442,7 @@ pub fn fold_generation(generation: &Path, rollup: &Path) -> Result<Folded, FoldE
     let text = match fs::read_to_string(generation) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Folded::Counted),
-        Err(e) => return Err(FoldError::Io(io_why(&e))),
+        Err(e) => return Err(FoldError::Io(IoFailure::new(&e, generation))),
     };
     let mut current = match read(rollup).map_err(FoldError::Io)? {
         Loaded::Rollup(current) => current,
@@ -447,7 +454,8 @@ pub fn fold_generation(generation: &Path, rollup: &Path) -> Result<Folded, FoldE
             elapsed.as_secs().saturating_add(SECONDS_PER_DAY)
         }); // a clock before the epoch drops nothing
     if current.fold_text(&text, ceiling) {
-        write_atomic(rollup, &current.render()).map_err(|err| FoldError::Io(io_why(&err)))?;
+        write_atomic(rollup, &current.render())
+            .map_err(|err| FoldError::Io(IoFailure::new(&err, rollup)))?;
     }
     Ok(match current.dropped_future {
         0 => Folded::Counted,
@@ -517,8 +525,8 @@ fn remove_stale_temps(target: &Path, name: &str) {
 pub enum Problem {
     /// The header named a version this build does not read.
     UnknownVersion(String),
-    /// An I/O failure, as one token.
-    Unreadable(String),
+    /// An I/O failure; the journal gets its kind as one token.
+    Unreadable(IoFailure),
 }
 
 /// What the roll-up and the journal hold together.
@@ -543,7 +551,7 @@ pub fn load(journal_paths: &[PathBuf], rollup_path: &Path) -> Counted {
         Ok(Loaded::UnknownVersion(version)) => {
             (Rollup::default(), Some(Problem::UnknownVersion(version)))
         }
-        Err(why) => (Rollup::default(), Some(Problem::Unreadable(why))),
+        Err(failure) => (Rollup::default(), Some(Problem::Unreadable(failure))),
     };
     let watermark = rollup.watermark;
     Counted {
@@ -622,7 +630,8 @@ pub fn freeze_calls(
         written.push(week);
     }
     if !written.is_empty() {
-        write_atomic(path, &current.render()).map_err(|err| FoldError::Io(io_why(&err)))?;
+        write_atomic(path, &current.render())
+            .map_err(|err| FoldError::Io(IoFailure::new(&err, path)))?;
     }
     Ok(written)
 }
@@ -699,15 +708,12 @@ struct Buckets {
 
 impl Buckets {
     fn add(&mut self, stance: &str, outcome: &str, count: u64) {
-        if matches!(stance, "unconfirmed" | "unverified") {
-            self.unconfirmed += count;
-            return;
-        }
-        match outcome {
-            "denied" => self.denied += count,
-            "advised" => self.advised += count,
-            "watched" => self.watched += count,
-            _ => {}
+        match Bucket::of(stance, outcome) {
+            Some(Bucket::Unconfirmed) => self.unconfirmed += count,
+            Some(Bucket::Denied) => self.denied += count,
+            Some(Bucket::Advised) => self.advised += count,
+            Some(Bucket::Watched) => self.watched += count,
+            None => {}
         }
     }
 }
@@ -755,7 +761,7 @@ pub fn build(
 ) -> Report {
     let mut firings: BTreeMap<(civil::Day, &str), Buckets> = BTreeMap::new();
     for (key, count) in &counted.rollup.rows {
-        if key.arm == "live" {
+        if key.arm == Arm::Live {
             firings
                 .entry((key.week, key.rule.as_str()))
                 .or_default()
@@ -763,7 +769,7 @@ pub fn build(
         }
     }
     for row in &counted.journal {
-        if row.arm == Arm::Live && is_firing(&row.stance, &row.outcome) {
+        if row.arm == Arm::Live && Bucket::of(&row.stance, &row.outcome).is_some() {
             firings
                 .entry((week_of(row.ts), row.rule.as_str()))
                 .or_default()
@@ -917,7 +923,7 @@ mod tests {
         rollup
             .rows
             .iter()
-            .filter(|(k, _)| k.rule == rule && k.arm == "live")
+            .filter(|(k, _)| k.rule == rule && k.arm == Arm::Live)
             .map(|(_, n)| n)
             .sum()
     }
@@ -1220,7 +1226,7 @@ mod tests {
                     rule: (*rule).to_string(),
                     stance: "deny".to_string(),
                     outcome: "denied".to_string(),
-                    arm: "live".to_string(),
+                    arm: Arm::Live,
                 },
                 *count,
             );

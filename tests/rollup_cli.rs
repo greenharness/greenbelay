@@ -97,3 +97,91 @@ fn an_unknown_rollup_version_exits_1_with_no_report() {
     assert!(out.is_empty(), "{out}");
     assert!(err.contains("format"), "{err}");
 }
+
+/// Proleptic Gregorian date of a day count since 1970-01-01 (Hinnant).
+fn civil_from_days(days: u64) -> (u64, u64, u64) {
+    let shifted = days + 719_468;
+    let era = shifted / 146_097;
+    let day_of_era = shifted % 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_index = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
+    let month = if month_index < 10 {
+        month_index + 3
+    } else {
+        month_index - 9
+    };
+    let year = year_of_era + era * 400 + u64::from(month <= 2);
+    (year, month, day)
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_transcript_skips_the_freeze() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let home = Home::new("unreadable");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock is past the epoch")
+        .as_secs();
+    // A record a week old puts last week, a closed week, in reach of the freeze.
+    let week_old = now - 7 * 86_400;
+    std::fs::write(
+        home.0.join("greenbelay/journal.log"),
+        format!("F {week_old} r deny denied sess repo default x\n"),
+    )
+    .expect("a journal with one old record");
+    let (year, month, day) = civil_from_days(week_old / 86_400);
+    let entry = format!(
+        "{{\"timestamp\":\"{year:04}-{month:02}-{day:02}T12:00:00Z\",\"sessionId\":\"s\",\"message\":{{\"content\":[{{\"type\":\"tool_use\",\"name\":\"Bash\",\"id\":\"t1\",\"input\":{{\"command\":\"ls\"}}}}]}}}}\n"
+    );
+    std::fs::write(home.0.join("projects/p/readable.jsonl"), entry)
+        .expect("a transcript that reads whole, with one call in the closed week");
+    let transcript = home.0.join("projects/p/session.jsonl");
+    std::fs::write(&transcript, "{}\n").expect("a transcript");
+    std::fs::set_permissions(&transcript, std::fs::Permissions::from_mode(0o000))
+        .expect("the transcript is made unreadable");
+    if std::fs::File::open(&transcript).is_ok() {
+        eprintln!(
+            "skipped: this user ignores file modes, so the transcript cannot be made unreadable"
+        );
+        return;
+    }
+    let dir = home.0.display().to_string();
+    let (code, out, err) = home.run(&["--json", "--transcripts", &dir]);
+    assert_eq!(code, 0, "{out} {err}");
+    assert!(
+        err.contains("transcript file(s) unreadable; calls of closed weeks not stored"),
+        "{err}"
+    );
+    assert!(
+        !home.0.join("greenbelay/rollup.log").exists(),
+        "the freeze wrote a roll-up from a partial scan"
+    );
+}
+
+#[test]
+fn a_readable_transcript_freezes_the_closed_week() {
+    let home = Home::new("freezes");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock is past the epoch")
+        .as_secs();
+    let week_old = now - 7 * 86_400;
+    std::fs::write(
+        home.0.join("greenbelay/journal.log"),
+        format!("F {week_old} r deny denied sess repo default x\n"),
+    )
+    .expect("a journal with one old record");
+    let (year, month, day) = civil_from_days(week_old / 86_400);
+    let entry = format!(
+        "{{\"timestamp\":\"{year:04}-{month:02}-{day:02}T12:00:00Z\",\"sessionId\":\"s\",\"message\":{{\"content\":[{{\"type\":\"tool_use\",\"name\":\"Bash\",\"id\":\"t1\",\"input\":{{\"command\":\"ls\"}}}}]}}}}\n"
+    );
+    std::fs::write(home.0.join("projects/p/readable.jsonl"), entry).expect("a transcript");
+    let dir = home.0.display().to_string();
+    let (code, out, err) = home.run(&["--json", "--transcripts", &dir]);
+    assert_eq!(code, 0, "{out} {err}");
+    assert!(home.0.join("greenbelay/rollup.log").exists(), "{err}");
+}

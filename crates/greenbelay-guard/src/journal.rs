@@ -151,6 +151,35 @@ pub struct Seen {
     pub reasons: std::collections::BTreeMap<String, u64>,
 }
 
+/// The bucket a record's stance and outcome fall in. The one classifier the
+/// journal's reader and the roll-up share.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bucket {
+    Denied,
+    Advised,
+    Watched,
+    /// `examine` fired and `confirm` declined, or an assertion could not check
+    /// its claim; the outcome field carries the reason.
+    Unconfirmed,
+}
+
+impl Bucket {
+    /// The bucket of one record; `None` for notes beside a push that passed
+    /// (`rules-checked` and `candidates-checked`, ADR-0044) and any outcome
+    /// this reader does not know, which are no decision.
+    pub fn of(stance: &str, outcome: &str) -> Option<Bucket> {
+        if matches!(stance, "unconfirmed" | "unverified") {
+            return Some(Bucket::Unconfirmed);
+        }
+        match outcome {
+            "denied" => Some(Bucket::Denied),
+            "advised" => Some(Bucket::Advised),
+            "watched" => Some(Bucket::Watched),
+            _ => None,
+        }
+    }
+}
+
 impl Seen {
     pub fn total(&self) -> u64 {
         self.denied
@@ -161,23 +190,19 @@ impl Seen {
 
     /// Count `records` records of one stance and outcome.
     pub fn count(&mut self, stance: &str, outcome: &str, records: u64) {
-        match (stance, outcome) {
-            // A `confirm` that declined, or an assertion that could not check
-            // its claim. The outcome field carries the reason; older records
-            // wrote the literal `skipped` there, which counts as a reason
-            // nobody stated.
-            ("unconfirmed" | "unverified", why) => {
+        match Bucket::of(stance, outcome) {
+            // The outcome field of an unconfirmed record carries the reason;
+            // older records wrote the literal `skipped` there, which counts as
+            // a reason nobody stated.
+            Some(Bucket::Unconfirmed) => {
                 self.unconfirmed = self.unconfirmed.saturating_add(records);
-                let reason = self.reasons.entry(why.to_string()).or_default();
+                let reason = self.reasons.entry(outcome.to_string()).or_default();
                 *reason = reason.saturating_add(records);
             }
-            (_, "denied") => self.denied = self.denied.saturating_add(records),
-            (_, "advised") => self.advised = self.advised.saturating_add(records),
-            (_, "watched") => self.watched = self.watched.saturating_add(records),
-            // `rules-checked` and `candidates-checked` (ADR-0044) are notes
-            // beside a push that passed, never a decision; an outcome this
-            // reader does not know is none of the four buckets it can name.
-            _ => {}
+            Some(Bucket::Denied) => self.denied = self.denied.saturating_add(records),
+            Some(Bucket::Advised) => self.advised = self.advised.saturating_add(records),
+            Some(Bucket::Watched) => self.watched = self.watched.saturating_add(records),
+            None => {}
         }
     }
 
@@ -225,7 +250,7 @@ pub(crate) fn tally_in(
     let counted = crate::rollup::load(journal_paths, rollup_path);
     for (key, count) in &counted.rollup.rows {
         let week_end = u64::try_from(key.week + 7).unwrap_or(0) * 86_400;
-        if key.arm == "live" && week_end > floor {
+        if key.arm == Arm::Live && week_end > floor {
             out.entry(key.rule.clone())
                 .or_default()
                 .count(&key.stance, &key.outcome, *count);
@@ -259,7 +284,7 @@ pub fn tally_at(
 
 /// Which arm of the ADR-0042 shadow a record belongs to. `Live` is every
 /// record that carries no `arm=` field, so an old journal reads as live.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Arm {
     Live,
     Shadow,
@@ -271,6 +296,23 @@ impl Arm {
         match self {
             Arm::Live => "arm=live",
             Arm::Shadow => "arm=shadow",
+        }
+    }
+
+    /// The arm as the roll-up's `R` rows write it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Arm::Live => "live",
+            Arm::Shadow => "shadow",
+        }
+    }
+
+    /// The arm an `R` row names, if it names one this build knows.
+    pub fn from_name(name: &str) -> Option<Arm> {
+        match name {
+            "live" => Some(Arm::Live),
+            "shadow" => Some(Arm::Shadow),
+            _ => None,
         }
     }
 
