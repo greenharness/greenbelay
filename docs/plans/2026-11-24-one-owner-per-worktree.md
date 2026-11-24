@@ -334,6 +334,10 @@ under `NO_COLOR` and when stdout is not a TTY (reuse guard/ui.rs). The board's i
     does not fit; `/` travels with the UUID.
   - A record that does not read holds its slot (exit 3, journal `unknown`);
     only `--steal` replaces it. The plan had left that case open.
+  - The owner feature is unix only: the caller walk needs parent pids, so
+    off unix it makes no claim. `tests/owner_hooks.rs` and
+    `tests/three_sessions_one_owner.rs` are `#![cfg(unix)]`, like
+    `tests/board.rs` (Windows CI failed them on PR #328).
 
 ## Verification
 

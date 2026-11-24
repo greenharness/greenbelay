@@ -2,6 +2,11 @@
 //! observed `relais programme claim`, and the `work-overlap` text that names
 //! the owner. Every path is sandboxed: the config dir, the host registry
 //! directory and the git config never touch the real `~/.claude`.
+//!
+//! Unix only: the owner feature finds its caller by walking parent pids
+//! (`parent_id`, then `ps`), which only works on unix, so off unix it makes
+//! no claim; these fixtures exercise that path.
+#![cfg(unix)]
 
 use std::io::Write;
 use std::path::{Path, PathBuf};

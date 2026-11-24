@@ -4,6 +4,11 @@
 //! The clear-relay starts C on `resume … f107-…`. B pushes from another
 //! worktree. Every path is sandboxed: a scratch git repository, a fake host
 //! registry, a private config dir.
+//!
+//! Unix only: the owner feature finds its caller by walking parent pids
+//! (`parent_id`, then `ps`), which only works on unix, so off unix it makes
+//! no claim; these fixtures exercise that path.
+#![cfg(unix)]
 
 use std::io::Write;
 use std::path::{Path, PathBuf};

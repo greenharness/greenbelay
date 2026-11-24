@@ -105,6 +105,9 @@ prints each recorded push, newest first: `<ago>  <name>  <uuid8>  <state>
 
 ## Limits
 
+- Unix only: the calling session is found by walking parent pids, which
+  only works on unix. Elsewhere no record is ever made, so there is nothing
+  to show.
 - The session file is the host's own, undocumented store; a format change
   reads as `unknown`, never as `gone`.
 - A ticket is found only through a ticket record or a worktree on its
