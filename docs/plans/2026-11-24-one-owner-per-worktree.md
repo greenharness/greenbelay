@@ -409,6 +409,14 @@ Observed on the final tree before the push (input → expected → actual):
 - Workspace: clippy `-D warnings` and `cargo test --workspace` → clean; the
   commit gate's 28 checks → passed.
 
+## Implementation review
+
+- implementation-review approve (r2; r1 approve-with-changes, 3 blocking fixed: results, stderr, discards); 115k+112k, 128+58 s, opus.
+- backend, unix, tui approve-with-changes (r2): fixed unreadable-record hold, refusal text, takeover failure, launcher order; carried lows: release of an unreadable or gone-held record, wait race, ps-timeout skip.
+- lang:rust approve-with-changes (r2): carried `Continued` flag+option → enum, typed `take_over` error, `Option` names and placeholders, purity split.
+- architect approve (r2): peer_owners takes the store, test pid sandboxed; carried: one construction site for the store.
+- deliberate: carried items go to a follow-up ticket via the greenbelay inbox; distinct failure exit code and `--` with them.
+
 ## After release (7 days)
 
 - Live, right after the install: the session running the check runs
