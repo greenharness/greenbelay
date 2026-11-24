@@ -3903,12 +3903,10 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
     while let Some(arg) = iter.next() {
         let text = arg.to_string_lossy().into_owned();
         let (name, inline) = match text.split_once('=') {
-            Some((name, value)) if name.starts_with("--") => {
-                (name.to_string(), Some(value.to_string()))
-            }
-            _ => (text.clone(), None),
+            Some((name, value)) if name.starts_with("--") => (name, Some(value.to_string())),
+            _ => (text.as_str(), None),
         };
-        match name.as_str() {
+        match name {
             "-q" | "--quiet" => quiet = true,
             "--weeks" => {
                 let given =

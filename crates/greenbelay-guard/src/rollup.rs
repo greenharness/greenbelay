@@ -480,8 +480,10 @@ fn write_atomic(target: &Path, contents: &str) -> std::io::Result<()> {
         file.sync_all()?;
         fs::rename(&temp, target)?;
         // The rename is durable only once its directory entry is.
+        // Best effort: the file is in place either way, so a failed sync is
+        // not a failed write.
         if let Some(parent) = target.parent().filter(|dir| !dir.as_os_str().is_empty()) {
-            fs::File::open(parent)?.sync_all()?;
+            let _synced = fs::File::open(parent).and_then(|dir| dir.sync_all());
         }
         Ok(())
     })();
@@ -1249,6 +1251,63 @@ mod tests {
             json.contains("\"tool\":\"Bash\"") && json.contains("\"tool\":null"),
             "{json}"
         );
+    }
+
+    #[test]
+    fn a_week_starting_before_coverage_prints_no_calls() {
+        let mut counted = Counted::default();
+        // Coverage starts on the Wednesday of the Monday's week.
+        counted.rollup.covered_since =
+            Some(MONDAY_DAY as u64 * SECONDS_PER_DAY + 2 * SECONDS_PER_DAY);
+        let mut all = Calls::new();
+        all.entry(MONDAY_DAY)
+            .or_default()
+            .insert("Bash".to_string(), 500);
+        let known = [Known {
+            id: "pipe-to-tail",
+            replay: "exact",
+        }];
+        let report = build(&counted, &all, &known, MONDAY_DAY + 8, &[MONDAY_DAY]);
+        assert!(report.weeks[0].partial);
+        assert_eq!(report.weeks[0].rules[0].calls, None);
+        assert!(report.to_json().contains("\"rate\":null"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_transcript_is_counted_so_nothing_is_frozen() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("unreadable-transcript");
+        fs::create_dir_all(dir.join("projects/p")).unwrap();
+        let locked = dir.join("projects/p/locked.jsonl");
+        fs::write(&locked, call_line("t1", "Bash", "2023-11-14", false)).unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        let scanned = crate::transcript::calls_by_week(&transcript_roots(&dir), None).unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o600)).unwrap();
+        // Running as root reads the file anyway: nothing to assert then.
+        if scanned.weeks.is_empty() {
+            assert_eq!(scanned.unreadable, 1);
+        }
+    }
+
+    #[test]
+    fn a_transcript_older_than_the_floor_is_not_read() {
+        let dir = scratch("mtime-floor");
+        fs::create_dir_all(dir.join("projects/p")).unwrap();
+        let old = dir.join("projects/p/old.jsonl");
+        fs::write(&old, call_line("t1", "Bash", "2023-11-14", false)).unwrap();
+        let long_ago = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
+        fs::File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+        let skipped =
+            crate::transcript::calls_by_week(&transcript_roots(&dir), Some(MONDAY_DAY)).unwrap();
+        assert!(skipped.weeks.is_empty(), "{:?}", skipped.weeks);
+        let read = crate::transcript::calls_by_week(&transcript_roots(&dir), None).unwrap();
+        assert_eq!(read.weeks[&MONDAY_DAY]["Bash"], 1);
     }
 
     #[test]

@@ -154,7 +154,7 @@ pub struct Stats {
     pub events: u64,
     /// Files that could not be opened, and files whose read failed midway.
     /// A count built over either is a lower bound, not a total.
-    pub unreadable: usize,
+    pub unreadable: u64,
 }
 
 /// What the transcript says became of a call.
@@ -583,9 +583,10 @@ pub fn calls_by_week(roots: &Roots, since: Option<Day>) -> Result<CallScan, Scan
 
 /// Tool calls per week and tool, and how many files the walk could not read
 /// whole: with any, the counts are lower bounds and must not be frozen.
+#[derive(Debug)]
 pub struct CallScan {
     pub weeks: std::collections::BTreeMap<Day, std::collections::BTreeMap<String, u64>>,
-    pub unreadable: usize,
+    pub unreadable: u64,
 }
 
 /// The `tool_use_id` of a result line, or `None` when this is not one.
