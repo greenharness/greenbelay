@@ -272,4 +272,47 @@ counts UTF-16 units (`encode_utf16().count()`), because the relay measures
 - `make check` exits 0 on the PR head, and the corpus check lists the 6
   new fixtures with their labels (4 `match`, 2 `nomatch`).
 
+## Verification results
+
+Observed 2026-11-24, before the push. Each check is input → expected →
+actual.
+
+- `cargo test -p greenbelay-guard --lib clear_at_boundary` → every
+  `HANDOFF_CASES` row holds → 7 passed. `every_handoff_case_reads_as_the_relay_reads_it`
+  runs 31 cases.
+- `claude plugin test plugin/clear-relay` → the suite passes and the table
+  runs through the engine → 68 pass, 0 fail. 31 are `handoff case:` tests,
+  the same 31 rows as Rust.
+- `cargo test -p greenbelay-process --lib clear_boundary` → the cases
+  below pass → they pass:
+  - near-miss Continue with its reason;
+  - armed and parked lines stay silent;
+  - the marker mid-text no longer silences;
+  - a second near-miss in a continued turn gets no second Continue;
+  - command and size advise notes name the reason (tested separately);
+  - the fixture `last_line` is checked against `marker`.
+- `cargo test -p greenbelay --test corpus --test corpus_stop` → the
+  reviewed cases plus the 6 new fixtures hold → pass, with
+  clear-at-boundary at 33 reviewed (16 negative).
+- Pilot, sandboxed with `HOME`, `XDG_STATE_HOME`, `CLAUDE_CONFIG_DIR` and
+  `GIT_CONFIG_GLOBAL` set to scratch, at `deny`, on a 300k transcript whose
+  turn ran `git worktree remove ../wt`:
+  - the 836b5b71-shaped line gives a block on stdout (517 bytes) naming
+    "does not arm on it: the prompt after `next: ` is not wrapped in
+    backticks" → exit 0, stderr 0 bytes, journal
+    `denied … worktree remove near-miss:missing-backticks uuid=e2`;
+  - the backticked line gives stdout 0 bytes, stderr 0 bytes, exit 0.
+- `claude plugin validate plugin/clear-relay` → passes, with warnings →
+  passes with 29 warnings, the same count as `origin/main`'s files (the
+  test file's TS typing warnings).
+- The 7-day count, over main-chain assistant texts holding
+  `safe to /clear` in `~/.claude/projects/*/*.jsonl` modified since
+  2026-11-17: 264 texts.
+  - 243 are armed (230 `next`, 13 `parked`).
+  - 8 are `missing-backticks`, all the bare-prompt shape.
+  - 13 hold the marker mid-text.
+  - So at most 21 newly judged turns in 7 days, about 3 a day. That is
+    an upper bound: the rule speaks only at a boundary past 200k with
+    nothing in flight.
+
 <!-- panel: repos=greenbelay,decisions reviewers=backend,lang:rust,lang:typescript,tui,unix,codex body-sha=2afacd0e818a -->

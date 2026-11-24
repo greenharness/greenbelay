@@ -2005,7 +2005,7 @@ impl StopView {
 pub(crate) fn near_miss_of(line: &HandoffLine) -> Option<NearMiss> {
     match line {
         HandoffLine::NearMiss(miss) => Some(*miss),
-        _ => None,
+        HandoffLine::Absent | HandoffLine::Next(_) | HandoffLine::Parked => None,
     }
 }
 
@@ -4984,16 +4984,6 @@ mod size_kind_tests {
         vec![prompt("p1"), at(size, "b1", "git worktree remove /tmp/wt")]
     }
 
-    /// A [`Decision`]'s kind, for a failing assertion's message.
-    fn kind(decision: &Decision) -> &'static str {
-        match decision {
-            Decision::Silent => "Silent",
-            Decision::Continue(_) => "Continue",
-            Decision::UserNote(_) => "UserNote",
-            _ => "another decision",
-        }
-    }
-
     fn view_of(message: &str) -> StopView {
         let stop = greenbelay_guard::payload::Stop {
             session: "s1".to_string(),
@@ -5059,7 +5049,7 @@ mod size_kind_tests {
             Stance::Observe,
         );
         let Decision::Continue(text) = &out.verdict.decision else {
-            panic!("expected a Continue, got {}", kind(&out.verdict.decision));
+            panic!("expected a Continue");
         };
         for needle in [
             "the clear-relay plugin does not arm on it: the prompt after `next: ` is not wrapped in backticks",
@@ -5106,7 +5096,7 @@ mod size_kind_tests {
             Stance::Observe,
         );
         let Decision::UserNote(note) = &command.verdict.decision else {
-            panic!("expected a note, got {}", kind(&command.verdict.decision));
+            panic!("expected a note");
         };
         assert!(note.contains("This turn ended with a handoff line the clear-relay plugin does not arm on: the prompt after `next: ` is not wrapped in backticks."), "{note}");
         assert!(!note.contains("ended without that line"), "{note}");
@@ -5124,7 +5114,7 @@ mod size_kind_tests {
             Stance::Advise,
         );
         let Decision::UserNote(note) = &size.verdict.decision else {
-            panic!("expected a size note, got {}", kind(&size.verdict.decision));
+            panic!("expected a size note");
         };
         assert!(
             note.contains(
@@ -5198,11 +5188,7 @@ mod size_kind_tests {
                 true
             },
         );
-        assert!(
-            matches!(second.decision, Decision::Silent),
-            "{}",
-            kind(&second.decision)
-        );
+        assert!(matches!(second.decision, Decision::Silent));
     }
 
     #[test]

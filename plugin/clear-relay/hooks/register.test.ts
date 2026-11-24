@@ -425,25 +425,25 @@ test('no stateDir: an empty HOME falls through to USERPROFILE', { options: {} },
 
 // The grammar both readers share (handoff-cases.ts; greenbelay-guard's tests
 // read the same block), each case through the engine on a fresh relay.
-function caseAnswer(c: HandoffCase): { answer: string; prompt?: string } {
-  if (c.next_repeat !== undefined) {
-    const prompt = `${c.next_repeat.unit.repeat(c.next_repeat.count)}${c.next_repeat.tail ?? ''}`
+function caseAnswer(handoffCase: HandoffCase): { answer: string; prompt?: string } {
+  if (handoffCase.next_repeat !== undefined) {
+    const prompt = `${handoffCase.next_repeat.unit.repeat(handoffCase.next_repeat.count)}${handoffCase.next_repeat.tail ?? ''}`
     return { answer: `safe to /clear; next: \`${prompt}\``, prompt }
   }
-  return { answer: c.answer ?? '', prompt: c.prompt }
+  return { answer: handoffCase.answer ?? '', prompt: handoffCase.prompt }
 }
 
 test('the shared table holds at least 30 cases', () => {
   expect(HANDOFF_CASES.length).toBeGreaterThanOrEqual(30)
 })
 
-for (const c of HANDOFF_CASES) {
-  test(`handoff case: ${c.name}`, OPTIONS, async ($, on) => {
+for (const handoffCase of HANDOFF_CASES) {
+  test(`handoff case: ${handoffCase.name}`, OPTIONS, async ($, on) => {
     const world = stage($, on)
-    const { answer: text, prompt } = caseAnswer(c)
+    const { answer: text, prompt } = caseAnswer(handoffCase)
     await answer($, text)
     await world.clock.advance(COUNTDOWN_MS)
-    switch (c.kind) {
+    switch (handoffCase.kind) {
       case 'next':
         expect(world.commands).toEqual(['clear'])
         expect(world.submitted).toEqual([prompt])
@@ -460,7 +460,7 @@ for (const c of HANDOFF_CASES) {
         expect(world.commands).toEqual([])
         expect(world.submitted).toEqual([])
         expect(events(world, 's1')).toEqual(['near-miss'])
-        expect(logLines(world, 's1')[0]?.reason).toBe(c.reason)
+        expect(logLines(world, 's1')[0]?.reason).toBe(handoffCase.reason)
         expect(world.toasts.length).toBe(1)
         break
     }
