@@ -270,7 +270,10 @@ mod tests {
         include_str!("../../../../plugin/clear-relay/hooks/handoff-cases.ts");
 
     fn handoff_cases() -> Vec<serde_json::Value> {
-        let block = HANDOFF_CASES
+        // A Windows checkout may carry CRLF (no .gitattributes pins it); the
+        // JSON escapes its own `\r`s, so only the file's line ends change.
+        let source = HANDOFF_CASES.replace("\r\n", "\n");
+        let block = source
             .split_once("// handoff-cases:begin\n")
             .and_then(|(_, rest)| rest.split_once("// handoff-cases:end"))
             .map(|(block, _)| block)
