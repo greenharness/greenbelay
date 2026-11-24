@@ -153,6 +153,31 @@ test('a resume prompt whose third word is no ticket id names nothing', OPTIONS, 
   expect(logLines(world, 's1')[2]).toMatchObject({ event: 'submit', named: null })
 })
 
+// The two prompt forms of a size handoff (ADR-0083), as the greenbelay
+// clear-at-boundary size Continue asks for them.
+const SIZE_OPENING = 'size boundary at 450k: handing off mid-phase (off: git config --global greenbelay.clear-at-boundary.size-stance observe)'
+
+test('a mid-phase size handoff in a programme arms and names its ticket', OPTIONS, async ($, on) => {
+  const world = stage($, on)
+  const prompt = 'resume greenbelay follow-ups t02-three-sessions-one-owner: mid-phase, the owner check'
+  await answer($, `${SIZE_OPENING}\n\nHandoff committed.\n\nsafe to /clear; next: \`${prompt}\`\n`)
+  await world.clock.advance(COUNTDOWN_MS)
+  expect(world.submitted).toEqual([prompt])
+  expect(logLines(world, 's1')[2]).toMatchObject({
+    event: 'submit',
+    named: { repo: 'greenbelay', programme: 'follow-ups', ticket: 't02-three-sessions-one-owner' },
+  })
+})
+
+test('a mid-phase size handoff outside a programme arms and names nothing', OPTIONS, async ($, on) => {
+  const world = stage($, on)
+  const prompt = 'resume Phase 3: size kind; worktree /work/repo-wt-size, plan docs/plans/2026-11-23-p.md; read its ## Handoff'
+  await answer($, `${SIZE_OPENING}\n\nHandoff committed.\n\nsafe to /clear; next: \`${prompt}\`\n`)
+  await world.clock.advance(COUNTDOWN_MS)
+  expect(world.submitted).toEqual([prompt])
+  expect(logLines(world, 's1')[2]).toMatchObject({ event: 'submit', named: null })
+})
+
 // A regression guard, not this change's evidence: the park line of ADR-0078
 // keeps `safe to /clear` and must never match the relay's `next:` pattern.
 test('a handoff line with no next: prompt (a park) never arms', OPTIONS, async ($, on) => {

@@ -29,19 +29,47 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::plan_phases::PhaseFact;
+use crate::size_evidence::{Kind as SizeKind, Outcome as SizeOutcome};
 
 pub use greenbelay_guard::rules::clear_at_boundary::MARKER;
 
 /// The context size, in tokens, past which a clear pays for itself.
 ///
-/// Break-even: a fresh session re-reads its prefix R once at the 5-minute
-/// cache write price, 25 times a cache read on Opus 5.5 (`25·R`), while the
-/// session kept going pays a read `R` less than a read of the bigger context
-/// `S` each later turn (`S − R`). Clearing wins after `k = 25·R/(S − R)`
-/// further turns. With the prefix R of about 100k tokens, S = 200k gives
-/// `k = 25`: a session expected to run 25 more turns repays the clear, and
-/// every larger S repays it sooner.
+/// Break-even under the 1-hour prompt cache: a fresh session writes its
+/// prefix R once at the 1-hour write price, twice the base input price or 20
+/// cache reads (`20·R`), while the session kept going pays a read of the
+/// bigger context `S` rather than of `R` each later turn (`S − R`). Clearing
+/// wins after `k = 20·R/(S − R)` further turns. With the prefix R of about
+/// 100k tokens, S = 200k gives `k = 20`: a session expected to run 20 more
+/// turns repays the clear, and every larger S repays it sooner.
 pub const SIZE: u64 = 200_000;
+
+/// The size boundary (ADR-0083): past it, an idle Stop hands off mid-phase
+/// even with no command boundary. `greenbelay.clear-at-boundary.size-tokens`
+/// moves it, never below [`SIZE`].
+///
+/// A mid-phase resume re-reads more than a bare prefix (the plan, the diff,
+/// the files), so take R ≈ 150k: at S = 400k, `k = 20·150k/250k = 12` turns,
+/// and the long phases this targets run for far more. A mid-phase handoff
+/// loses working knowledge a command boundary does not, which is why the
+/// threshold is not [`SIZE`].
+pub const SIZE_BOUNDARY: u64 = greenbelay_guard::rules::clear_at_boundary::SIZE_TOKENS_DEFAULT;
+
+/// The size kind fires again only at each further step past the threshold.
+pub const SIZE_STEP: u64 = 100_000;
+
+/// The most size fires one session gets, apart from the command kind's
+/// [`MAX_ADVICES_PER_SESSION`].
+pub const MAX_SIZE_FIRES: u32 = 3;
+
+/// The step a context size is at: 1 from the threshold, 2 from one
+/// [`SIZE_STEP`] past it, and so on; 0 below the threshold.
+pub(crate) fn size_step(size: u64, tokens: u64) -> u32 {
+    if size < tokens {
+        return 0;
+    }
+    u32::try_from((size - tokens) / SIZE_STEP + 1).unwrap_or(u32::MAX)
+}
 
 /// The most advices one session gets; from the next boundary on the rule is
 /// silent (`watched cap`). Backtest: 789 advices, 44 sessions over 3, at
@@ -212,7 +240,7 @@ pub struct TurnWindow<'a> {
 
 /// A `user` entry that is a person's prompt and not a tool result or a
 /// harness-injected message.
-fn is_prompt(entry: &Value) -> bool {
+pub(crate) fn is_prompt(entry: &Value) -> bool {
     if entry_type(entry) != "user" || is_sidechain(entry) || entry["isMeta"].as_bool() == Some(true)
     {
         return false;
@@ -1351,10 +1379,13 @@ fn commit_subject(rest: &[String]) -> Option<String> {
     body.lines().next().map(str::to_string)
 }
 
-/// A `docs(plan): …, done` or `…, phase N` commit closes a plan.
+/// A `docs(plan): …, done` or `…, phase N` commit closes a plan. A
+/// `docs(plan): handoff …` commit is the size kind's mid-phase handoff
+/// (ADR-0083): it is excluded the same way, so it never becomes a pending
+/// command boundary.
 fn is_closing_plan_commit(subject: &str) -> bool {
     let subject = subject.trim_end();
-    if subject.ends_with(", done") {
+    if subject.ends_with(", done") || subject.starts_with("docs(plan): handoff") {
         return true;
     }
     subject
@@ -1713,6 +1744,16 @@ pub(crate) struct State {
     /// The advices given in the session; a file in the old format reads 0.
     pub(crate) advices: u32,
     pub(crate) pending: Option<Pending>,
+    /// The highest [`size_step`] the size kind judged in the session; 0 when
+    /// none. A file without it reads 0.
+    pub(crate) size_steps_fired: u32,
+    /// The size fires counted against [`MAX_SIZE_FIRES`].
+    pub(crate) size_fires: u32,
+    /// The uuid of the tail's last entry at the turn's size Continue, `None`
+    /// when there was none: that turn lasts while the entry is in the tail with no
+    /// person prompt after it ([`size_turn_active`]). A uuid, not the
+    /// prompt's, because a long turn's prompt can lie past the tail cap.
+    pub(crate) size_anchor: Option<String>,
 }
 
 pub(crate) fn parse_pending(pending_json: &Value) -> Option<Pending> {
@@ -1744,6 +1785,19 @@ fn parse_state(text: &str) -> Option<State> {
                 .and_then(|count| u32::try_from(count).ok())
                 .unwrap_or(0),
             pending: parse_pending(&state_json["pending"]),
+            size_steps_fired: state_json["size_steps_fired"]
+                .as_u64()
+                .and_then(|count| u32::try_from(count).ok())
+                .unwrap_or(0),
+            size_fires: state_json["size_fires"]
+                .as_u64()
+                .and_then(|count| u32::try_from(count).ok())
+                .unwrap_or(0),
+            // An older file wrote `""` for none.
+            size_anchor: state_json["size_anchor"]
+                .as_str()
+                .filter(|anchor| !anchor.is_empty())
+                .map(str::to_string),
         });
     }
     let (head, key) = text.split_once('\n')?;
@@ -1755,7 +1809,7 @@ fn parse_state(text: &str) -> Option<State> {
         turn: turn.to_string(),
         key: key.to_string(),
         advices,
-        pending: None,
+        ..State::default()
     })
 }
 
@@ -1778,6 +1832,9 @@ pub(crate) fn render_state(state: &State) -> String {
         "advices": state.advices,
         "key": state.key,
         "pending": pending,
+        "size_steps_fired": state.size_steps_fired,
+        "size_fires": state.size_fires,
+        "size_anchor": state.size_anchor,
     })
     .to_string()
 }
@@ -1831,6 +1888,35 @@ pub fn spoke_this_turn(stop: &Stop) -> bool {
         return false;
     };
     turn_window(&tail.entries).is_some_and(|window| window.prompt_uuid == turn)
+}
+
+/// The turn a size Continue spoke in is still going: the entry it was anchored
+/// at is in `entries`, and no person prompt follows it.
+pub(crate) fn size_turn_active(entries: &[Value], anchor: &str) -> bool {
+    position_of(entries, anchor).is_some_and(|at| !entries[at + 1..].iter().any(is_person_prompt))
+}
+
+/// [`size_turn_active`] for a live Stop: the size kind's Continue spoke in the
+/// turn this Stop ends, at any phase fact. `plan-phases-open` stays silent
+/// then, so the handoff Stop ends the turn. Reads only the state file and the
+/// tail, never git.
+pub fn size_fire_active(stop: &Stop) -> bool {
+    let Some(State {
+        size_anchor: Some(size_anchor),
+        ..
+    }) = read_state(&stop.session)
+    else {
+        return false;
+    };
+    let Some(transcript) = stop.transcript.as_deref() else {
+        return false;
+    };
+    let Ok(tail) = read_tail_until(transcript, TAIL_FIRST_CHUNK, TAIL_CAP, |entries| {
+        position_of(entries, &size_anchor).is_some()
+    }) else {
+        return false;
+    };
+    size_turn_active(&tail.entries, &size_anchor)
 }
 
 /// A `source=clear` session start: the journal line the plan's Outcome (a)
@@ -1887,16 +1973,19 @@ impl StopView {
         }
     }
 
+    /// Silence for both kinds: plan mode, a question, a `WAITING:` line or
+    /// the handoff marker.
     fn says_silence(&self) -> bool {
-        self.stop_hook_active
-            || self.permission_mode.as_deref() == Some("plan")
+        self.permission_mode.as_deref() == Some("plan")
             || self.ends_with_question
             || self.waiting_line
             || self.marker
     }
 }
 
-/// Silence without a journal line: what the payload alone shows.
+/// Silence without a journal line: what the payload alone shows. A Stop in
+/// a turn a hook continued (`stop_hook_active`) is not silent here: the size
+/// kind still judges it.
 fn payload_says_silence(stop: &Stop) -> bool {
     !greenbelay_guard::session_state::usable_id(&stop.session) || StopView::of(stop).says_silence()
 }
@@ -1908,11 +1997,16 @@ fn payload_says_silence(stop: &Stop) -> bool {
 /// At `deny` the answer is a Continue, at `advise` a note to the person
 /// (except at `PlanOnly`, where `plan-phases-open` carries the plan on), at
 /// `observe` silence.
+///
+/// Past the size boundary (`sizing`: the threshold and the size stance, read
+/// only past [`SIZE`]) the size kind judges too, on a Stop of a continued
+/// turn as well ([`decide`]).
 pub fn on_stop(
     stop: &Stop,
     fact: impl FnOnce() -> PhaseFact,
     deadline: Instant,
     stance: impl FnOnce() -> Stance,
+    sizing: (impl FnOnce() -> u64, impl FnOnce() -> Stance),
 ) -> Decision {
     if payload_says_silence(stop) {
         return Decision::Silent;
@@ -1922,12 +2016,22 @@ pub fn on_stop(
     };
     let prior = read_state(&stop.session).unwrap_or_default();
     let pending_uuid = prior.pending.as_ref().map(|pending| pending.uuid.clone());
+    let anchor = prior.size_anchor.clone();
+    let continued = stop.stop_hook_active;
     let Ok(tail) = read_tail_until(transcript, TAIL_FIRST_CHUNK, TAIL_CAP, |entries| {
-        window_is_enough(entries, pending_uuid.as_deref())
+        let anchored = anchor
+            .as_deref()
+            .is_none_or(|anchor| position_of(entries, anchor).is_some());
+        if continued {
+            // Only the size kind judges a continued turn: no turn window.
+            context_size(entries).is_some() && anchored
+        } else {
+            window_is_enough(entries, pending_uuid.as_deref()) && anchored
+        }
     }) else {
         return Decision::Silent;
     };
-    judge_boundary(stop, &tail, prior, fact, deadline, stance)
+    judge_boundary(stop, &tail, prior, fact, deadline, stance, sizing)
 }
 
 /// Whether a Stop's tail holds what the judgement reads: the context size, the
@@ -2041,6 +2145,9 @@ pub(crate) struct Verdict {
     pub records: Vec<(String, String)>,
     /// The stance the judgement ran at, `None` when it ended before asking.
     pub stance: Option<Stance>,
+    /// What the size kind settled, or a command boundary answered at the
+    /// size stance: kept apart from the journal ([`crate::size_evidence`]).
+    pub evidence: Option<crate::size_evidence::Evidence>,
 }
 
 /// The I/O around [`decide`]: reads the state and the live git facts, writes
@@ -2052,17 +2159,34 @@ fn judge_boundary(
     fact: impl FnOnce() -> PhaseFact,
     deadline: Instant,
     stance: impl FnOnce() -> Stance,
+    (size_tokens, size_stance): (impl FnOnce() -> u64, impl FnOnce() -> Stance),
 ) -> Decision {
     let view = StopView::of(stop);
-    let verdict = decide(
+    // The threshold is a git config read: only a Stop past `SIZE` pays it.
+    let tokens = if context_size(&tail.entries).is_some_and(|size| size >= SIZE) {
+        size_tokens().max(SIZE)
+    } else {
+        u64::MAX
+    };
+    let mut verdict = decide(
         &view,
         &tail.entries,
         prior,
         fact,
-        stance,
+        (stance, tokens, size_stance),
         |dirs| check_repositories(view.cwd.as_deref(), dirs, deadline),
         |state| write_state(&stop.session, state).is_ok(),
     );
+    if let Some(evidence) = &verdict.evidence {
+        if let Err(error) = crate::size_evidence::append(&stop.session, evidence) {
+            // The evidence is a record: a lost line is journalled, so a
+            // missing request reads as unwritten, and the decision stands.
+            verdict.records.push((
+                "watched".to_string(),
+                format!("size-evidence-unwritable {:?}", error.kind()),
+            ));
+        }
+    }
     if let Some(stance) = verdict.stance {
         let repo = view.cwd.as_deref().and_then(Path::file_name).map_or_else(
             || "-".to_string(),
@@ -2089,6 +2213,8 @@ fn judge_boundary(
 struct Ledger<P: FnMut(&State) -> bool> {
     records: Vec<(String, String)>,
     persist: P,
+    /// The last state written, which a later kind in the same Stop starts from.
+    saved: Option<State>,
 }
 
 impl<P: FnMut(&State) -> bool> Ledger<P> {
@@ -2106,7 +2232,9 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
     /// without them.
     fn save(&mut self, state: &State) -> bool {
         let written = (self.persist)(state);
-        if !written {
+        if written {
+            self.saved = Some(state.clone());
+        } else {
             self.record("watched", "state-unwritable");
         }
         written
@@ -2250,6 +2378,7 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
             key,
             advices: advices + u32::from(counted),
             pending: None,
+            ..state
         };
         if !self.save(&state) {
             return None;
@@ -2291,18 +2420,124 @@ impl<P: FnMut(&State) -> bool> Ledger<P> {
             }
         }
     }
+
+    /// The size kind (ADR-0083): no command boundary answered this Stop, and
+    /// the context is past `tokens`. Holds on a background task or a relais
+    /// run, never on the repositories. Fires at most once per turn, once per
+    /// [`SIZE_STEP`], and [`MAX_SIZE_FIRES`] times per session. `None` is
+    /// silence; the second member is the outcome for the evidence file.
+    fn judge_size(
+        &mut self,
+        view: &StopView,
+        entries: &[Value],
+        mut state: State,
+        (size, tokens, stance): (u64, u64, Stance),
+    ) -> (Option<Decision>, Option<SizeOutcome>) {
+        if let Some(anchor) = &state.size_anchor {
+            if size_turn_active(entries, anchor) {
+                return (None, None);
+            }
+        }
+        let step = size_step(size, tokens);
+        if step <= state.size_steps_fired {
+            return (None, None);
+        }
+        if view.background_busy {
+            self.record("watched", "size held background");
+            return (None, Some(SizeOutcome::HeldBackground));
+        }
+        if relais_flight(entries).in_flight() {
+            self.record("watched", "size held relais");
+            return (None, Some(SizeOutcome::HeldRelais));
+        }
+        state.size_steps_fired = step;
+        if state.size_fires >= MAX_SIZE_FIRES {
+            let _saved = self.save(&state);
+            self.record("watched", "size cap");
+            return (None, Some(SizeOutcome::Cap));
+        }
+        state.size_fires += u32::from(stance != Stance::Observe);
+        state.size_anchor = if stance == Stance::Deny {
+            entries
+                .last()
+                .and_then(|entry| entry["uuid"].as_str())
+                .map(str::to_string)
+        } else {
+            None
+        };
+        if !self.save(&state) {
+            return (None, None);
+        }
+        let k = size / 1000;
+        let what = format!("size fired {k}k");
+        let fact = format!(
+            "the context is at {k}k tokens, past the size boundary of {}k, and nothing is in flight.",
+            tokens / 1000
+        );
+        match stance {
+            Stance::Observe => {
+                self.record("watched", &format!("{what} (observe)"));
+                (None, Some(SizeOutcome::Observed))
+            }
+            Stance::Advise => {
+                self.record("advised", &what);
+                let remedy = format!(
+                    "The agent can hand off mid-phase, as the worktree-task skill's Handoff section says for a size boundary. To clear and carry on, reply: hand off now. The turn then ends with the line \"{MARKER}; next: `<the exact first prompt>`\", and the clear-relay plugin clears and submits that prompt. Or /clear yourself."
+                );
+                (
+                    Some(Decision::UserNote(decision::phrase(
+                        RULE.id, &fact, &remedy,
+                    ))),
+                    Some(SizeOutcome::Advised),
+                )
+            }
+            Stance::Deny => {
+                self.record("denied", &what);
+                let remedy = size_handoff_remedy(k);
+                (
+                    Some(Decision::Continue(decision::phrase(
+                        RULE.id, &fact, &remedy,
+                    ))),
+                    Some(SizeOutcome::Requested),
+                )
+            }
+        }
+    }
+}
+
+/// The size Continue's instructions: the mid-phase handoff of the
+/// worktree-task skill, written out so it holds with no skill installed.
+fn size_handoff_remedy(k: u64) -> String {
+    format!(
+        "Hand off mid-phase now, as the worktree-task skill's Handoff section says for a size boundary. \
+         Open your answer with one line for the person: `size boundary at {k}k: handing off mid-phase (off: git config --global greenbelay.clear-at-boundary.size-stance observe)`. \
+         Keep uncommitted edits; list them in the handoff. \
+         Write a `## Handoff` whose first line is `mid-phase at {k}k`: in a programme the ticket's own section, otherwise the plan's, replaced. \
+         It holds the date, the phase and the step underway, what the phase has committed, the uncommitted files and their state, what was learned (facts found, dead ends) and the next action. \
+         Commit it alone as `docs(plan): handoff <phase>` in the task worktree, unpushed. \
+         File no inbox lines: they wait for the next boundary that is not a size boundary. \
+         Make the last non-empty line, outside a programme: {MARKER}; next: `resume <phase>: <gist>; worktree <abs worktree>, plan <plan file>; read its ## Handoff` \
+         and in a programme: {MARKER}; next: `resume <repo> <programme> <ticket>: mid-phase, <gist>`"
+    )
 }
 
 /// The judgement, free of I/O. `fact` gives the plan's state and is called
 /// only once the context is past [`SIZE`]; `repos` checks the repositories a
 /// boundary touched; `persist` writes the state and says whether it held.
 /// Every failure is silence.
+///
+/// The stances are the command kind's, the size boundary and the size
+/// stance. Past the boundary a command boundary is judged first (decision
+/// 7b), at the stricter of the two stances, so a size kind still at
+/// `observe` never quiets it; when none answered, the size kind, at its own
+/// stance, which also judges a `Working` Stop and a Stop of a continued
+/// turn. Below it the judgement is the command kind's alone.
 pub(crate) fn decide(
     view: &StopView,
     entries: &[Value],
     prior: State,
     fact: impl FnOnce() -> PhaseFact,
-    stance: impl FnOnce() -> Stance,
+    (stance, size_tokens, size_stance): (impl FnOnce() -> Stance, u64, impl FnOnce() -> Stance),
     repos: impl FnOnce(&[PathBuf]) -> Repositories,
     persist: impl FnMut(&State) -> bool,
 ) -> Verdict {
@@ -2310,6 +2545,7 @@ pub(crate) fn decide(
         decision: Decision::Silent,
         records: Vec::new(),
         stance: None,
+        evidence: None,
     };
     if view.says_silence() {
         return silent;
@@ -2317,20 +2553,89 @@ pub(crate) fn decide(
     let Some(size) = context_size(entries).filter(|size| *size >= SIZE) else {
         return silent;
     };
-    let fact = fact();
-    if fact == PhaseFact::Working {
+    let past = size >= size_tokens;
+    if view.stop_hook_active && !past {
         return silent;
     }
-    let stance = stance();
     let mut ledger = Ledger {
         records: Vec::new(),
         persist,
+        saved: None,
     };
-    let decision = ledger.judge(view, entries, prior, (fact, stance, size), repos);
+    let stop_uuid: Option<String> = entries
+        .last()
+        .and_then(|entry| entry["uuid"].as_str())
+        .map(str::to_string);
+    let evidence = |kind: SizeKind, stance: Stance, outcome: SizeOutcome| {
+        Some(crate::size_evidence::Evidence {
+            stop_uuid: stop_uuid.clone().unwrap_or_default(),
+            size,
+            kind,
+            stance,
+            outcome,
+        })
+    };
+    // A continued turn: only the size kind, and no git for the phase fact.
+    let fact = if view.stop_hook_active {
+        PhaseFact::Working
+    } else {
+        fact()
+    };
+    if fact == PhaseFact::Working && !past {
+        return silent;
+    }
+    let size_stance = if past { size_stance() } else { Stance::Observe };
+    let mut state = prior;
+    if fact != PhaseFact::Working {
+        let stance = if past {
+            stance().max(size_stance)
+        } else {
+            stance()
+        };
+        let decision = ledger.judge(view, entries, state.clone(), (fact, stance, size), repos);
+        if let Some(decision) = decision {
+            let mut evidence_row = None;
+            if past {
+                // A command boundary answered at the size stance also spends
+                // the size step, so the size kind does not repeat it.
+                let mut after = ledger.saved.clone().unwrap_or(state);
+                after.size_steps_fired = after.size_steps_fired.max(size_step(size, size_tokens));
+                if stance == Stance::Deny {
+                    after.size_anchor.clone_from(&stop_uuid);
+                }
+                let _saved = ledger.save(&after);
+                evidence_row = evidence(SizeKind::Command, stance, SizeOutcome::of_fire(stance));
+            }
+            return Verdict {
+                decision,
+                records: ledger.records,
+                stance: Some(stance),
+                evidence: evidence_row,
+            };
+        }
+        if !past {
+            return Verdict {
+                decision: Decision::Silent,
+                records: ledger.records,
+                stance: Some(stance),
+                evidence: None,
+            };
+        }
+        if let Some(saved) = ledger.saved.clone() {
+            state = saved;
+        }
+    }
+    let stance = size_stance;
+    let (decision, outcome) = ledger.judge_size(view, entries, state, (size, size_tokens, stance));
+    let evidence = outcome.and_then(|outcome| evidence(SizeKind::Size, stance, outcome));
+    if ledger.records.is_empty() && decision.is_none() {
+        return silent;
+    }
     Verdict {
         decision: decision.unwrap_or(Decision::Silent),
         records: ledger.records,
         stance: Some(stance),
+        evidence,
     }
 }
 
@@ -2387,6 +2692,12 @@ struct StateFixture {
     key: String,
     advices: u32,
     pending: Option<PendingFixture>,
+    #[serde(default)]
+    size_steps_fired: u32,
+    #[serde(default)]
+    size_fires: u32,
+    #[serde(default)]
+    size_anchor: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -2563,6 +2874,9 @@ impl TryFrom<StopFixture> for StopInputs {
                 dirs: pending.dirs.into_iter().map(PathBuf::from).collect(),
                 unresolved: pending.unresolved,
             }),
+            size_steps_fired: fixture.state.size_steps_fired,
+            size_fires: fixture.state.size_fires,
+            size_anchor: fixture.state.size_anchor,
         };
         let phase = match fixture.facts.phase {
             PhaseFixture::NoOpenPhase => PhaseFact::NoOpenPhase,
@@ -2629,6 +2943,7 @@ pub fn judge_case(fixture_json: &str) -> Result<bool, FixtureError> {
         &inputs.entries,
         inputs.prior,
         inputs.phase,
+        SIZE_BOUNDARY,
         |dirs| inputs.repositories.answer(inputs.view.cwd.as_deref(), dirs),
     )
     .fired)
@@ -2643,12 +2958,15 @@ pub(crate) struct Replay {
     pub saved: Option<State>,
 }
 
-/// [`decide`] at `deny` with frozen facts and a state write that holds.
+/// [`decide`] at `deny` with frozen facts and a state write that holds. The
+/// size kind judges from `size_tokens` on, also at `deny`; `u64::MAX` replays
+/// the command kind alone.
 pub(crate) fn replay_at_deny(
     view: &StopView,
     entries: &[Value],
     prior: State,
     phase: PhaseFact,
+    size_tokens: u64,
     repositories: impl FnOnce(&[PathBuf]) -> Repositories,
 ) -> Replay {
     let mut saved = None;
@@ -2657,7 +2975,7 @@ pub(crate) fn replay_at_deny(
         entries,
         prior,
         || phase,
-        || Stance::Deny,
+        (|| Stance::Deny, size_tokens, || Stance::Deny),
         repositories,
         |state| {
             saved = Some(state.clone());
@@ -2885,6 +3203,7 @@ mod tests {
             },
             deadline(),
             || Stance::Deny,
+            (|| SIZE_BOUNDARY, || Stance::Deny),
         );
         assert!(matches!(decision, Decision::Silent));
         assert!(!asked.get(), "open_phase was asked for at 150k");
@@ -3170,8 +3489,22 @@ mod tests {
                 dirs: vec![PathBuf::from("/r")],
                 unresolved: true,
             }),
+            size_steps_fired: 2,
+            size_fires: 1,
+            size_anchor: Some("a".into()),
         };
         assert_eq!(parse_state(&render_state(&state)), Some(state));
+        // A file written before the size kind reads no size step.
+        let before = parse_state(r#"{"turn":"t","advices":1,"key":"k","pending":null}"#)
+            .expect("a file without the size members");
+        assert_eq!(
+            (
+                before.size_steps_fired,
+                before.size_fires,
+                before.size_anchor.as_deref()
+            ),
+            (0, 0, None)
+        );
     }
 
     fn with_uuid(mut entry: Value, uuid: &str) -> Value {
@@ -3293,7 +3626,7 @@ mod tests {
             &entries,
             State::default(),
             || PhaseFact::NoOpenPhase,
-            || Stance::Deny,
+            (|| Stance::Deny, u64::MAX, || Stance::Deny),
             |_| Repositories::Clean { heads: Vec::new() },
             |_| false,
         );
@@ -3587,7 +3920,7 @@ mod tests {
             &entries,
             prior,
             || PhaseFact::NoOpenPhase,
-            || Stance::Deny,
+            (|| Stance::Deny, u64::MAX, || Stance::Deny),
             |dirs| {
                 asked.borrow_mut().extend(dirs.iter().cloned());
                 Repositories::Clean { heads: Vec::new() }
@@ -3633,7 +3966,7 @@ mod tests {
                 &entries,
                 State::default(),
                 || PhaseFact::NoOpenPhase,
-                || Stance::Deny,
+                (|| Stance::Deny, u64::MAX, || Stance::Deny),
                 |_| Repositories::NotClean {
                     directory: PathBuf::from("/h/wt"),
                     reason: "uncommitted changes".to_string(),
@@ -3849,7 +4182,7 @@ mod tests {
                 &entries_for(command),
                 State::default(),
                 || PhaseFact::NoOpenPhase,
-                || Stance::Deny,
+                (|| Stance::Deny, u64::MAX, || Stance::Deny),
                 |_| Repositories::Clean { heads: Vec::new() },
                 |_| true,
             )
@@ -3920,7 +4253,7 @@ mod tests {
                 &entries,
                 prior,
                 || PhaseFact::NoOpenPhase,
-                || Stance::Deny,
+                (|| Stance::Deny, u64::MAX, || Stance::Deny),
                 |_| Repositories::Clean { heads: Vec::new() },
                 |state| {
                     *saved.borrow_mut() = Some(state.clone());
@@ -3954,7 +4287,7 @@ mod tests {
                 entries,
                 State::default(),
                 || PhaseFact::NoOpenPhase,
-                || Stance::Deny,
+                (|| Stance::Deny, u64::MAX, || Stance::Deny),
                 |_| Repositories::Clean { heads: Vec::new() },
                 |_| true,
             )
@@ -4208,7 +4541,7 @@ mod tests {
                 entries,
                 prior,
                 || PhaseFact::NoOpenPhase,
-                || Stance::Deny,
+                (|| Stance::Deny, u64::MAX, || Stance::Deny),
                 |_| Repositories::Clean { heads: Vec::new() },
                 |state| {
                     *saved.borrow_mut() = Some(state.clone());
@@ -4246,5 +4579,410 @@ mod tests {
         let (first, second) = two_stops_at_the_cap(&first_turn, &second_turn);
         assert_eq!(rows_named(&first, "cap"), 1);
         assert_eq!(rows_named(&second, "cap"), 1);
+    }
+}
+
+#[cfg(test)]
+mod size_kind_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn prompt(uuid: &str) -> Value {
+        json!({"type": "user", "uuid": uuid, "message": {"role": "user", "content": "go"}})
+    }
+
+    /// A main-chain assistant entry at `size` tokens that runs `command`.
+    fn at(size: u64, uuid: &str, command: &str) -> Value {
+        json!({"type": "assistant", "uuid": uuid, "isSidechain": false, "message": {
+            "role": "assistant",
+            "usage": {"input_tokens": size, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+            "content": [{"type": "tool_use", "id": uuid, "name": "Bash", "input": {"command": command}}],
+        }})
+    }
+
+    fn view() -> StopView {
+        StopView {
+            cwd: Some(PathBuf::from("/work")),
+            permission_mode: Some("bypassPermissions".to_string()),
+            ..StopView::default()
+        }
+    }
+
+    struct Run {
+        verdict: Verdict,
+        saved: Option<State>,
+        asked_phase: bool,
+    }
+
+    /// `decide` with the command kind at `advise`, the size kind at `size`
+    /// from 400k, clean repositories and a state write that holds.
+    fn run(
+        view: &StopView,
+        entries: &[Value],
+        prior: State,
+        phase: PhaseFact,
+        size: Stance,
+    ) -> Run {
+        let mut saved = None;
+        let mut asked_phase = false;
+        let verdict = decide(
+            view,
+            entries,
+            prior,
+            || {
+                asked_phase = true;
+                phase
+            },
+            (|| Stance::Advise, SIZE_BOUNDARY, || size),
+            |_| Repositories::Clean { heads: Vec::new() },
+            |state| {
+                saved = Some(state.clone());
+                true
+            },
+        );
+        Run {
+            verdict,
+            saved,
+            asked_phase,
+        }
+    }
+
+    fn working_turn(size: u64) -> Vec<Value> {
+        vec![prompt("p1"), at(size, "e1", "cargo test")]
+    }
+
+    fn has_row(verdict: &Verdict, outcome: &str, what: &str) -> bool {
+        verdict
+            .records
+            .iter()
+            .any(|(o, w)| o == outcome && w == what)
+    }
+
+    #[test]
+    fn the_steps_count_from_the_threshold() {
+        assert_eq!(size_step(399_999, 400_000), 0);
+        assert_eq!(size_step(400_000, 400_000), 1);
+        assert_eq!(size_step(499_999, 400_000), 1);
+        assert_eq!(size_step(500_000, 400_000), 2);
+        assert_eq!(SIZE_BOUNDARY, 400_000);
+        assert_eq!(
+            greenbelay_guard::rules::clear_at_boundary::SIZE_TOKENS_FLOOR,
+            SIZE
+        );
+    }
+
+    #[test]
+    fn a_working_stop_past_the_size_gets_the_handoff_continue() {
+        let out = run(
+            &view(),
+            &working_turn(450_000),
+            State::default(),
+            PhaseFact::Working,
+            Stance::Deny,
+        );
+        let Decision::Continue(text) = &out.verdict.decision else {
+            panic!("expected a Continue");
+        };
+        for needle in [
+            "450k",
+            "mid-phase at 450k",
+            "size boundary at 450k: handing off mid-phase (off: git config --global greenbelay.clear-at-boundary.size-stance observe)",
+            "Keep uncommitted edits; list them in the handoff",
+            "docs(plan): handoff <phase>",
+            "File no inbox lines",
+            "safe to /clear; next: `resume <phase>: <gist>; worktree <abs worktree>, plan <plan file>; read its ## Handoff`",
+            "safe to /clear; next: `resume <repo> <programme> <ticket>: mid-phase, <gist>`",
+        ] {
+            assert!(text.contains(needle), "missing {needle:?} in {text}");
+        }
+        assert!(has_row(&out.verdict, "denied", "size fired 450k"));
+        assert_eq!(out.verdict.stance, Some(Stance::Deny));
+        let saved = out.saved.expect("the fire is saved");
+        assert_eq!(
+            (
+                saved.size_steps_fired,
+                saved.size_fires,
+                saved.size_anchor.as_deref()
+            ),
+            (1, 1, Some("e1"))
+        );
+        let evidence = out.verdict.evidence.expect("evidence");
+        assert_eq!(
+            (evidence.kind, evidence.outcome, evidence.size),
+            (SizeKind::Size, SizeOutcome::Requested, 450_000)
+        );
+    }
+
+    #[test]
+    fn background_work_holds_the_size_kind_without_spending_the_step() {
+        let busy = StopView {
+            background_busy: true,
+            ..view()
+        };
+        let out = run(
+            &busy,
+            &working_turn(450_000),
+            State::default(),
+            PhaseFact::Working,
+            Stance::Deny,
+        );
+        assert!(matches!(out.verdict.decision, Decision::Silent));
+        assert!(has_row(&out.verdict, "watched", "size held background"));
+        assert!(out.saved.is_none());
+        assert_eq!(
+            out.verdict.evidence.map(|e| e.outcome),
+            Some(SizeOutcome::HeldBackground)
+        );
+    }
+
+    #[test]
+    fn a_relais_run_in_flight_holds_the_size_kind() {
+        let mut entries = working_turn(450_000);
+        entries.push(
+            json!({"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "r1", "name": "mcp__relais__run", "input": {}}]}}),
+        );
+        entries.push(json!({"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "r1", "content": [{"type": "text", "text": "Started relais run run-1"}]}]}}));
+        let out = run(
+            &view(),
+            &entries,
+            State::default(),
+            PhaseFact::Working,
+            Stance::Deny,
+        );
+        assert!(matches!(out.verdict.decision, Decision::Silent));
+        assert!(has_row(&out.verdict, "watched", "size held relais"));
+    }
+
+    #[test]
+    fn below_the_size_a_working_stop_is_silent_and_unjournalled() {
+        let out = run(
+            &view(),
+            &working_turn(350_000),
+            State::default(),
+            PhaseFact::Working,
+            Stance::Deny,
+        );
+        assert!(matches!(out.verdict.decision, Decision::Silent));
+        assert!(out.verdict.records.is_empty());
+        assert!(out.verdict.stance.is_none());
+    }
+
+    #[test]
+    fn a_second_fire_waits_for_the_next_step() {
+        let first = run(
+            &view(),
+            &working_turn(450_000),
+            State::default(),
+            PhaseFact::Working,
+            Stance::Deny,
+        )
+        .saved
+        .expect("the first fire is saved");
+        // The person answered: a new turn, still at the first step.
+        let mut later = working_turn(450_000);
+        later.push(prompt("p2"));
+        later.push(at(480_000, "e2", "cargo test"));
+        let same_step = run(
+            &view(),
+            &later,
+            first.clone(),
+            PhaseFact::Working,
+            Stance::Deny,
+        );
+        assert!(matches!(same_step.verdict.decision, Decision::Silent));
+        later.push(at(510_000, "e3", "cargo test"));
+        let next_step = run(&view(), &later, first, PhaseFact::Working, Stance::Deny);
+        assert!(matches!(next_step.verdict.decision, Decision::Continue(_)));
+        let saved = next_step.saved.expect("saved");
+        assert_eq!((saved.size_steps_fired, saved.size_fires), (2, 2));
+    }
+
+    #[test]
+    fn the_session_cap_watches_further_steps() {
+        let capped = State {
+            size_fires: MAX_SIZE_FIRES,
+            size_steps_fired: 3,
+            ..State::default()
+        };
+        let out = run(
+            &view(),
+            &working_turn(720_000),
+            capped,
+            PhaseFact::Working,
+            Stance::Deny,
+        );
+        assert!(matches!(out.verdict.decision, Decision::Silent));
+        assert!(has_row(&out.verdict, "watched", "size cap"));
+        assert_eq!(out.saved.map(|s| s.size_steps_fired), Some(4));
+    }
+
+    #[test]
+    fn a_continued_turn_is_judged_once_and_never_asks_for_the_phase() {
+        let continued = StopView {
+            stop_hook_active: true,
+            ..view()
+        };
+        let first = run(
+            &continued,
+            &working_turn(450_000),
+            State::default(),
+            PhaseFact::Working,
+            Stance::Deny,
+        );
+        assert!(matches!(first.verdict.decision, Decision::Continue(_)));
+        assert!(
+            !first.asked_phase,
+            "a continued turn spawned git for the phase"
+        );
+        let mut entries = working_turn(450_000);
+        entries.push(at(452_000, "e2", "git status"));
+        let again = run(
+            &continued,
+            &entries,
+            first.saved.expect("saved"),
+            PhaseFact::Working,
+            Stance::Deny,
+        );
+        assert!(matches!(again.verdict.decision, Decision::Silent));
+        assert!(again.verdict.records.is_empty());
+        let below = run(
+            &continued,
+            &working_turn(300_000),
+            State::default(),
+            PhaseFact::Working,
+            Stance::Deny,
+        );
+        assert!(matches!(below.verdict.decision, Decision::Silent));
+        assert!(!below.asked_phase);
+    }
+
+    #[test]
+    fn the_marker_turn_is_silent() {
+        let marked = StopView {
+            marker: true,
+            stop_hook_active: true,
+            ..view()
+        };
+        let out = run(
+            &marked,
+            &working_turn(450_000),
+            State::default(),
+            PhaseFact::Working,
+            Stance::Deny,
+        );
+        assert!(matches!(out.verdict.decision, Decision::Silent));
+        assert!(out.verdict.records.is_empty());
+    }
+
+    fn boundary_turn(size: u64) -> Vec<Value> {
+        vec![prompt("p1"), at(size, "b1", "git worktree remove /tmp/wt")]
+    }
+
+    #[test]
+    fn a_command_boundary_past_the_size_is_answered_at_the_size_stance() {
+        let out = run(
+            &view(),
+            &boundary_turn(450_000),
+            State::default(),
+            PhaseFact::NoOpenPhase,
+            Stance::Deny,
+        );
+        assert!(matches!(out.verdict.decision, Decision::Continue(_)));
+        assert!(has_row(&out.verdict, "denied", "worktree remove"));
+        let saved = out.saved.expect("saved");
+        assert_eq!(
+            (saved.size_steps_fired, saved.size_anchor.as_deref()),
+            (1, Some("b1"))
+        );
+        let evidence = out.verdict.evidence.expect("evidence");
+        assert_eq!(
+            (evidence.kind, evidence.outcome),
+            (SizeKind::Command, SizeOutcome::Requested)
+        );
+        let below = run(
+            &view(),
+            &boundary_turn(300_000),
+            State::default(),
+            PhaseFact::NoOpenPhase,
+            Stance::Deny,
+        );
+        assert!(matches!(below.verdict.decision, Decision::UserNote(_)));
+        assert!(below.verdict.evidence.is_none());
+    }
+
+    #[test]
+    fn a_command_boundary_held_on_a_dirty_tree_leaves_the_size_kind_to_judge() {
+        let mut saved = None;
+        let verdict = decide(
+            &view(),
+            &boundary_turn(450_000),
+            State::default(),
+            || PhaseFact::NoOpenPhase,
+            (|| Stance::Advise, SIZE_BOUNDARY, || Stance::Deny),
+            |_| Repositories::NotClean {
+                directory: PathBuf::from("/work"),
+                reason: UNCOMMITTED_CHANGES.to_string(),
+                of: NotCleanOf::PayloadCwd,
+            },
+            |state| {
+                saved = Some(state.clone());
+                true
+            },
+        );
+        assert!(matches!(verdict.decision, Decision::Continue(_)));
+        assert!(has_row(&verdict, "denied", "size fired 450k"));
+        let saved = saved.expect("saved");
+        assert!(saved.pending.is_some(), "the held boundary stays pending");
+        assert_eq!(saved.size_fires, 1);
+    }
+
+    #[test]
+    fn the_size_stance_at_observe_journals_and_spends_the_step() {
+        let out = run(
+            &view(),
+            &working_turn(450_000),
+            State::default(),
+            PhaseFact::Working,
+            Stance::Observe,
+        );
+        assert!(matches!(out.verdict.decision, Decision::Silent));
+        assert!(has_row(
+            &out.verdict,
+            "watched",
+            "size fired 450k (observe)"
+        ));
+        let saved = out.saved.expect("saved");
+        assert_eq!(
+            (
+                saved.size_steps_fired,
+                saved.size_fires,
+                saved.size_anchor.as_deref()
+            ),
+            (1, 0, None)
+        );
+    }
+
+    #[test]
+    fn a_long_turn_with_no_prompt_in_the_tail_keeps_its_anchor() {
+        let entries = vec![
+            at(450_000, "e1", "cargo test"),
+            at(451_000, "e2", "git diff"),
+        ];
+        assert!(size_turn_active(&entries, "e1"));
+        let answered = vec![at(450_000, "e1", "x"), prompt("p2")];
+        assert!(!size_turn_active(&answered, "e1"));
+        assert!(!size_turn_active(&entries, "gone"));
+    }
+
+    #[test]
+    fn the_handoff_commit_is_no_plan_commit_boundary() {
+        let entries = vec![
+            prompt("p1"),
+            at(1, "c1", "git commit -m 'docs(plan): handoff phase 3'"),
+        ];
+        let window = turn_window(&entries).expect("a window");
+        assert!(boundaries(&window, Path::new("/work"), None).is_empty());
     }
 }

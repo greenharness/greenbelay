@@ -105,6 +105,13 @@ usage: ",
   mine [flags]          shapes the model got wrong that no rule names yet
   output-audit --since <UTC> --until <UTC> [--json]
                         where tool output went in a window, by kind of call
+  size-evidence [--days <n>] [--relay-dir <dir>]
+                        clear-at-boundary size decisions of the last n days
+                        (default 7) and the clear-relay submissions after each
+                        handoff request; unreadable relay logs counted apart
+  size-replay [--transcripts <dir>] [--since <YYYY-MM-DD>]
+                        replay the size kind over recorded transcripts, Stop
+                        by Stop: coverage, fires per week, the release bar
   backtest [flags]      replay your transcripts through the rules
   harness-review [--json] [--check] [--model <id>] [--out <dir>]
                         one row per rule and assertion: firings, compliance
@@ -232,6 +239,8 @@ enum Sub {
     Explain,
     Mine,
     OutputAudit,
+    SizeEvidence,
+    SizeReplay,
     Check,
     Analyze,
     Rules,
@@ -254,7 +263,7 @@ enum Sub {
     Migrate,
 }
 
-const SUBCOMMANDS: [(&str, Sub); 33] = [
+const SUBCOMMANDS: [(&str, Sub); 35] = [
     ("hook", Sub::Hook),
     ("install", Sub::Install),
     ("uninstall", Sub::Uninstall),
@@ -268,6 +277,8 @@ const SUBCOMMANDS: [(&str, Sub); 33] = [
     ("explain", Sub::Explain),
     ("mine", Sub::Mine),
     ("output-audit", Sub::OutputAudit),
+    ("size-evidence", Sub::SizeEvidence),
+    ("size-replay", Sub::SizeReplay),
     ("check", Sub::Check),
     ("analyze", Sub::Analyze),
     ("rules", Sub::Rules),
@@ -816,6 +827,8 @@ fn main() -> ExitCode {
             Sub::Explain => run_backtest(&args, true),
             Sub::Mine => run_mine(&args),
             Sub::OutputAudit => run_output_audit(&args),
+            Sub::SizeEvidence => run_size_evidence(&args),
+            Sub::SizeReplay => run_size_replay(&args),
             Sub::Check => run_check(&args),
             Sub::Analyze => run_analyze(&args),
             Sub::Rules => run_rules(&args),
@@ -1445,6 +1458,144 @@ JSON `coverage.complete` say so); 1 when the transcripts cannot be found;
 2 on a usage error.
 "
 );
+
+const SIZE_EVIDENCE_USAGE: &str = "usage: greenbelay size-evidence [--days <n>] [--relay-dir <dir>]
+
+The size kind of clear-at-boundary (ADR-0083): its decisions past the size,
+read from <data dir>/size-evidence/ (kept 30 days, apart from the journal),
+with each handoff request paired to a clear-relay `submit` of the same
+session within 2 h.
+
+  --days <n>         the window, in days back from now (default 7)
+  --relay-dir <dir>  the clear-relay logs (default: the plugin's default
+                     stateDir, <state dir>/greenbelay/clear-relay)
+
+A request is unheeded when no submit followed, also when the relay never
+armed and wrote no log; evidence is missing only when the relay directory
+or a session's log cannot be read. Exit 0; 1 when there is no data
+directory; 2 on a usage error.
+";
+
+/// `size-evidence [--days <n>] [--relay-dir <dir>]`: the size kind's
+/// decisions, read from its own day files, with each handoff request paired
+/// to a clear-relay submit.
+fn run_size_evidence(args: &[OsString]) -> ExitCode {
+    use greenbelay_process::size_evidence;
+    let args: Vec<String> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print!("{SIZE_EVIDENCE_USAGE}");
+        return ExitCode::SUCCESS;
+    }
+    let usage = |why: &str| {
+        eprintln!("{BIN}: size-evidence: {why}; try `{BIN} size-evidence --help`");
+        ExitCode::from(2)
+    };
+    let mut days = 7;
+    let mut relay_dir = size_evidence::relay_dir();
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        let (flag, attached) = match word.split_once('=') {
+            Some((flag, value)) if flag.starts_with("--") => (flag, Some(value.to_string())),
+            Some(_) | None => (word.as_str(), None),
+        };
+        if !matches!(flag, "--days" | "--relay-dir") {
+            return usage(&format!("unexpected argument `{word}`"));
+        }
+        let Some(setting) = attached.or_else(|| words.next().cloned()) else {
+            return usage(&format!("{flag} needs a value"));
+        };
+        if flag == "--relay-dir" {
+            relay_dir = Some(std::path::PathBuf::from(setting));
+            continue;
+        }
+        match setting.parse::<u64>() {
+            Ok(n) if n > 0 => days = n,
+            _ => return usage("--days needs a whole number of days above 0"),
+        }
+    }
+    let (Some(evidence_dir), Some(relay_dir)) = (size_evidence::dir(), relay_dir) else {
+        eprintln!(
+            "{BIN}: size-evidence: no data or state directory (set HOME, or pass --relay-dir)"
+        );
+        return ExitCode::from(1);
+    };
+    let since = size_evidence::since(size_evidence::now_ms(), days);
+    let report = size_evidence::report_in(&evidence_dir, &relay_dir, since);
+    print!("{}", report.render(days));
+    ExitCode::SUCCESS
+}
+
+const SIZE_REPLAY_USAGE: &str =
+    "usage: greenbelay size-replay [--transcripts <dir>] [--since <YYYY-MM-DD>]
+
+Replays the size kind of clear-at-boundary (ADR-0083) at deny over the
+transcripts under <dir> (default: <Claude config dir>/projects), from the
+day given (default: all), and prints whether its bar is met: at least one
+fire a day, at most 10% of fires held wrongly (a background task launched
+before the fire was still running).
+
+Exit 0 whether or not the bar is met (the first line says); 1 when the
+transcripts directory is missing; 2 on a usage error.
+";
+
+/// `size-replay [--transcripts <dir>] [--since <YYYY-MM-DD>]`.
+fn run_size_replay(args: &[OsString]) -> ExitCode {
+    let args: Vec<String> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print!("{SIZE_REPLAY_USAGE}");
+        return ExitCode::SUCCESS;
+    }
+    let usage = |why: &str| {
+        eprintln!("{BIN}: size-replay: {why}; try `{BIN} size-replay --help`");
+        ExitCode::from(2)
+    };
+    let mut root = greenbelay_guard::settings::config_dir().map(|dir| dir.join("projects"));
+    let mut since = String::from("0000-00-00");
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        let (flag, attached) = match word.split_once('=') {
+            Some((flag, value)) if flag.starts_with("--") => (flag, Some(value.to_string())),
+            Some(_) | None => (word.as_str(), None),
+        };
+        if !matches!(flag, "--transcripts" | "--since") {
+            return usage(&format!("unexpected argument `{word}`"));
+        }
+        let Some(setting) = attached.or_else(|| words.next().cloned()) else {
+            return usage(&format!("{flag} needs a value"));
+        };
+        if flag == "--transcripts" {
+            root = Some(std::path::PathBuf::from(setting));
+        } else if greenbelay_guard::civil::day_of(&format!("{setting}T00:00:00Z")).is_some() {
+            since = setting;
+        } else {
+            return usage(&format!(
+                "--since needs a day as YYYY-MM-DD, not `{setting}`"
+            ));
+        }
+    }
+    let Some(root) = root else {
+        eprintln!("{BIN}: size-replay: no Claude config directory; pass --transcripts <dir>");
+        return ExitCode::from(1);
+    };
+    if !root.is_dir() {
+        eprintln!(
+            "{BIN}: size-replay: no transcripts directory at {}; pass --transcripts <dir>",
+            root.display()
+        );
+        return ExitCode::from(1);
+    }
+    print!(
+        "{}",
+        greenbelay_process::size_replay::replay(&root, &since).render()
+    );
+    ExitCode::SUCCESS
+}
 
 fn run_output_audit(args: &[OsString]) -> ExitCode {
     use greenbelay_guard::output_audit::{self, Instant, Window};

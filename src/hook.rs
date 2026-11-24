@@ -111,7 +111,9 @@ fn ask_unopened_page(ask: &payload::Ask) -> Decision {
 /// 200k, within one deadline shared with its repository checks. `Working` is
 /// in flight, so only `plan-phases-open` judges it; at `PlanOnly` past 200k
 /// `clear-at-boundary` judges first, and when its Continue spoke,
-/// `plan-phases-open` stays silent for the rest of the turn.
+/// `plan-phases-open` stays silent for the rest of the turn. Past the size
+/// boundary (ADR-0083) the size kind judges at any phase fact, `Working`
+/// included, and its Continue silences `plan-phases-open` at any phase fact.
 fn on_stop(stop: &payload::Stop) -> Decision {
     use crate::clear_boundary;
     use crate::plan_phases::PhaseFact;
@@ -121,14 +123,21 @@ fn on_stop(stop: &payload::Stop) -> Decision {
         || crate::plan_phases::open_phase(stop, deadline),
         deadline,
         || crate::stance::resolve(&rules::clear_at_boundary::RULE),
+        (
+            rules::clear_at_boundary::size_tokens,
+            rules::clear_at_boundary::size_stance,
+        ),
     );
     if !matches!(clear, Decision::Silent) {
         return clear;
     }
-    // The state file is read first: only a turn the rule spoke in pays for
-    // the git calls of `open_phase`.
-    if clear_boundary::spoke_this_turn(stop)
-        && crate::plan_phases::open_phase(stop, deadline) == PhaseFact::PlanOnly
+    // `plan-phases-open` is silent when this turn's size Continue spoke (any
+    // phase fact; no git), or when the command kind's Continue spoke at
+    // `PlanOnly`. The state file is read first: only a turn the rule spoke
+    // in pays for the git calls of `open_phase`.
+    if clear_boundary::size_fire_active(stop)
+        || (clear_boundary::spoke_this_turn(stop)
+            && crate::plan_phases::open_phase(stop, deadline) == PhaseFact::PlanOnly)
     {
         return Decision::Silent;
     }
@@ -158,6 +167,7 @@ fn decide(raw: &str) -> Decision {
             crate::preview::sweep();
             crate::plan_phases::sweep();
             crate::clear_boundary::sweep();
+            greenbelay_process::size_evidence::sweep();
             if session.source == "clear" {
                 crate::clear_boundary::on_session_start_clear(&session.session, &session.cwd);
             }

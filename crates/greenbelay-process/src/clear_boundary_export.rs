@@ -682,6 +682,7 @@ impl Exporter<'_> {
                 key: String::new(),
                 advices: self.advices_before(target),
                 pending,
+                ..State::default()
             },
             phase: PhaseFact::NoOpenPhase,
             repositories: match &kind {
@@ -841,6 +842,7 @@ impl Exporter<'_> {
             &placed.tail.entries,
             frozen.prior.clone(),
             frozen.phase,
+            u64::MAX,
             |_| frozen.repositories.clone(),
         );
         let entries: Vec<Value> = placed
@@ -879,6 +881,7 @@ impl Exporter<'_> {
             &entries,
             scrubbed.prior.clone(),
             scrubbed.phase,
+            u64::MAX,
             |_| scrubbed.repositories.clone(),
         );
         let disagreement = self.disagreement(&original, &redacted);
