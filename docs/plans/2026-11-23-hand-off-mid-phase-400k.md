@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 plan-id: p-01M84WTX4VTHDAWMEBT5WZ5748
 branch: feat/size-boundary-handoff
 repos: [greenbelay, greenharness-skills, decisions]
@@ -11,7 +11,7 @@ adrs: [ADR-0080, ADR-0083]
 
 📄 Full reviews: [2026-11-23-hand-off-mid-phase-400k.reviews.md](2026-11-23-hand-off-mid-phase-400k.reviews.md)
 👉 **Decide:** none. Approve if one size handoff at about 400k (a deny, only if the replay holds) beats running on to 600k or more.
-📍 decisions, greenharness-skills, greenbelay · 4 phases · 1 release · Phase 1 done (ADR-0083, decisions#352 merged; carried items for Phases 2–3 in decisions `docs/plans/2026-11-23-hand-off-mid-phase-400k.md`) · Phase 2 done (worktree-task size-boundary steps, greenharness/skills#50 merged) · next: Phase 3, the size kind in clear-at-boundary here, carried items in the decisions pointer. Panel: architect, backend, lang:rust, po, tui, unix (opus), codex.
+📍 decisions, greenharness-skills, greenbelay · 4 phases · 1 release · Phase 1 done (ADR-0083, decisions#352 merged; carried items for Phases 2–3 in decisions `docs/plans/2026-11-23-hand-off-mid-phase-400k.md`) · Phase 2 done (worktree-task size-boundary steps, greenharness/skills#50 merged) · Phases 3–4 done (the size kind at `observe`, its evidence and replay, follow-ups t03–t05, this PR) · next: release 6.11.0 and `greenbelay install`, then t03 on 2026-11-30. Panel: architect, backend, lang:rust, po, tui, unix (opus), codex.
 **Changed by review:** a new ADR replaces 0080 (no in-place edit); the size path runs before the early returns and is not a Candidate; the `deny` default survives the compiled `advise`.
 **Verdicts:** 4 approve-with-changes, 2 approve; codex approve-with-changes; 12 carried; words 2128 → 2872 (×1.35, mostly fixes to wrong statements); remove 1 rejected, merge 1 accepted.
 
@@ -301,21 +301,38 @@ the command-boundary path, which it does not change below 400k, and before
 
 ## Handoff
 
-2026-11-24, Phase 3: the size kind, its evidence, the replay runner, tests,
-corpus, docs and follow-ups t03–t05 are in one commit, `feat(clear-at-boundary):
-the size kind`. The replay (`greenbelay size-replay --since 2026-10-24`, 423
-transcripts, 13,447 Stops): 84 fires, 2.71 a day; 13 (15.5%) came while a
-task launched outside the replayed transcript still ran (tasks from before a
-`/clear`), against a bar of 10%, and that fact is not in one transcript. So
-`size-stance` ships at `observe` (`SIZE_STANCE_DEFAULT`); t03 re-judges
-`deny` on the live evidence. Replay runs 1–3 over-counted (notification
-prompts did not open a turn; tasks launched after the fire; repeated copies
-of one notification; Monitor launches); each is fixed and tested.
+2026-11-24, Phases 3–4 done in one PR. The size kind ships at `observe`
+(`SIZE_STANCE_DEFAULT`): the replay fired 2.71 a day but 15.5% held wrongly
+against a 10% bar, all from tasks launched outside the replayed transcript.
+t03 (due 2026-11-30) re-judges `deny` on `greenbelay size-evidence`; t04
+(the 1h TTL check) and t05 (the cap-test flake) were filed from the inbox.
+Review fixed decision 7b: past 400k a command boundary is judged at the
+stricter of the rule's stance and the size stance, so `observe` never quiets
+it; and `size-evidence` now reads the plugin's relay directory
+(`<state>/greenbelay/clear-relay`), which it had missed.
 
-Next: rebase on origin/main (t02 landed), update the follow-ups map Handoff,
-remove inbox lines 4bca21ec and 8efa358a, `greengate agents-md`, push, PR,
-F4b review (backend, lang:rust, unix, tui, architect), merge, release 6.11.0,
-`greenbelay install`.
+Next: merge, release 6.11.0 (`tag-release`), `greenbelay install`, then t03.
+
+## Verification results
+
+| Check | Input | Expected | Actual |
+| --- | --- | --- | --- |
+| Workspace | `cargo test --workspace`, clippy `-D warnings`, `corpus check` | green | green on b65fb537 and 75d21eea (pre-commit gates); corpus 100% precision |
+| Replay | `size-replay --since 2026-10-24`, 423 transcripts, 13,447 Stops | ≥ 1 fire a day, ≤ 10% held wrongly | 84 fires, 2.71 a day; 13 of 84 (15.5%) held wrongly, all unseen launches; bar not met → ships `observe` |
+| Live 450k | stub Working turn, `size-stance deny` | one Continue | Continue `… 450k …`, journal `size fired 450k` |
+| Live marker | the marker Stop of that turn | both rules silent | silent |
+| Live 350k | stub Working turn | size kind silent | silent; `plan-phases-open` speaks |
+| Live default | 450k Working, no config | journals only | `size fired 450k (observe)`, no output |
+| Live 7b | teardown 450k: no config / rule `deny` | note / Continue | note / Continue |
+| Evidence | rotation test; unwritable dir; torn line; `chmod 000` | survives; journalled; counted | `submitted == 1` after rotation; `size-evidence-unwritable` + Continue; `unparsed lines: 1`; `unreadable day files: 1` |
+| clear-relay | `claude plugin test` | both decision-9 forms arm | 32 of 32 |
+
+## Implementation review
+
+- implementation-review: approve-with-changes ×3 rounds; fixed help/exit codes, discards, output parameter, names, coverage counts, rotation test, wildcard; deliberate: a comment reads "data_dir directory". 101k+81k+61k tokens, 324 s.
+- backend: approve (round 3); fixed 7b (blocking), unheeded-vs-missing, journalled write failures, test; deliberate: one held row per Stop (bounded, counted). 89k+85k+35k, 200 s.
+- lang:rust / architect: approve (round 3); fixed typed outcomes and rows, `Option` anchor and stances, overflow, relay dir, stance order documented; deliberate: `Evidence.stop_uuid` `""` when absent, parse-list round-trip test. 181k+189k, 307 s.
+- unix / tui: approve (rounds 2–3); fixed `--help`, `=` form, exit 1, bar first, 80 columns; deliberate: no `--json` (read by people, t03), EPIPE (SIGPIPE restored), lossy paths as `output-audit`. 173k+143k, 140 s.
 
 ## Code review
 
