@@ -53,7 +53,8 @@ struct Push<'a> {
 
 /// Flags that change the QUESTION, not just the details. Any of them and we
 /// have nothing to say.
-const REWRITES_THE_QUESTION: &[&str] = &[
+/// Also refused by the push log (`owner::pushes`).
+pub(crate) const REWRITES_THE_QUESTION: &[&str] = &[
     "--delete",
     "--mirror",
     "--all",

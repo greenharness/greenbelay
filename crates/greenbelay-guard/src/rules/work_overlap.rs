@@ -52,26 +52,32 @@ fn peer_plan(peer: &Peer, deadline: std::time::Instant) -> Option<String> {
         .map(|plan| plan.title)
 }
 
-/// Whether the peer's branch is its repository's default, read from files
-/// with no git process: `refs/remotes/origin/HEAD` in the common dir, else the
-/// usual names. `false` means "not known", and the caller asks git.
-///
-/// Without `origin/HEAD`, `master` is the default only when no `main` exists:
-/// `git::default_ref` prefers `main`, and this shortcut must agree with it.
+/// Whether the peer's branch is its repository's default; see
+/// [`is_default_branch`].
 fn on_default_branch_by_files(peer: &Peer) -> bool {
     let Some(common) = crate::activity::resolve(&peer.worktree).map(|place| place.repo_identity)
     else {
         return false;
     };
+    is_default_branch(&common, &peer.branch)
+}
+
+/// Whether `branch` is the default of the repository whose common dir is
+/// `common`, read from files with no git process: `refs/remotes/origin/HEAD`,
+/// else the usual names. `false` means "not known", and the caller asks git.
+///
+/// Without `origin/HEAD`, `master` is the default only when no `main` exists:
+/// `git::default_ref` prefers `main`, and this shortcut must agree with it.
+pub fn is_default_branch(common: &std::path::Path, branch: &str) -> bool {
     let origin_head = std::fs::read_to_string(common.join("refs/remotes/origin/HEAD")).ok();
     match origin_head
         .as_deref()
         .and_then(|text| text.trim().strip_prefix("ref: refs/remotes/origin/"))
     {
-        Some(name) => peer.branch == name,
-        None => match peer.branch.as_str() {
+        Some(name) => branch == name,
+        None => match branch {
             "main" => true,
-            "master" => !ref_exists_by_files(&common, "main"),
+            "master" => !ref_exists_by_files(common, "main"),
             _ => false,
         },
     }
@@ -97,21 +103,109 @@ fn ref_exists_by_files(common: &std::path::Path, name: &str) -> bool {
     }
 }
 
+/// What the host registry and the owner records say about a peer.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PeerOwner {
+    /// The peer's SendMessage name.
+    pub name: Option<String>,
+    /// The short ref its owner record carries.
+    pub reference: Option<String>,
+    pub standing: Standing,
+}
+
+/// Whether the peer is the session that owns its worktree.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Standing {
+    /// No owner record names the peer.
+    #[default]
+    Unrecorded,
+    Live,
+    /// The peer's process now runs another session.
+    Cleared {
+        now: String,
+    },
+    /// Gone, stale or unknown: nothing to say beyond the name.
+    Other,
+}
+
+/// The owners of `peers`, in order: the name from the host registry (or the
+/// owner record when the registry no longer knows the peer's UUID), and the
+/// standing of the peer's worktree record when it names the peer.
+/// The owner each peer is, read from `store` and the registry it names;
+/// `None` (no store) leaves every peer unnamed.
+pub fn peer_owners(
+    store: Option<&crate::owner::Store>,
+    peers: &[Peer],
+    now_seconds: u64,
+) -> Vec<PeerOwner> {
+    peers
+        .iter()
+        .map(|peer| {
+            let Some(store) = store else {
+                return PeerOwner::default();
+            };
+            let mut owner = PeerOwner {
+                name: crate::host_session::lookup_in(&store.registry, &peer.session)
+                    .map(|host| host.name)
+                    .filter(|name| !name.is_empty()),
+                ..PeerOwner::default()
+            };
+            let crate::owner::Reading::Held {
+                owner: record,
+                state,
+            } = crate::owner::read_worktree(store, &peer.worktree, now_seconds)
+            else {
+                return owner;
+            };
+            if record.identity.session != peer.session {
+                return owner;
+            }
+            owner.name = owner.name.or(Some(record.identity.name.clone()));
+            owner.reference = record.identity.reference.clone();
+            owner.standing = match state {
+                crate::owner::State::Live => Standing::Live,
+                crate::owner::State::Cleared { now, .. } => Standing::Cleared { now },
+                _ => Standing::Other,
+            };
+            owner
+        })
+        .collect()
+}
+
 /// The one-line advice, naming every live peer (at most three, freshest first)
-/// and the plan each one's branch added; the plan lookups share one 2 s budget
-/// and a peer reached after it is named without a plan.
-pub fn phrase(repo_name: &str, peers: &[Peer], now: std::time::SystemTime) -> String {
+/// with its name beside the UUID and the plan each one's branch added; the
+/// plan lookups share one 2 s budget and a peer reached after it is named
+/// without a plan. `owners` is [`peer_owners`], in the order of `peers`.
+pub fn phrase(
+    repo_name: &str,
+    peers: &[Peer],
+    owners: &[PeerOwner],
+    now: std::time::SystemTime,
+) -> String {
     const NAMED: usize = 3;
     let deadline = std::time::Instant::now() + PLAN_BUDGET;
+    let none = PeerOwner::default();
     let named: Vec<String> = peers
         .iter()
+        .zip(owners.iter().chain(std::iter::repeat(&none)))
         .take(NAMED)
-        .map(|peer| {
+        .map(|(peer, owner)| {
             let plan = peer_plan(peer, deadline)
                 .map(|title| format!(", active plan \"{title}\""))
                 .unwrap_or_default();
+            let who = match (&owner.name, &owner.reference) {
+                (Some(name), Some(reference)) => format!("`{name}` [{reference}] / "),
+                (Some(name), None) => format!("`{name}` / "),
+                (None, _) => String::new(),
+            };
+            let standing = match &owner.standing {
+                Standing::Cleared { now } => format!(
+                    ", cleared since: its process now runs `{now}`, which has none of this work, so do not credit it"
+                ),
+                Standing::Live | Standing::Unrecorded | Standing::Other => String::new(),
+            };
             format!(
-                "session `{}` (worktree `{}`, branch `{}`{plan}, last seen {} ago)",
+                "session {who}`{}` (worktree `{}`, branch `{}`{plan}, last seen {} ago{standing})",
                 peer.session,
                 peer.worktree.display(),
                 peer.branch,
@@ -125,15 +219,27 @@ pub fn phrase(repo_name: &str, peers: &[Peer], now: std::time::SystemTime) -> St
     } else {
         String::new()
     };
+    let live_owner = peers
+        .iter()
+        .zip(owners)
+        .take(NAMED)
+        .find(|(_, owner)| owner.standing == Standing::Live)
+        .and_then(|(_, owner)| owner.name.as_deref());
+    let remedy = match live_owner {
+        Some(name) => format!(
+            "It owns that worktree and is live: SendMessage to \"{name}\" before editing there, or ask the person. `{BIN} board --repo {repo_name}` lists every session."
+        ),
+        None => format!(
+            "Run `{BIN} board --repo {repo_name}`, then message that session (SendMessage) or ask the person."
+        ),
+    };
     crate::decision::phrase(
         RULE.id,
         &format!(
             "another session is working in this repository: {}{tail}.",
             named.join("; ")
         ),
-        &format!(
-            "Run `{BIN} board --repo {repo_name}`, then message that session (SendMessage) or ask the person."
-        ),
+        &remedy,
     )
 }
 
@@ -153,7 +259,7 @@ mod tests {
             branch: "feat/x".to_string(),
             last_seen: now - Duration::from_secs(25 * 60),
         };
-        let text = phrase("amont", &[peer], now);
+        let text = phrase("amont", &[peer], &[], now);
         assert!(!text.contains("active plan"), "{text}");
         for part in [
             "s-other",
@@ -165,5 +271,39 @@ mod tests {
         ] {
             assert!(text.contains(part), "{part}: {text}");
         }
+    }
+
+    #[test]
+    fn a_live_owner_is_named_with_its_ref_and_messaged() {
+        let now = UNIX_EPOCH + Duration::from_secs(10_000);
+        let peer = Peer {
+            session: "uuid-a".to_string(),
+            worktree: PathBuf::from("/w/feat"),
+            branch: "feat/x".to_string(),
+            last_seen: now,
+        };
+        let owner = PeerOwner {
+            name: Some("perso-3b".to_string()),
+            reference: Some("417dc6".to_string()),
+            standing: Standing::Live,
+        };
+        let text = phrase("amont", std::slice::from_ref(&peer), &[owner], now);
+        for part in [
+            "`perso-3b` [417dc6] / `uuid-a`",
+            "SendMessage to \"perso-3b\"",
+        ] {
+            assert!(text.contains(part), "{part}: {text}");
+        }
+        let cleared = PeerOwner {
+            name: Some("perso-3b".to_string()),
+            reference: None,
+            standing: Standing::Cleared {
+                now: "uuid-b".to_string(),
+            },
+        };
+        let text = phrase("amont", &[peer], &[cleared], now);
+        assert!(text.contains("cleared since"), "{text}");
+        assert!(text.contains("do not credit it"), "{text}");
+        assert!(!text.contains("SendMessage to"), "{text}");
     }
 }

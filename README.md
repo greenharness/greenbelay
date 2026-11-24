@@ -76,6 +76,23 @@ git config --global greenbelay.pipe-to-tail.stance observe   # one rule
 GREENBELAY_OFF=1                                             # this shell
 ```
 
+## Who owns the work
+
+Sessions on one task agree on its owner by an address they can message. The
+first write in a worktree, or an observed `relais programme claim`, records
+the session that holds it, with the name Claude Code gives it. A `resume
+<repo> <programme> <ticket>` prompt is told before any work whether another
+live session owns that ticket, or whether its owner has since cleared and
+must not be credited. A push is credited to the session that made it only when
+it left the machine: `greenbelay who-pushed <branch|sha>`. `greenbelay
+owner` and `greenbelay board` show the owner.
+
+The names come from Claude Code's undocumented `~/.claude/sessions` files,
+read best-effort; anything unexpected reads as `unknown`. The resume check
+finds a ticket only through its ticket record or a worktree on its
+`prog/<programme>/<ticket>` branch: an owner working on a feature branch
+without a ticket record is not found. [More](docs/owners.md).
+
 ## Runs alone
 
 `aval`, `adr-lint`, `amont` and `gh` are optional. Without `aval`, `review-brief`
@@ -99,6 +116,7 @@ code:
 - [Preview approval](docs/preview.md) and [the review panel](docs/plan-review.md)
 - [What shipped under a plan](docs/shipped.md)
 - [The board: work in flight](docs/board.md)
+- [Owners](docs/owners.md) — who holds a worktree or a ticket, and who pushed
 - [The session notice](docs/session-notice.md) — a stale checkout, told at session start
 - [What it will not do](docs/refusals.md) and [the shell analysis](docs/analysis.md)
 

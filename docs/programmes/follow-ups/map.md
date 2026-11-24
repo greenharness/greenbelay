@@ -16,36 +16,33 @@ Reached when no ticket here is open.
 - [t05](t05-clear-at-boundary-cap-test-flake.md): the cap test's clock was
   the Stop's 2-second deadline; the Stop tests pin
   `GREENBELAY_STOP_DEADLINE_MS` long, and the shipped deadline stays 2 s.
+- [t02](t02-three-sessions-one-owner.md): owner records per worktree and
+  ticket, read against Claude Code's session registry (an ADR-0039
+  exception); the resume prompt is checked, and pushes are credited only on
+  publication evidence (greenbelay 6.13.0).
 
 ## Handoff
 
-2026-11-24, t05 closed: the cap test flaked because the Stop's 2-second
-deadline ran out on a jammed host (`watched timeout`, no cap row). The
-Stop tests now pin `GREENBELAY_STOP_DEADLINE_MS` at 60 s.
+2026-11-24, t02 closed: sessions on one task now agree on its owner. The
+board, `work-overlap` and `greenbelay owner show` name the owner by name and
+UUID with its state; a `resume <repo> <programme> <ticket>` prompt is told
+who owns the ticket; `greenbelay who-pushed` names the session of a push.
+Released as greenbelay 6.13.0 and installed here.
 
-- Next: t02, ready now. t01 is due 2026-11-28; t03 and t04 are due
-  2026-11-30.
-
-2026-11-24: the size-kind PR (ADR-0083) filed
-[t03](t03-size-boundary-day-7.md), the live check that decides whether
-`size-stance` moves to `deny`; [t04](t04-prompt-cache-ttl-check.md), from inbox
-line 8efa358a; and [t05](t05-clear-at-boundary-cap-test-flake.md), from
-orphan 4bca21ec.
-
-- Next: t02 and t05, ready now. t01 is due 2026-11-28; t03 and t04 are due
-  2026-11-30.
-
-2026-11-23: [t02](t02-three-sessions-one-owner.md) filed from decisions
-f107, where three sessions could not agree on who owned it.
-
-- Next: t02, ready now. Then [t01](t01-push-browser-check-day-7.md), due
-  2026-11-28.
-
-2026-11-21, boundary: the map opens with the first dated check.
+- Filed: [t06](t06-one-owner-day-7.md), the 7-day check, due 2026-12-02. To
+  relais's inbox: `programme claim` calling `greenbelay owner claim
+  --ticket` (then greenbelay's interim observer goes), `next --claim`
+  consulting `greenbelay board --json`, and the handoff takeover checking
+  liveness. To decisions's inbox: a note scoping ADR-0039's exception for
+  the host's session store.
+- Next: [t01](t01-push-browser-check-day-7.md), due 2026-11-28;
+  [t03](t03-size-boundary-day-7.md) and [t04](t04-prompt-cache-ttl-check.md),
+  due 2026-11-30; t06, due 2026-12-02.
 
 ## Not yet specified
 
-- Nothing.
+- Whether the resume check should also read `implement <plan> in <repo>`
+  prompts, and which record a plan maps to.
 
 ## Out of scope
 

@@ -69,6 +69,13 @@ pub enum Decision {
     /// A note to the PERSON, never the model, from a `Stop` hook:
     /// the top-level `systemMessage`. The turn ends as it would have.
     UserNote(String),
+    /// Text into the model's context before it reads a submitted prompt, and
+    /// optionally a note to the person, in ONE object: a second object on
+    /// stdout would not be read as JSON at all.
+    PromptContext {
+        context: String,
+        note: Option<String>,
+    },
 }
 
 impl Decision {
@@ -133,6 +140,19 @@ impl Decision {
             }
             Decision::Continue(text) => println!("{}", continue_json(text)),
             Decision::UserNote(text) => println!("{}", note_json(text)),
+            Decision::PromptContext { context, note } => {
+                let mut fields = vec![format!(
+                    "\"hookSpecificOutput\":{}",
+                    json::object(&[
+                        json::string_field("hookEventName", "UserPromptSubmit"),
+                        json::string_field("additionalContext", &clamp(context)),
+                    ])
+                )];
+                if let Some(note) = note {
+                    fields.push(json::string_field("systemMessage", &clamp(note)));
+                }
+                println!("{}", json::object(&fields));
+            }
             Decision::Context(text) => {
                 println!(
                     "{}",

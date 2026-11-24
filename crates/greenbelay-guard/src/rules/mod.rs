@@ -81,6 +81,7 @@ pub mod unbounded_background_push;
 pub mod unsplit_expansion;
 pub mod whole_file_dump;
 pub mod work_overlap;
+pub mod work_owner;
 pub mod workspace_root_write;
 pub mod worktree_isolation;
 pub mod worktree_remove_force;
