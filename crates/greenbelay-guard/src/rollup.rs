@@ -92,7 +92,7 @@ pub enum Loaded {
 pub enum FoldError {
     /// `rollup.log.lock` is held by someone else.
     Busy,
-    /// An I/O failure; the text is one whitespace-free token.
+    /// An I/O failure; [`FoldError::why`] renders it as one whitespace-free token.
     Io(IoFailure),
 }
 
@@ -138,7 +138,7 @@ pub enum Folded {
 }
 
 /// Read `path`. A missing or empty file is an empty roll-up; an unreadable one
-/// is an `Err` carrying the reason.
+/// is an `Err` carrying the [`IoFailure`] (kind and path).
 pub fn read(path: &Path) -> Result<Loaded, IoFailure> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
@@ -525,7 +525,7 @@ fn remove_stale_temps(target: &Path, name: &str) {
 pub enum Problem {
     /// The header named a version this build does not read.
     UnknownVersion(String),
-    /// An I/O failure, as one token.
+    /// An I/O failure; the journal gets its kind as one token.
     Unreadable(IoFailure),
 }
 

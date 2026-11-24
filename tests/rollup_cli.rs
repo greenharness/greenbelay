@@ -144,7 +144,10 @@ fn an_unreadable_transcript_skips_the_freeze() {
     std::fs::set_permissions(&transcript, std::fs::Permissions::from_mode(0o000))
         .expect("the transcript is made unreadable");
     if std::fs::File::open(&transcript).is_ok() {
-        return; // running as a user who ignores file modes: the file cannot be made unreadable
+        eprintln!(
+            "skipped: this user ignores file modes, so the transcript cannot be made unreadable"
+        );
+        return;
     }
     let dir = home.0.display().to_string();
     let (code, out, err) = home.run(&["--json", "--transcripts", &dir]);

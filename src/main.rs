@@ -3899,7 +3899,7 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let RollupArgs {
-        quiet,
+        progress,
         weeks,
         given,
     } = match parse_rollup_args(args) {
@@ -3952,7 +3952,13 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
         Vec::new()
     };
 
-    let live = scan_and_freeze(&rollup_path, &given.transcripts, &freezable, current, quiet);
+    let live = scan_and_freeze(
+        &rollup_path,
+        &given.transcripts,
+        &freezable,
+        current,
+        progress,
+    );
 
     let counted = rollup::load(&journal::paths(), &rollup_path);
     let calls = rollup::merged_calls(&counted.rollup, &live);
@@ -3972,8 +3978,15 @@ fn run_rollup(args: &[OsString]) -> ExitCode {
     }
 }
 
+/// Whether `rollup` draws its progress line on a terminal.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Progress {
+    Shown,
+    Hidden,
+}
+
 struct RollupArgs {
-    quiet: bool,
+    progress: Progress,
     weeks: Option<usize>,
     given: Flags,
 }
@@ -3982,7 +3995,7 @@ struct RollupArgs {
 /// the message is printed.
 fn parse_rollup_args(args: &[OsString]) -> Result<RollupArgs, ExitCode> {
     use greenbelay_guard::rollup;
-    let mut quiet = false;
+    let mut progress = Progress::Shown;
     let mut weeks: Option<usize> = None;
     let mut rest: Vec<OsString> = Vec::new();
     let mut iter = args.iter();
@@ -3995,7 +4008,7 @@ fn parse_rollup_args(args: &[OsString]) -> Result<RollupArgs, ExitCode> {
             _ => (text.as_str(), None),
         };
         match name {
-            "-q" | "--quiet" => quiet = true,
+            "-q" | "--quiet" => progress = Progress::Hidden,
             "--weeks" => {
                 let given = inline.or_else(|| {
                     iter.next()
@@ -4056,7 +4069,7 @@ fn parse_rollup_args(args: &[OsString]) -> Result<RollupArgs, ExitCode> {
         return Err(ExitCode::from(2));
     }
     Ok(RollupArgs {
-        quiet,
+        progress,
         weeks,
         given,
     })
@@ -4069,7 +4082,7 @@ fn scan_and_freeze(
     transcripts: &[PathBuf],
     freezable: &[civil::Day],
     current: civil::Day,
-    quiet: bool,
+    progress: Progress,
 ) -> greenbelay_guard::rollup::Calls {
     use greenbelay_guard::rollup;
     // The scan holds no lock: it is the slow part.
@@ -4078,7 +4091,7 @@ fn scan_and_freeze(
     match transcript::roots(transcripts) {
         Ok(roots) => {
             use std::io::IsTerminal as _;
-            if !quiet && std::io::stderr().is_terminal() {
+            if progress == Progress::Shown && std::io::stderr().is_terminal() {
                 eprintln!("{BIN}: counting tool calls in the transcripts...");
             }
             let first = freezable
