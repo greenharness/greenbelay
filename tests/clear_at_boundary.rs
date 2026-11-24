@@ -637,19 +637,17 @@ fn at_advise_boundary_one_lets_plan_phases_open_carry_the_plan() {
 }
 
 /// The Continue asks for the line the clear-relay plugin reads: the line it
-/// quotes must match the plugin's `HANDOFF` pattern, `/^<prefix>(.+)<suffix>$/`.
+/// quotes is armed by the grammar both read (`handoff_line`, pinned for the
+/// relay by `plugin/clear-relay/hooks/handoff-cases.ts`), and the relay keys
+/// on the same marker.
 #[test]
 fn the_continue_asks_for_the_line_the_relay_reads() {
+    use greenbelay_guard::rules::clear_at_boundary::{handoff_line, HandoffLine, MARKER};
     let source = include_str!("../plugin/clear-relay/hooks/register.ts");
-    let pattern = source
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("const HANDOFF = /^"))
-        .and_then(|rest| rest.strip_suffix("$/"))
-        .expect("register.ts declares const HANDOFF = /^…$/")
-        .replace("\\/", "/");
-    let (prefix, suffix) = pattern
-        .split_once("(.+)")
-        .expect("HANDOFF captures the prompt with (.+)");
+    assert!(
+        source.contains(&format!("const MARKER = '{MARKER}'")),
+        "register.ts declares const MARKER = '{MARKER}'"
+    );
 
     let world = World::new("contract");
     let transcript = world.transcript("t.jsonl", &turn(TEARDOWN, 250_000));
@@ -658,10 +656,9 @@ fn the_continue_asks_for_the_line_the_relay_reads() {
         .split('"')
         .find(|quoted| quoted.starts_with("safe to /clear"))
         .unwrap_or_else(|| panic!("no quoted handoff line in: {reason}"));
-    let prompt = asked
-        .strip_prefix(prefix)
-        .and_then(|rest| rest.strip_suffix(suffix))
-        .unwrap_or_else(|| panic!("{asked:?} does not match /^{prefix}(.+){suffix}$/"));
+    let HandoffLine::Next(prompt) = handoff_line(asked) else {
+        panic!("{asked:?} is not a line the relay arms on");
+    };
     assert!(!prompt.is_empty(), "{asked:?}");
     assert!(
         reason.contains("worktree-task skill's Handoff section"),

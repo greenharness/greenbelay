@@ -88,3 +88,20 @@ match	Stop size-next-step-510k
 match	Stop size-command-450k
 # why: the handoff turn ends with the marker: silent
 nomatch	Stop size-marker-turn
+
+# Near-miss handoff lines (t30, 2026-11-24): hand-built, since a near-miss
+# Stop was silent before t30 and left no journal row to export. Each copies
+# the reviewed 52e82064-1794880526 boundary and adds `last_line`, read by
+# the same grammar as the clear-relay plugin.
+# why: hand-built from 52e82064-1794880526 (t30): the bare prompt of 836b5b71: no backticks, the relay does not arm, the rule judges
+match	Stop near-miss-bare-prompt
+# why: hand-built from 52e82064-1794880526 (t30): an empty prompt between backticks: the relay does not arm, the rule judges
+match	Stop near-miss-empty-prompt
+# why: hand-built from 52e82064-1794880526 (t30): a 2,001-unit prompt: the relay does not arm, the rule judges
+match	Stop near-miss-overlong
+# why: hand-built from 52e82064-1794880526 (t30): a backtick inside the prompt: the relay does not arm, the rule judges
+match	Stop near-miss-inner-backtick
+# why: hand-built from 52e82064-1794880526 (t30): a backticked next: line the relay arms on: silent
+nomatch	Stop armed-next
+# why: hand-built from 52e82064-1794880526 (t30): a park line the relay acts on: silent
+nomatch	Stop armed-parked

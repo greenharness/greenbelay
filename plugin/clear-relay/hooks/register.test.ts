@@ -1,5 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, On } from 'claude-code/testing'
+import { HANDOFF_CASES } from './handoff-cases'
+import type { HandoffCase } from './handoff-cases'
 
 const PROMPT = 'continue with Phase 2 of docs/plans/x.md'
 const LINE = `safe to /clear; next: \`${PROMPT}\``
@@ -15,6 +17,8 @@ type World = {
   commands: string[]
   submitted: string[]
   toasts: string[]
+  // Each toast event as the engine received it, for its options.
+  toastEvents: unknown[]
   session: { id: string; draft: string }
 }
 
@@ -31,6 +35,7 @@ function stage($test: Engine, on: On, refusals: Refusals = {}): World {
     commands: [],
     submitted: [],
     toasts: [],
+    toastEvents: [],
     session: { id: sessions[0] ?? 's1', draft: '' },
   }
   on('turn.complete', (_, e) => ({ text: e.answer }))
@@ -44,6 +49,7 @@ function stage($test: Engine, on: On, refusals: Refusals = {}): World {
   on('command.register', () => ({ value: { command: 'stay' } }))
   on('ui.toast', (_, e) => {
     world.toasts.push(e.text)
+    world.toastEvents.push(e)
     return { value: undefined }
   })
   on('ui.status', () => ({ value: undefined }))
@@ -84,7 +90,7 @@ function answer($: Engine, text: string, extra: object = {}) {
   } as never)
 }
 
-function logLines(world: World, id: string): { event: string; cause?: string; session: string; cwd: string; prompt?: string; named?: unknown }[] {
+function logLines(world: World, id: string): { event: string; cause?: string; session: string; cwd: string; prompt?: string; named?: unknown; reason?: string; line?: string; line_units?: number }[] {
   const text = world.files.get(`${STATE_DIR}/clear-relay/${id}.jsonl`) ?? ''
   return text
     .split('\n')
@@ -252,7 +258,12 @@ test('a line that is not last, an empty or a multi-line prompt do not arm', OPTI
   await answer($, 'safe to /clear; next: `first\nsecond`')
   await answer($, `safe to /clear; next: \`${'x'.repeat(2_001)}\``)
   await world.clock.advance(COUNTDOWN_MS)
-  expect(world.toasts).toEqual([])
+  // The empty and the overlong prompts are near-misses, said but not armed;
+  // a line that is not last and a split prompt's `second`` are no handoff line.
+  expect(world.toasts.map(t => t.split('. It arms on')[0])).toEqual([
+    'clear-relay: not armed: the prompt is empty',
+    'clear-relay: not armed: the prompt is 2001 UTF-16 units, over the limit of 2000',
+  ])
   expect(world.commands).toEqual([])
 })
 
@@ -410,4 +421,102 @@ test('no stateDir: an empty HOME falls through to USERPROFILE', { options: {} },
   world.env.set('USERPROFILE', '/users/person')
   await answer($, LINE)
   expect(logPaths(world)).toEqual(['/users/person/.local/state/greenbelay/clear-relay/s1.jsonl'])
+})
+
+// The grammar both readers share (handoff-cases.ts; greenbelay-guard's tests
+// read the same block), each case through the engine on a fresh relay.
+function caseAnswer(handoffCase: HandoffCase): { answer: string; prompt?: string } {
+  if ('next_repeat' in handoffCase) {
+    const { unit, count, tail } = handoffCase.next_repeat
+    const prompt = `${unit.repeat(count)}${tail ?? ''}`
+    return { answer: `safe to /clear; next: \`${prompt}\``, prompt }
+  }
+  return { answer: handoffCase.answer, prompt: handoffCase.kind === 'next' ? handoffCase.prompt : undefined }
+}
+
+test('the shared table holds at least 30 cases', () => {
+  expect(HANDOFF_CASES.length).toBeGreaterThanOrEqual(30)
+})
+
+for (const handoffCase of HANDOFF_CASES) {
+  test(`handoff case: ${handoffCase.name}`, OPTIONS, async ($, on) => {
+    const world = stage($, on)
+    const { answer: text, prompt } = caseAnswer(handoffCase)
+    await answer($, text)
+    await world.clock.advance(COUNTDOWN_MS)
+    switch (handoffCase.kind) {
+      case 'next':
+        expect(world.commands).toEqual(['clear'])
+        expect(world.submitted).toEqual([prompt])
+        expect(events(world, 's1')).toEqual(['arm', 'clear', 'submit'])
+        break
+      case 'parked':
+      case 'absent':
+        expect(world.commands).toEqual([])
+        expect(world.submitted).toEqual([])
+        expect(world.toasts).toEqual([])
+        expect(events(world, 's1')).toEqual([])
+        break
+      case 'near-miss':
+        expect(world.commands).toEqual([])
+        expect(world.submitted).toEqual([])
+        expect(events(world, 's1')).toEqual(['near-miss'])
+        expect(logLines(world, 's1')[0]?.reason).toBe(handoffCase.kind === 'near-miss' ? handoffCase.reason : undefined)
+        expect(world.toasts.length).toBe(1)
+        break
+    }
+  })
+}
+
+test('a near-miss logs its line, then toasts the reason for a minute', OPTIONS, async ($, on) => {
+  const world = stage($, on)
+  const bare = 'safe to /clear; next: resume decisions session-boundaries t17-inbox: file it'
+  await answer($, `Closed t16.\n\n${bare}\n`)
+  expect(logLines(world, 's1')[0]).toMatchObject({
+    event: 'near-miss',
+    reason: 'missing-backticks',
+    line: bare,
+    session: 's1',
+    cwd: '/work/repo',
+  })
+  expect(world.toasts).toEqual([
+    'clear-relay: not armed: the prompt after `next: ` is not wrapped in backticks. It arms on: safe to /clear; next: `<prompt>`, or safe to /clear; parked: <line>. Ask the agent to fix the line, or /clear yourself.',
+  ])
+  expect(world.toastEvents[0]).toMatchObject({ timeoutMs: 60_000 })
+})
+
+test('an overlong near-miss logs its line cut to 2,000 units', OPTIONS, async ($, on) => {
+  const world = stage($, on)
+  await answer($, `safe to /clear; next: \`${'a'.repeat(5000)}\``)
+  const entry = logLines(world, 's1')[0]
+  expect(entry?.reason).toBe('overlong')
+  expect(entry?.line?.length).toBe(2000)
+  expect(entry?.line_units).toBe(5024)
+  expect(world.toasts[0]).toContain('the prompt is 5000 UTF-16 units, over the limit of 2000')
+})
+
+test('a cut log line never ends on half a surrogate pair', OPTIONS, async ($, on) => {
+  const world = stage($, on)
+  // 23 units of `safe to /clear; next: \``, then pairs: unit 1999 opens a pair.
+  await answer($, `safe to /clear; next: \`${'😀'.repeat(1001)}\``)
+  const entry = logLines(world, 's1')[0]
+  expect(entry?.line?.length).toBe(1999)
+  expect(entry?.line?.endsWith('😀')).toBe(true)
+})
+
+test('a near-miss disarms a pending countdown first', OPTIONS, async ($, on) => {
+  const world = stage($, on)
+  await answer($, LINE)
+  await answer($, 'safe to /clear; next: ``')
+  await world.clock.advance(COUNTDOWN_MS)
+  expect(world.commands).toEqual([])
+  expect(events(world, 's1')).toEqual(['arm', 'disarm', 'near-miss'])
+})
+
+test('a disabled relay logs and shows nothing on a near-miss', { options: { enabled: false, stateDir: STATE_DIR } }, async ($, on) => {
+  const world = stage($, on)
+  await answer($, 'safe to /clear; next: no backticks')
+  await world.clock.advance(COUNTDOWN_MS)
+  expect(world.toasts).toEqual([])
+  expect(events(world, 's1')).toEqual([])
 })

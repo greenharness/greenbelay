@@ -29,12 +29,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use greenbelay_guard::decision::Decision;
+use greenbelay_guard::rules::clear_at_boundary::handoff_line;
 use greenbelay_guard::rules::Stance;
 use serde_json::Value;
 
 use crate::clear_boundary::{
     blocks, context_size, decide, entry_type, is_person_prompt, is_prompt, is_sidechain,
-    position_of, read_tail_until_at, Repositories, State, StopView, MARKER, SIZE_BOUNDARY,
+    position_of, read_tail_until_at, LastLine, Repositories, State, StopView, SIZE_BOUNDARY,
     TAIL_CAP, TAIL_FIRST_CHUNK,
 };
 use crate::plan_phases::PhaseFact;
@@ -260,6 +261,7 @@ impl Summary {
             }
             let day = day_of(entry).unwrap_or_default();
             let counted = day.as_str() >= since;
+            let handoff = handoff_line(&last_text);
             let view = StopView {
                 cwd: entry["cwd"].as_str().map(PathBuf::from),
                 home: None,
@@ -270,7 +272,7 @@ impl Summary {
                 waiting_line: last_text
                     .lines()
                     .any(|line| line.trim().starts_with("WAITING:")),
-                marker: last_text.contains(MARKER),
+                last_line: LastLine::of(&handoff),
             };
             stops_in_turn += 1;
             let anchor = state.size_anchor.clone();
