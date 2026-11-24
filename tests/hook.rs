@@ -399,7 +399,10 @@ fn only_the_emitter_writes_to_stdout() {
     // `suppressions.rs` is the commit gate, run by amont under the
     // `suppressions` verb; the hook's after-Bash check calls the guard
     // crate's scanner, never this module.
+    // `owner/cli.rs` is `greenbelay owner …`; the hook calls the owner store's
+    // functions, never its command line.
     const NOT_THE_HOOK_PATH: &[&str] = &[
+        "owner/cli.rs",
         "decision.rs",
         "main.rs",
         "doctor.rs",

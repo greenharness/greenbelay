@@ -9,9 +9,16 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 const REGISTRY_DIR_VAR: &str = "GREENBELAY_HOST_SESSIONS_DIR";
 const SUPPORTED_PEER_PROTOCOL: u64 = 1;
+/// Replaces the process the caller walk starts from. For tests: the hook and
+/// the command run as children of the test, which has no registry file.
+const CALLER_PID_VAR: &str = crate::env_var!("TEST_CALLER_PID");
+/// The caller is at most this many processes up, the starting one included.
+const CALLER_LEVELS: u32 = 4;
+const PS_BUDGET: Duration = Duration::from_secs(1);
 
 /// One live session as the host registry names it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,6 +66,76 @@ pub fn lookup(uuid: &str) -> Option<HostSession> {
 /// The session registered for process `pid`.
 pub fn lookup_pid(pid: u32) -> Option<HostSession> {
     lookup_pid_in(&registry_dir()?, pid)
+}
+
+/// The session this process runs under: the nearest ancestor with a registry
+/// file, at most four levels up.
+pub fn caller() -> Option<HostSession> {
+    let start = match std::env::var(CALLER_PID_VAR)
+        .ok()
+        .and_then(|text| text.trim().parse::<u32>().ok())
+    {
+        Some(pid) => pid,
+        None => own_parent()?,
+    };
+    caller_in(&registry_dir()?, start, parent_of)
+}
+
+/// [`caller`] from `start`, with `parent_of` answering for a pid's parent.
+pub fn caller_in(
+    dir: &Path,
+    start: u32,
+    parent_of: impl Fn(u32) -> Option<u32>,
+) -> Option<HostSession> {
+    let mut pid = start;
+    for level in 0..CALLER_LEVELS {
+        if let Some(found) = lookup_pid_in(dir, pid) {
+            return Some(found);
+        }
+        if level + 1 < CALLER_LEVELS {
+            pid = parent_of(pid).filter(|parent| *parent > 1)?;
+        }
+    }
+    None
+}
+
+#[cfg(unix)]
+fn own_parent() -> Option<u32> {
+    Some(std::os::unix::process::parent_id())
+}
+
+#[cfg(not(unix))]
+fn own_parent() -> Option<u32> {
+    None
+}
+
+/// `ps -o ppid= -p <pid>`, bounded; `None` when it fails or does not answer
+/// within the budget.
+fn parent_of(pid: u32) -> Option<u32> {
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("ps")
+        .args(["-o", "ppid=", "-p", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let deadline = Instant::now() + PS_BUDGET;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => break,
+            Ok(Some(_)) | Err(_) => return None,
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill(); // past its budget; the answer is "no parent known"
+                let _ = child.wait(); // reaping only
+                return None;
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(5)),
+        }
+    }
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut child.stdout.take()?, &mut text).ok()?;
+    text.trim().parse().ok()
 }
 
 pub fn liveness(recorded: &Recorded) -> Liveness {
@@ -204,6 +281,24 @@ mod tests {
         assert_eq!(liveness_in(&dir, &recorded(6)), Liveness::Unknown);
         // the unparseable 9.json belongs to another pid: pid 1 stays Live
         assert_eq!(liveness_in(&dir, &recorded(1)), Liveness::Live);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_caller_is_the_nearest_registered_ancestor_within_four_levels() {
+        let dir = sandbox();
+        register(&dir, 20, "far", 1, 1);
+        register(&dir, 30, "near", 1, 1);
+        let parents = |pid: u32| match pid {
+            10 => Some(30),
+            30 => Some(20),
+            20 => Some(21),
+            21 => Some(22),
+            _ => None,
+        };
+        assert_eq!(caller_in(&dir, 10, parents).unwrap().session, "near");
+        assert_eq!(caller_in(&dir, 21, parents), None);
+        assert_eq!(caller_in(&dir, 99, parents), None);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -297,6 +297,7 @@ fn record_activity(
     mode: &str,
     cwd: &std::path::Path,
 ) {
+    claim_worktree(session, place, now, mode, cwd);
     let (key, outcome, excerpt) = match crate::activity::record(session, place, now) {
         Ok(crate::activity::Recorded::Whole) => return,
         Ok(crate::activity::Recorded::TrimFailed) => (
@@ -316,6 +317,189 @@ fn record_activity(
             mode,
             excerpt,
         });
+    }
+}
+
+fn epoch_seconds(now: std::time::SystemTime) -> u64 {
+    now.duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// One `work-owner` journal line: the state of an owner looked up, or what a
+/// claim did.
+fn journal_owner(outcome: &str, session: &str, mode: &str, cwd: &std::path::Path, shown: &str) {
+    journal::record(&journal::Entry {
+        rule: rules::work_owner::RULE.id,
+        stance: crate::stance::resolve(&rules::work_owner::RULE).as_str(),
+        outcome,
+        session,
+        repo: &repo_name(cwd),
+        mode,
+        excerpt: shown,
+    });
+}
+
+/// The calling session as an owner record keeps it: the payload's UUID (the
+/// registry may not have rewritten its own after a `/clear`) with the pid,
+/// start time and name of the nearest registered ancestor process.
+fn caller_identity(session: &str) -> Option<greenbelay_guard::owner::Identity> {
+    let host = greenbelay_guard::host_session::caller()?;
+    Some(greenbelay_guard::owner::Identity {
+        session: session.to_owned(),
+        pid: host.pid,
+        started_at: host.started_at,
+        name: host.name,
+        reference: None,
+    })
+}
+
+/// Claim the worktree the session just worked in, unless it is the primary
+/// checkout on its default branch or `work-owner.auto-claim` is false. The
+/// registry walk is skipped when the record already names this session, and
+/// when a live other session holds it.
+fn claim_worktree(
+    session: &str,
+    place: &crate::activity::Place,
+    now: std::time::SystemTime,
+    mode: &str,
+    cwd: &std::path::Path,
+) {
+    use greenbelay_guard::owner::{self, Contest, Outcome, Reading, Slot, State};
+    if !greenbelay_guard::gitconfig::boolean_or(rules::work_owner::AUTO_CLAIM_KEY, true) {
+        return;
+    }
+    let primary =
+        std::fs::symlink_metadata(place.worktree_root.join(".git")).is_ok_and(|meta| meta.is_dir());
+    if primary && rules::work_overlap::is_default_branch(&place.repo_identity, &place.branch) {
+        return;
+    }
+    let Some(store) = owner::Store::ambient() else {
+        return;
+    };
+    let seconds = epoch_seconds(now);
+    let shown = place.worktree_root.display().to_string();
+    let slot = Slot::Worktree(place.worktree_root.clone());
+    let held = |outcome: &str| journal_owner(outcome, session, mode, cwd, &shown);
+    if let Reading::Held {
+        owner: record,
+        state,
+    } = owner::read_worktree(&store, &place.worktree_root, seconds)
+    {
+        if record.identity.session == session {
+            match owner::refresh(&store, &slot, session, seconds) {
+                Ok(Some(Outcome::LockBusy)) => held("lock-busy"),
+                Ok(_) => {}
+                Err(failure) => journal_owner("error", session, mode, cwd, &failure.to_string()),
+            }
+            return;
+        }
+        if matches!(state, State::Live | State::Unknown) {
+            held(rules::work_owner::state_word(&state));
+            return;
+        }
+    }
+    let Some(identity) = caller_identity(session) else {
+        held("unknown");
+        return;
+    };
+    let claim = owner::Claim {
+        repo_identity: place.repo_identity.clone(),
+        branch: place.branch.clone(),
+        identity,
+    };
+    match owner::claim_worktree(
+        &store,
+        &place.worktree_root,
+        &claim,
+        Contest::Respect,
+        seconds,
+    ) {
+        Ok(Outcome::Claimed) => held("claimed"),
+        Ok(Outcome::TakenOver { .. }) => held("taken-over"),
+        Ok(Outcome::Refreshed) => {}
+        Ok(Outcome::LockBusy) => held("lock-busy"),
+        Ok(Outcome::HeldBy { state, .. }) => held(rules::work_owner::state_word(&state)),
+        Err(failure) => journal_owner("error", session, mode, cwd, &failure.to_string()),
+    }
+}
+
+/// A `relais programme claim <programme> <ticket> --dir <dir>` that exited 0
+/// records the ticket for the calling session, the repository being the one
+/// the map directory is in.
+// holds-until: relais calls `greenbelay owner claim --ticket` itself (the
+// relais inbox item "programme claim calls greenbelay owner claim"); then
+// this observer is deleted.
+fn observe_programme_claim(bash: &Bash) {
+    use greenbelay_guard::owner::{self, Contest, Outcome};
+    if bash.background || bash.errored || crate::stance::switched_off() {
+        return;
+    }
+    let claims = rules::work_owner::programme_claims(&bash.command, &bash.cwd);
+    if claims.is_empty() {
+        return;
+    }
+    let now = clock();
+    let seconds = epoch_seconds(now);
+    let record = |outcome: &str, shown: &str| {
+        journal_owner(
+            outcome,
+            &bash.session,
+            &bash.permission_mode,
+            &bash.cwd,
+            shown,
+        );
+    };
+    let Some(store) = owner::Store::ambient() else {
+        return;
+    };
+    let Some(identity) = caller_identity(&bash.session) else {
+        record(
+            "unknown",
+            "programme claim: no registered session above this hook",
+        );
+        return;
+    };
+    for claim in claims {
+        let Some(place) = crate::activity::resolve(&claim.map_dir) else {
+            record(
+                "unknown",
+                &format!(
+                    "programme claim: {} is in no repository",
+                    claim.map_dir.display()
+                ),
+            );
+            continue;
+        };
+        let shown = format!("{}/{}", claim.programme, claim.ticket);
+        let key = match owner::TicketKey::new(&place.repo_name(), &claim.programme, &claim.ticket) {
+            Ok(key) => key,
+            Err(failure) => {
+                record("unknown", &failure.to_string());
+                continue;
+            }
+        };
+        let held = owner::Claim {
+            repo_identity: place.repo_identity.clone(),
+            branch: place.branch.clone(),
+            identity: identity.clone(),
+        };
+        match owner::claim_ticket(
+            &store,
+            &key,
+            &claim.map_dir,
+            &held,
+            Contest::Respect,
+            seconds,
+        ) {
+            Ok(Outcome::Claimed) => record("claimed", &shown),
+            Ok(Outcome::TakenOver { .. }) => record("taken-over", &shown),
+            Ok(Outcome::Refreshed) => {}
+            Ok(Outcome::LockBusy) => record("lock-busy", &shown),
+            Ok(Outcome::HeldBy { state, .. }) => {
+                record(rules::work_owner::state_word(&state), &shown);
+            }
+            Err(failure) => record("error", &format!("{shown}: {failure}")),
+        }
     }
 }
 
@@ -367,12 +551,16 @@ fn work_overlap(
         op,
         &format!("{} in {}", freshest.session, freshest.worktree.display()),
     );
+    let owners = rules::work_overlap::peer_owners(&live, epoch_seconds(now));
     match stance {
         Stance::Observe => Decision::Silent,
         // The ceiling is advise (`max_stance`); a deny stance still advises.
-        Stance::Advise | Stance::Deny => {
-            Decision::Advise(rules::work_overlap::phrase(&place.repo_name(), &live, now))
-        }
+        Stance::Advise | Stance::Deny => Decision::Advise(rules::work_overlap::phrase(
+            &place.repo_name(),
+            &live,
+            &owners,
+            now,
+        )),
     }
 }
 
@@ -957,6 +1145,7 @@ fn joined_output(bash: &Bash) -> Option<String> {
 /// There is nothing left to refuse, so `deny` speaks like `advise`, the same
 /// way it does at a session opening.
 fn on_post_bash(bash: &Bash) -> Decision {
+    observe_programme_claim(bash);
     let claims = on_post_bash_claims(bash);
     match (claims, suppressions_after_bash(bash)) {
         (Decision::Assert(a), Some(b)) => Decision::Assert(format!("{a}\n\n{b}")),

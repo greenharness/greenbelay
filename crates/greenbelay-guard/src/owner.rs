@@ -640,6 +640,10 @@ fn parse(text: &str) -> Option<Owner> {
     })
 }
 
+/// `greenbelay owner claim|release|show`.
+#[path = "owner/cli.rs"]
+pub mod command;
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;

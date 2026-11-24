@@ -259,11 +259,11 @@ under `NO_COLOR` and when stdout is not a TTY (reuse guard/ui.rs). The board's i
 
 ## Phases
 
-- [ ] Phase 1: session identity and owner store, with unit tests.
+- [x] Phase 1: session identity and owner store, with unit tests.
   Files: `crates/greenbelay-guard/src/host_session.rs`,
   `crates/greenbelay-guard/src/owner.rs`,
   `crates/greenbelay-guard/src/lib.rs`.
-- [ ] Phase 2: claims and the `owner` command, plus the `work-overlap`
+- [x] Phase 2: claims and the `owner` command, plus the `work-overlap`
   text.
   - Auto worktree claim, an observed `relais programme claim`, and
     `greenbelay owner claim|release|show`.
