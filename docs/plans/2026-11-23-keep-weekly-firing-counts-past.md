@@ -95,8 +95,8 @@ A backtest replay counts 12 of 62 greenbelay rules. The other 50 can only be cou
 ## Phases
 - [x] Phase 1 — rename `status`'s `seen, last 30 days` to `seen since <date>` from `oldest_record()`; the first code commit, true today: `src/main.rs`, `CHANGELOG.md`
 - [x] Phase 2 — the roll-up file (read, merge, atomic write, lock, watermark) and `rotate`'s best-effort fold, returning the fold failure beside the move result so `append` writes `F <ts> - - rollup-failed …`; the roll-up keeps 104 weeks of rows: `crates/greenbelay-guard/src/rollup.rs`, `crates/greenbelay-guard/src/journal.rs`, `crates/greenbelay-guard/src/lib.rs`
-- [ ] Phase 3 — the per-tool transcript walker, the calls freeze, `rule_tool` and `greenbelay rollup [--json]`: `crates/greenbelay-guard/src/transcript.rs`, `crates/greenbelay-guard/src/rollup.rs`, `src/main.rs`, `docs/measuring.md`, `README.md`
-- [ ] Phase 4 — `tally` reads roll-up plus journal; `status` switches to the 4-week label once coverage allows: `crates/greenbelay-guard/src/journal.rs`, `src/main.rs`, `docs/index.md`
+- [x] Phase 3 — the per-tool transcript walker, the calls freeze, `rule_tool` and `greenbelay rollup [--json]`: `crates/greenbelay-guard/src/transcript.rs`, `crates/greenbelay-guard/src/rollup.rs`, `src/main.rs`, `docs/measuring.md`, `README.md`
+- [x] Phase 4 — `tally` reads roll-up plus journal; `status` switches to the 4-week label once coverage allows: `crates/greenbelay-guard/src/journal.rs`, `src/main.rs`, `docs/index.md`
 - [ ] Phase 5 — release through the `tag-release` skill: `CHANGELOG.md`. Phases 1–2 ship first as their own release (fold only, no new command), because the roll-up counts only from its first fold and nothing before it comes back; Phases 3–4 follow in a second release.
 - [ ] Phase 6 — retro's Target line reads `greenbelay rollup --json` when `replay` is `none`, instead of writing `uncounted`. Its own plan and PR in greenharness-skills, after the release, not part of this plan's PR. t34 stays open after this release; its Handoff names the skills plan. Close it in blue-factory's map only once that PR has merged and a retro Target line shows a roll-up count for a `replay: none` rule: `docs/programmes/blue-factory/t34-build-greenbelay-firing-rollup.md`, `docs/programmes/blue-factory/map.md`
 
@@ -115,6 +115,9 @@ A backtest replay counts 12 of 62 greenbelay rules. The other 50 can only be cou
   - Expected: 14k firings in, the same total out of `rollup` plus the journal; sums by rule match the pre-fold `tally`.
   - Expected: the fold adds under 20 ms p95 to an `append` on a 256 KB generation; a crash injected between the roll-up rename and the journal delete leaves the total unchanged.
   - Observed, Phases 1–2 (scratch `CLAUDE_CONFIG_DIR`, branch binary, a copy of the live journal): one hook call over the 256 KB cap rotated; `rollup.log` took 1,270 firings in 77 `R` rows, equal to the 1,270 an awk count finds in the original generation 10; no `rollup-failed` record, no leftover temp file. `status` prints `seen since 2026-11-20`. Fold latency was not timed in this pilot, and no synthetic 104-week file was seeded: both are carried to the second release.
+  - Observed, Phases 3–4 (scratch `CLAUDE_CONFIG_DIR`, debug binary, copy of the live journal, real `projects/` symlinked): `rollup` printed the current week `(partial)` with Bash calls 5,648, `plan-review-panel` calls 15 (a Named tool), `clear-at-boundary` `-` (no honest tool); `--json` carried `covered_since` 2026-11-21, `partial`, `tool`, `replay`; `status` read `seen since 2026-11-21` (coverage under four weeks); `rollup.log` was created and no temp or lock file stayed. The first cold scan of all transcripts took 5:48 on a debug build: carried to the release check.
+  - Not observed, carried past the release (named, not pending): the 20 ms p95 fold latency on a 256 KB generation; a crash injected between the roll-up rename and the journal delete (the watermark test `a_fold_counts_each_record_once_across_rotations_and_a_refold` covers the re-fold, not a live crash); pre-fold `tally` sums by rule against the roll-up (the unit test `tally_counts_rollup_plus_journal_without_shadow_or_double_counting` pins the sum on fixtures). The release check times a release-build cold scan.
+  - Observed: `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass on the closing tree.
 - `make check`, and the hook-latency pilot above.
 
 ## Overlap
@@ -127,8 +130,17 @@ PR 1 carries Phases 1–2; Phases 3–6 follow in a second PR, so `status` stays
 - lang:rust: approve; carried: the `dropped_future` side channel, `Arm` in `Key`, typed fold errors, one bucket function with `tally`.
 - unix: approve; fixed the unknown-version silent loss; carried: a parent-directory fsync.
 
+## Phase 3–4 implementation review
+PR 2 carries Phases 3–4; `status` stays `active`, next Phase 5 (release), then Phase 6 (retro, its own plan).
+- implementation-review: approve-with-changes after 2 deltas; fixed stdout warning, `n`/`f` names, branch tests; deliberate: root-run unreadable test is guarded, not asserted.
+- backend: approve-with-changes after 2 deltas; fixed freeze on unreadable files, mtime floor, partial-week rate, best-effort dir sync; deliberate: the CLI-level freeze guard has no binary test (carried to the follow-up).
+- lang:rust: approve after 2 deltas; fixed u64 saturating counts, `--weeks` bounds, borrows; carried: shared classifier, typed I/O errors, `run_rollup` split, `as Day` casts.
+- unix: approve after 1 delta; fixed `--help`, `--weeks=N`, foreign flags refused, exit 1 on an unknown roll-up version.
+
 ## Decision log
 - 2026-11-23 — roll-up over longer journal (t29). The rule-to-tool table is explicit, because rules declare no tool and the rate needs one denominator per rule.
 - 2026-11-23 — Phase 2 review: a journal over twice its cap rotates despite a busy roll-up lock and writes `rollup-failed lock-busy`, so a stuck lock cannot grow the journal without bound (architect, round 2). A roll-up of another format version is left untouched and reported as `rollup-failed rollup-format-unknown`. Records stamped a day ahead of the clock are left out and reported as `rollup-failed future-ts-<n>`. Same-second records at the watermark may undercount: kept, as the plan's decision 6 says. Carried to the second PR: `Arm` typed in `Key`, one shared bucket function with `tally`, a parent-directory fsync.
+- 2026-11-24 — Phase 3–4 review. Carried, each with its ceiling: `Arm` typed in `Key` and one shared stance/outcome classifier for `Seen` and `Buckets` (rust, architect): filed as a greenbelay follow-up, due before the third reader of either appears; typed I/O errors in `Problem` and `FoldError`, and splitting `run_rollup` (rust): the same follow-up. `rollup` reads only transcripts modified since the oldest week it needs, on every run (it assumes a file's mtime is not older than its newest entry, which a `cp -p` or rsync restore breaks); the release check times it on a release build, and a skip-list is added only if it exceeds 60 s there. The `as civil::Day` casts in `main.rs` (rust finding 8, and the new `rollup_failed_line` site) ride the same follow-up. Done in this PR: parent-directory fsync (best effort), the `future-ts-<n>` CHANGELOG line.
+
 
 <!-- panel: repos=greenbelay,greenharness-skills,blue-factory adds=cli,contract reviewers=backend,lang:rust,tui,unix,architect,po body-sha=561128469e6a -->
