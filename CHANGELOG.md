@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The `Stop` deadline (2 s) can be overridden with `GREENBELAY_STOP_DEADLINE_MS`
+  for tests. The `Stop` tests pin it long, so a jammed host no longer turns
+  the cap test's fourth boundary into `watched timeout` (follow-ups t05).
+
 ## v6.11.0
 
 greenbelay 6.11.0 gives `clear-at-boundary` a size kind (ADR-0083): past 400k

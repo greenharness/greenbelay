@@ -150,6 +150,9 @@ impl World {
             .env("GIT_CONFIG_GLOBAL", &self.global)
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env_remove("GREENBELAY_OFF")
+            // Long, so a jammed host cannot turn a boundary into a timeout;
+            // the timeout test passes a short one.
+            .env("GREENBELAY_STOP_DEADLINE_MS", "60000")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -491,8 +494,18 @@ fn a_git_that_outlasts_the_deadline_is_a_timeout() {
         ),
     );
     let transcript = world.transcript("t.jsonl", &turn(TEARDOWN, 250_000));
+    let payload = json!({
+        "hook_event_name": "Stop",
+        "session_id": "s1",
+        "cwd": &world.repo,
+        "transcript_path": transcript,
+    });
     let started = std::time::Instant::now();
-    let reply = world.stop_in(&world.repo, "s1", &transcript, json!({}), Some(&bin));
+    let reply = world.run_with_env(
+        &payload,
+        Some(&bin),
+        &[("GREENBELAY_STOP_DEADLINE_MS", "2000")],
+    );
     assert!(reply.silent(), "{}", reply.stdout);
     assert!(started.elapsed() < std::time::Duration::from_secs(8));
     assert!(
@@ -805,6 +818,37 @@ fn when_the_cap_silences_a_plan_only_boundary_plan_phases_open_runs() {
         "{}",
         fourth.reason()
     );
+    assert!(world.journal_has("watched", "cap"), "{:?}", world.journal());
+}
+
+/// A jammed host once ran the fourth Stop past the 2-second deadline: the
+/// rule journalled `watched timeout` and the cap was never reached. The
+/// tests pin a long deadline, so a git slower than the shipped one still
+/// reaches the cap.
+#[cfg(unix)] // the stub git is a #!/bin/sh script
+#[test]
+fn a_slow_git_still_reaches_the_cap_under_the_test_deadline() {
+    let world = boundary_one();
+    let bin = world.root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let real = git_path();
+    common::write_fake(
+        &bin.join("git"),
+        &format!(
+            "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = status ] && sleep 2.5; done\nexec {real} \"$@\"\n"
+        ),
+    );
+    for at in 1..=3 {
+        let mut entries = turn(&format!("git commit -m \"docs(plan): x {at}\""), 250_000);
+        entries[0] = prompt(&format!("turn-{at}"));
+        let transcript = world.transcript("t.jsonl", &entries);
+        let reply = world.stop("s1", &transcript, json!({}));
+        assert!(reply.blocks(), "boundary {at}: {}", reply.stdout);
+    }
+    let mut entries = turn("git commit -m \"docs(plan): x 4\"", 250_000);
+    entries[0] = prompt("turn-4");
+    let transcript = world.transcript("t.jsonl", &entries);
+    world.stop_in(&world.repo, "s1", &transcript, json!({}), Some(&bin));
     assert!(world.journal_has("watched", "cap"), "{:?}", world.journal());
 }
 

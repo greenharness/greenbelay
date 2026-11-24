@@ -117,7 +117,7 @@ fn ask_unopened_page(ask: &payload::Ask) -> Decision {
 fn on_stop(stop: &payload::Stop) -> Decision {
     use crate::clear_boundary;
     use crate::plan_phases::PhaseFact;
-    let deadline = std::time::Instant::now() + clear_boundary::DEADLINE;
+    let deadline = std::time::Instant::now() + clear_boundary::deadline();
     let clear = clear_boundary::on_stop(
         stop,
         || crate::plan_phases::open_phase(stop, deadline),
