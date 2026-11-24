@@ -190,10 +190,7 @@ fn targets(options: &Options) -> Result<Vec<Target>, u8> {
 }
 
 fn describe_holder(owner: &Owner) -> String {
-    match &owner.identity.reference {
-        Some(reference) => format!("{} [{reference}]", owner.identity.name),
-        None => owner.identity.name.clone(),
-    }
+    owner.holder()
 }
 
 fn refuse(target: &Target, owner: &Owner, state: &State) -> u8 {
@@ -395,12 +392,10 @@ fn show(options: Options) -> u8 {
 fn print_owner(target: &Target, owner: &Owner, state: &State, now: u64, as_json: bool) {
     let identity = &owner.identity;
     if as_json {
-        let (word, now_session) = match state {
-            State::Live => ("live", None),
-            State::Cleared { now, .. } => ("cleared", Some(now.as_str())),
-            State::Gone => ("gone", None),
-            State::Stale => ("stale", None),
-            State::Unknown => ("unknown", None),
+        let word = state.word();
+        let now_session = match state {
+            State::Cleared { now, .. } => Some(now.as_str()),
+            _ => None,
         };
         let mut value = json!({
             "place": target.word(),
@@ -430,13 +425,5 @@ fn print_owner(target: &Target, owner: &Owner, state: &State, now: u64, as_json:
         describe_holder(owner),
         identity.session
     );
-    match state {
-        State::Live => println!("state: live, message it"),
-        State::Cleared { now, name } => {
-            println!("state: cleared since: {name} now runs {now}, which has none of this work");
-        }
-        State::Gone => println!("state: gone"),
-        State::Stale => println!("state: stale, not refreshed for 8 hours"),
-        State::Unknown => println!("state: unknown: host registry unreadable"),
-    }
+    println!("state: {}", state.describe());
 }

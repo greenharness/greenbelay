@@ -224,6 +224,43 @@ pub fn state_of(store: &Store, owner: &Owner, now: u64) -> State {
     }
 }
 
+impl State {
+    /// The one word `--json` carries.
+    pub fn word(&self) -> &'static str {
+        match self {
+            State::Live => "live",
+            State::Cleared { .. } => "cleared",
+            State::Gone => "gone",
+            State::Stale => "stale",
+            State::Unknown => "unknown",
+        }
+    }
+
+    /// The state as a person reads it, state word first; the board and
+    /// `owner show` print the same text.
+    pub fn describe(&self) -> String {
+        match self {
+            State::Live => "live, message it".to_owned(),
+            State::Cleared { now, name } => {
+                format!("cleared since: {name} now runs {now}, which has none of this work")
+            }
+            State::Gone => "gone".to_owned(),
+            State::Stale => "stale, not refreshed for 8 hours".to_owned(),
+            State::Unknown => "unknown: host registry unreadable".to_owned(),
+        }
+    }
+}
+
+impl Owner {
+    /// `name [ref]`, or the name alone.
+    pub fn holder(&self) -> String {
+        match &self.identity.reference {
+            Some(reference) => format!("{} [{reference}]", self.identity.name),
+            None => self.identity.name.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Contest {
     Respect,

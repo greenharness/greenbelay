@@ -273,7 +273,7 @@ under `NO_COLOR` and when stdout is not a TTY (reuse guard/ui.rs). The board's i
     `crates/greenbelay-guard/src/rules/work_owner.rs`,
     `crates/greenbelay-guard/src/rules/mod.rs`,
     `crates/greenbelay-guard/src/activity.rs`.
-- [ ] Phase 3: the board's owner line and JSON field.
+- [x] Phase 3: the board's owner line and JSON field.
   File: `crates/greenbelay-process/src/board.rs`.
 - [ ] Phase 4: the resume-prompt owner check, with `Decision::PromptContext`.
   Files: `src/hook.rs`, `crates/greenbelay-guard/src/decision.rs`,

@@ -15,6 +15,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use greenbelay_guard::activity::{self, Seen};
 use greenbelay_guard::git;
+use greenbelay_guard::owner::{self, Owner, Reading, State, Store};
 
 const DEFAULT_SINCE: Duration = Duration::from_secs(48 * 3600);
 const FETCH_BUDGET: Duration = Duration::from_secs(60);
@@ -138,6 +139,26 @@ struct Entry {
     sessions: Vec<Session>,
     /// The branch's whole change is already on the default branch.
     merged: bool,
+    /// The worktree's owner record, when it has one.
+    owner: Option<SeenOwner>,
+}
+
+/// A worktree's owner record as the board read it.
+enum SeenOwner {
+    Held {
+        owner: Box<Owner>,
+        state: State,
+    },
+    /// A record exists but does not read as one.
+    Unreadable,
+}
+
+fn seen_owner(store: &Store, worktree: &Path, now_epoch: u64) -> Option<SeenOwner> {
+    match owner::read_worktree(store, worktree, now_epoch) {
+        Reading::Free => None,
+        Reading::Held { owner, state } => Some(SeenOwner::Held { owner, state }),
+        Reading::Unknown => Some(SeenOwner::Unreadable),
+    }
 }
 
 impl Entry {
@@ -566,6 +587,7 @@ fn report(
     let default = git::default_ref(dir, Instant::now() + LOOKUP_BUDGET);
     let (default_ref_name, default_name) = default.clone().unwrap_or_default();
     let now_epoch = now.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let store = Store::ambient();
     let identity = git::stdout_in(
         dir,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -647,12 +669,16 @@ fn report(
         let plan_refs = tree.branch.as_deref().map(plans_of).unwrap_or_default();
         own_plan_files.extend(plan_refs.iter().map(|p| p.file.clone()));
         let plans = plan_refs.into_iter().map(|p| p.title).collect();
+        let owner = store
+            .as_ref()
+            .and_then(|store| seen_owner(store, &tree.path, now_epoch));
         entries.push(Entry {
             path: Some(tree.path),
             merged: tree.branch.as_ref().is_some_and(|b| merged.contains(b)),
             branch,
             plans,
             sessions: tree_sessions,
+            owner,
         });
     }
     for (Unmerged { name: branch, .. }, named) in live {
@@ -668,6 +694,7 @@ fn report(
             plans,
             sessions: named,
             merged: false,
+            owner: None,
         });
     }
     entries.extend(sibling_plans(
@@ -868,6 +895,7 @@ fn sibling_plans(
                     plans: titles,
                     sessions: Vec::new(),
                     merged: false,
+                    owner: None,
                 });
             }
         }
@@ -909,7 +937,93 @@ fn ago(secs: u64) -> String {
     activity::ago(now, UNIX_EPOCH)
 }
 
+/// The widest line the board prints.
+const WIDTH: usize = 78;
+
+/// `text` at `indent` spaces, wrapped at [`WIDTH`] between words, the
+/// continuation two spaces further in. A word is never cut, so a UUID stays
+/// whole even when it alone passes the width.
+fn wrapped(indent: usize, text: &str) -> String {
+    wrapped_chunks(indent, text.split(' '))
+}
+
+/// [`wrapped`] over chunks that each stay on one line.
+fn wrapped_chunks<'a>(indent: usize, chunks: impl IntoIterator<Item = &'a str>) -> String {
+    let mut out = String::new();
+    let mut line = " ".repeat(indent);
+    let mut empty = true;
+    for word in chunks {
+        if !empty && line.len() + 1 + word.len() > WIDTH {
+            out.push_str(&line);
+            out.push('\n');
+            line = " ".repeat(indent + 2);
+            empty = true;
+        }
+        if !empty {
+            line.push(' ');
+        }
+        line.push_str(word);
+        empty = false;
+    }
+    out.push_str(&line);
+    out.push('\n');
+    out
+}
+
+/// The owner line and its state line, for one worktree.
+fn owner_text(seen: &SeenOwner, now_epoch: u64) -> String {
+    match seen {
+        SeenOwner::Unreadable => wrapped(6, "owner: unknown: the record is unreadable"),
+        SeenOwner::Held { owner, state } => {
+            let claimed = ago(now_epoch.saturating_sub(owner.claimed_at));
+            let holder = owner.holder();
+            let session = format!("{},", owner.identity.session);
+            let claimed = format!("claimed {claimed} ago");
+            let mut out = wrapped_chunks(
+                6,
+                ["owner:"].into_iter().chain(holder.split(' ')).chain([
+                    "/",
+                    session.as_str(),
+                    claimed.as_str(),
+                ]),
+            );
+            out.push_str(&wrapped(8, &state.describe()));
+            out
+        }
+    }
+}
+
+fn owner_json(seen: &SeenOwner) -> serde_json::Value {
+    use serde_json::json;
+    match seen {
+        SeenOwner::Unreadable => json!({"state": "unknown", "record": "unreadable"}),
+        SeenOwner::Held { owner, state } => {
+            let mut value = json!({
+                "session": owner.identity.session,
+                "name": owner.identity.name,
+                "ref": owner.identity.reference,
+                "pid": owner.identity.pid,
+                "state": state.word(),
+                "claimed_at": owner.claimed_at,
+            });
+            if let (State::Cleared { now, .. }, serde_json::Value::Object(map)) =
+                (state, &mut value)
+            {
+                map.insert("now_session".into(), json!(now));
+            }
+            value
+        }
+    }
+}
+
 fn to_text(reports: &[Report], since: Duration) -> String {
+    let now_epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    to_text_at(reports, since, now_epoch)
+}
+
+fn to_text_at(reports: &[Report], since: Duration, now_epoch: u64) -> String {
     let mut out = String::new();
     for report in reports {
         out.push_str(&format!("{} ({})\n", report.name, report.path.display()));
@@ -935,6 +1049,9 @@ fn to_text(reports: &[Report], since: Duration) -> String {
             if let Some(ticket) = entry.programme_ticket() {
                 let (slug, id) = ticket.split_once('/').unwrap_or((&ticket, ""));
                 out.push_str(&format!("      programme {slug} ticket {id}\n"));
+            }
+            if let Some(seen) = &entry.owner {
+                out.push_str(&owner_text(seen, now_epoch));
             }
             for plan in &entry.plans {
                 out.push_str(&format!("      plan: {plan}\n"));
@@ -983,6 +1100,7 @@ fn to_json(reports: &[Report]) -> String {
                         "plans": entry.plans,
                         "programme_ticket": entry.programme_ticket(),
                         "sessions": sessions,
+                        "owner": entry.owner.as_ref().map(owner_json),
                     })
                 })
                 .collect();
@@ -1014,6 +1132,7 @@ mod tests {
             plans: Vec::new(),
             sessions: Vec::new(),
             merged: false,
+            owner: None,
         };
         assert_eq!(
             entry("prog/x/t02").programme_ticket().as_deref(),
@@ -1026,5 +1145,212 @@ mod tests {
     fn a_bad_duration_is_a_usage_error() {
         let args = ["--since".to_string(), "soon".to_string()];
         assert!(matches!(parse(&args), Parsed::Usage(_)));
+    }
+
+    /// A registry and a store in a fresh directory, with one worktree per
+    /// owner state: live (pid 11), cleared (pid 12), gone (pid 13, no file),
+    /// unknown (pid 14, a bad file) and an unreadable record. The `*.key`
+    /// beside them is mode 000, so opening it would fail the test.
+    #[cfg(unix)]
+    mod owners {
+        use super::*;
+        use greenbelay_guard::owner::{Claim, Contest, Identity, Outcome};
+        use std::os::unix::fs::PermissionsExt;
+
+        const NOW: u64 = 1_800_000_000;
+        const LIVE: &str = "a8957506-1111-4222-8333-444455556666";
+        const CLEARED_OLD: &str = "880b19a1-1111-4222-8333-444455556666";
+        const CLEARED_NOW: &str = "9a123c8f-1111-4222-8333-444455556666";
+
+        struct Fixture {
+            root: PathBuf,
+            store: Store,
+        }
+
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let key = self.store.registry.join("99.key");
+                let _ = std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600));
+                let _ = std::fs::remove_dir_all(&self.root);
+            }
+        }
+
+        fn register(dir: &Path, pid: u32, session: &str, name: &str) {
+            let body = format!(
+                r#"{{"sessionId":"{session}","name":"{name}","pid":{pid},"startedAt":5000,"peerProtocol":1}}"#
+            );
+            std::fs::write(dir.join(format!("{pid}.json")), body).unwrap();
+        }
+
+        fn fixture(tag: &str) -> Fixture {
+            let root =
+                std::env::temp_dir().join(format!("gb-board-owner-{}-{tag}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            let registry = root.join("sessions");
+            std::fs::create_dir_all(&registry).unwrap();
+            for tree in ["live", "cleared", "gone", "unknown", "unreadable", "free"] {
+                std::fs::create_dir_all(root.join("trees").join(tree)).unwrap();
+            }
+            register(&registry, 11, LIVE, "perso-3b");
+            register(&registry, 12, CLEARED_NOW, "theme-tokens-per-mode-css");
+            std::fs::write(registry.join("14.json"), "{not json").unwrap();
+            let key = registry.join("99.key");
+            std::fs::write(&key, "secret").unwrap();
+            std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let store = Store {
+                root: root.join("owners"),
+                registry,
+            };
+            let claim =
+                |tree: &str, pid: u32, session: &str, name: &str, reference: Option<&str>| {
+                    let outcome = owner::claim_worktree(
+                        &store,
+                        &root.join("trees").join(tree),
+                        &Claim {
+                            repo_identity: root.join("repo.git"),
+                            branch: format!("feat/{tree}"),
+                            identity: Identity {
+                                session: session.to_owned(),
+                                pid,
+                                started_at: 5000,
+                                name: name.to_owned(),
+                                reference: reference.map(str::to_owned),
+                            },
+                        },
+                        Contest::Respect,
+                        NOW - 7200,
+                    )
+                    .unwrap();
+                    assert!(matches!(outcome, Outcome::Claimed), "{tree}");
+                };
+            claim("live", 11, LIVE, "perso-3b", Some("417dc6"));
+            claim(
+                "cleared",
+                12,
+                CLEARED_OLD,
+                "theme-tokens-per-mode-css",
+                None,
+            );
+            claim(
+                "gone",
+                13,
+                "dead0000-1111-4222-8333-444455556666",
+                "gone-one",
+                None,
+            );
+            claim(
+                "unknown",
+                14,
+                "bad00000-1111-4222-8333-444455556666",
+                "bad-one",
+                None,
+            );
+            claim("unreadable", 11, LIVE, "perso-3b", None);
+            let unreadable =
+                owner::Slot::Worktree(root.join("trees").join("unreadable")).record_path(&store);
+            std::fs::write(unreadable, "{torn").unwrap();
+            Fixture { root, store }
+        }
+
+        fn report_of(fixture: &Fixture) -> Report {
+            let entries = ["live", "cleared", "gone", "unknown", "unreadable", "free"]
+                .iter()
+                .map(|tree| {
+                    let path = fixture.root.join("trees").join(tree);
+                    Entry {
+                        owner: seen_owner(&fixture.store, &path, NOW),
+                        path: Some(path),
+                        branch: format!("feat/{tree}"),
+                        plans: Vec::new(),
+                        sessions: Vec::new(),
+                        merged: false,
+                    }
+                })
+                .collect();
+            Report {
+                name: "repo".to_owned(),
+                path: fixture.root.clone(),
+                entries,
+                landed: Vec::new(),
+            }
+        }
+
+        /// The lines printed under one worktree's header line.
+        fn block<'a>(text: &'a str, tree: &str) -> Vec<&'a str> {
+            let header = format!("[feat/{tree}]");
+            text.lines()
+                .skip_while(|line| !line.ends_with(&header))
+                .skip(1)
+                .take_while(|line| line.starts_with("      "))
+                .collect()
+        }
+
+        #[test]
+        fn each_state_has_its_line_and_no_line_passes_78_columns() {
+            let fixture = fixture("text");
+            let text = to_text_at(&[report_of(&fixture)], Duration::from_secs(3600), NOW);
+            assert_eq!(
+                block(&text, "live"),
+                [
+                    format!("      owner: perso-3b [417dc6] / {LIVE},"),
+                    "        claimed 2h ago".to_owned(),
+                    "        live, message it".to_owned(),
+                ]
+            );
+            let cleared = block(&text, "cleared").join("\n");
+            assert!(cleared.contains(CLEARED_OLD), "{cleared}");
+            assert!(
+                cleared.contains(&format!(
+                    "cleared since: theme-tokens-per-mode-css now runs\n          {CLEARED_NOW}, which has none of this work"
+                )),
+                "{cleared}"
+            );
+            assert_eq!(block(&text, "gone").last().unwrap(), &"        gone");
+            assert_eq!(
+                block(&text, "unknown").last().unwrap(),
+                &"        unknown: host registry unreadable"
+            );
+            assert_eq!(
+                block(&text, "unreadable"),
+                ["      owner: unknown: the record is unreadable"]
+            );
+            assert!(block(&text, "free").is_empty(), "{text}");
+            for line in text
+                .lines()
+                .filter(|line| line.contains("owner:") || line.starts_with("        "))
+            {
+                assert!(line.len() <= WIDTH, "{} columns: {line}", line.len());
+            }
+        }
+
+        #[test]
+        fn the_json_owner_field_carries_the_state_and_the_new_session() {
+            let fixture = fixture("json");
+            let value: serde_json::Value =
+                serde_json::from_str(&to_json(&[report_of(&fixture)])).unwrap();
+            let owner = |i: usize| value[0]["worktrees"][i]["owner"].clone();
+            assert_eq!(owner(0)["session"], LIVE);
+            assert_eq!(owner(0)["name"], "perso-3b");
+            assert_eq!(owner(0)["ref"], "417dc6");
+            assert_eq!(owner(0)["pid"], 11);
+            assert_eq!(owner(0)["state"], "live");
+            assert!(owner(0).get("now_session").is_none());
+            assert_eq!(owner(1)["state"], "cleared");
+            assert_eq!(owner(1)["now_session"], CLEARED_NOW);
+            assert_eq!(owner(2)["state"], "gone");
+            assert_eq!(owner(3)["state"], "unknown");
+            assert_eq!(owner(4)["state"], "unknown");
+            assert!(owner(5).is_null());
+        }
+
+        #[test]
+        fn a_word_longer_than_the_width_is_never_cut() {
+            let long = "x".repeat(90);
+            let text = wrapped(6, &format!("owner: a / {long}, claimed 1m ago"));
+            assert!(
+                text.lines().any(|line| line.trim() == format!("{long},")),
+                "{text}"
+            );
+        }
     }
 }
