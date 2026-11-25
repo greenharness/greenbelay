@@ -28,8 +28,8 @@ fn run(args: &[&str], bin: &std::path::Path) -> Output {
     let mut dirs = vec![bin.to_path_buf()];
     dirs.extend(std::env::split_paths(&inherited));
     cmd.env("PATH", std::env::join_paths(dirs).unwrap());
-    // No test reaches the machine's own `adr-lint`: a fake in `bin`, or none.
-    cmd.env("GREENBELAY_ADR_LINT", bin.join("adr-lint"));
+    // No test reaches the machine's own `greenspotter`: a fake in `bin`, or none.
+    cmd.env("GREENBELAY_GREENSPOTTER", bin.join("greenspotter"));
     cmd.output().expect("greenbelay runs")
 }
 
@@ -296,12 +296,12 @@ fn an_aval_relevant_answer_without_keys_exits_3() {
 const ID_ONE: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 const ID_TWO: &str = "2222222222222222222222222222222222222222222222222222222222222222";
 
-/// A fake `adr-lint` that records its arguments and prints `document`.
+/// A fake `greenspotter` that records its arguments and prints `document`.
 #[cfg(unix)]
-fn fake_adr_lint(dir: &std::path::Path, document: &str) {
+fn fake_greenspotter(dir: &std::path::Path, document: &str) {
     use std::os::unix::fs::PermissionsExt;
     std::fs::write(dir.join("candidates.json"), document).unwrap();
-    let path = dir.join("adr-lint");
+    let path = dir.join("greenspotter");
     std::fs::write(
         &path,
         "#!/bin/sh\nd=$(dirname \"$0\")\nprintf '%s' \"$*\" > \"$d/args\"\ncat \"$d/candidates.json\"\n",
@@ -318,7 +318,7 @@ fn two_candidates() -> String {
         )
     };
     format!(
-        r#"{{"format":"adr-lint.candidates/1","base":"b","head":"h","candidates":[{},{}],"overflow":{{"names.reveal-intent":7}}}}"#,
+        r#"{{"format":"greenspotter.candidates/1","base":"b","head":"h","candidates":[{},{}],"overflow":{{"names.reveal-intent":7}}}}"#,
         row(ID_ONE, 3),
         row(ID_TWO, 9)
     )
@@ -342,11 +342,11 @@ fn brief_text(bin: &std::path::Path, repo: &std::path::Path) -> (Output, String)
 
 #[cfg(unix)]
 #[test]
-fn the_brief_carries_adr_lints_candidates_right_after_the_rules_line() {
+fn the_brief_carries_greenspotters_candidates_right_after_the_rules_line() {
     let bin = scratch("cand-two");
     fake_aval(&bin, BRIEF_AVAL);
     let document = two_candidates();
-    fake_adr_lint(&bin, &document);
+    fake_greenspotter(&bin, &document);
     let repo = two_commit_repo("cand-two-repo");
     let (out, brief) = brief_text(&bin, &repo);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
@@ -390,9 +390,8 @@ fn the_brief_carries_adr_lints_candidates_right_after_the_rules_line() {
 fn no_candidates_is_an_empty_block_and_no_ruling_is_needed() {
     let bin = scratch("cand-zero");
     fake_aval(&bin, BRIEF_AVAL);
-    let document =
-        r#"{"format":"adr-lint.candidates/1","base":"b","head":"h","candidates":[],"overflow":{}}"#;
-    fake_adr_lint(&bin, document);
+    let document = r#"{"format":"greenspotter.candidates/1","base":"b","head":"h","candidates":[],"overflow":{}}"#;
+    fake_greenspotter(&bin, document);
     let repo = two_commit_repo("cand-zero-repo");
     let (out, brief) = brief_text(&bin, &repo);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
@@ -408,7 +407,7 @@ fn no_candidates_is_an_empty_block_and_no_ruling_is_needed() {
 
 #[cfg(unix)]
 #[test]
-fn a_missing_adr_lint_leaves_the_brief_with_an_unavailable_marker() {
+fn a_missing_greenspotter_leaves_the_brief_with_an_unavailable_marker() {
     let bin = scratch("cand-missing");
     fake_aval(&bin, BRIEF_AVAL);
     let repo = two_commit_repo("cand-missing-repo");
@@ -419,17 +418,17 @@ fn a_missing_adr_lint_leaves_the_brief_with_an_unavailable_marker() {
     assert!(brief.contains("could not run"), "{brief}");
     let err = String::from_utf8_lossy(&out.stderr);
     assert_eq!(err.trim().lines().count(), 1, "{err}");
-    assert!(err.contains("adr-lint"), "{err}");
+    assert!(err.contains("greenspotter"), "{err}");
 }
 
 #[cfg(unix)]
 #[test]
-fn a_wrong_format_token_or_a_failing_adr_lint_is_unavailable_too() {
+fn a_wrong_format_token_or_a_failing_greenspotter_is_unavailable_too() {
     let bin = scratch("cand-wrong");
     fake_aval(&bin, BRIEF_AVAL);
-    fake_adr_lint(
+    fake_greenspotter(
         &bin,
-        r#"{"format":"adr-lint.candidates/2","candidates":[]}"#,
+        r#"{"format":"greenspotter.candidates/2","candidates":[]}"#,
     );
     let repo = two_commit_repo("cand-wrong-repo");
     let (out, brief) = brief_text(&bin, &repo);
@@ -442,7 +441,7 @@ fn a_wrong_format_token_or_a_failing_adr_lint_is_unavailable_too() {
     );
 
     use std::os::unix::fs::PermissionsExt;
-    let failing = bin.join("adr-lint");
+    let failing = bin.join("greenspotter");
     std::fs::write(&failing, "#!/bin/sh\necho broken >&2\nexit 4\n").unwrap();
     std::fs::set_permissions(&failing, std::fs::Permissions::from_mode(0o755)).unwrap();
     let (out, brief) = brief_text(&bin, &repo);
@@ -456,9 +455,9 @@ fn a_wrong_format_token_or_a_failing_adr_lint_is_unavailable_too() {
 fn a_repository_without_a_corpus_gets_a_brief_without_rules() {
     let bin = scratch("no-corpus");
     fake_aval(&bin, "#!/bin/sh\nexit 1\n");
-    fake_adr_lint(
+    fake_greenspotter(
         &bin,
-        r#"{"format":"adr-lint.candidates/1","base":"b","head":"h","candidates":[],"overflow":{}}"#,
+        r#"{"format":"greenspotter.candidates/1","base":"b","head":"h","candidates":[],"overflow":{}}"#,
     );
     let repo = two_commit_repo_with("no-corpus-repo", &[]);
     let (out, brief) = brief_text(&bin, &repo);
@@ -514,7 +513,7 @@ fn run_without_aval(args: &[&str], dir: &std::path::Path, aval: Option<&str>) ->
     let mut cmd = greenbelay_command();
     cmd.args(args);
     cmd.env("PATH", std::env::join_paths([dir, &only]).unwrap());
-    cmd.env("GREENBELAY_ADR_LINT", dir.join("adr-lint"));
+    cmd.env("GREENBELAY_GREENSPOTTER", dir.join("greenspotter"));
     cmd.env_remove("GREENBELAY_AVAL");
     if let Some(program) = aval {
         cmd.env("GREENBELAY_AVAL", program);
@@ -525,7 +524,7 @@ fn run_without_aval(args: &[&str], dir: &std::path::Path, aval: Option<&str>) ->
 #[cfg(unix)]
 #[test]
 fn without_aval_the_brief_says_the_rules_were_not_read_and_exits_0() {
-    // No adr-lint either: its candidates are unavailable at once, so no stub
+    // No greenspotter either: its candidates are unavailable at once, so no stub
     // can outlast the 30 s deadline on a loaded machine.
     let bin = scratch("no-aval");
     let repo = two_commit_repo("no-aval-repo");
@@ -557,7 +556,7 @@ fn without_aval_the_brief_says_the_rules_were_not_read_and_exits_0() {
     assert_eq!(
         err.trim().lines().count(),
         2,
-        "the aval and adr-lint notices: {err}"
+        "the aval and greenspotter notices: {err}"
     );
     let sha = run_without_aval(&["rules-sha", "-C", repo.to_str().unwrap()], &bin, None);
     assert_eq!(sha.status.code(), Some(3), "{sha:?}");
@@ -930,6 +929,17 @@ fn interdiff_with(
     head: &str,
     more: &[&str],
 ) -> Output {
+    interdiff_env(bin, repo, head, more, &[])
+}
+
+#[cfg(unix)]
+fn interdiff_env(
+    bin: &std::path::Path,
+    repo: &std::path::Path,
+    head: &str,
+    more: &[&str],
+    extra_env: &[(&str, &str)],
+) -> Output {
     let mut cmd = greenbelay_command();
     cmd.args([
         "review-brief",
@@ -945,8 +955,11 @@ fn interdiff_with(
     let mut dirs = vec![bin.to_path_buf()];
     dirs.extend(std::env::split_paths(&inherited));
     cmd.env("PATH", std::env::join_paths(dirs).unwrap());
-    cmd.env("GREENBELAY_ADR_LINT", bin.join("adr-lint"));
+    cmd.env("GREENBELAY_GREENSPOTTER", bin.join("greenspotter"));
     cmd.env("CLAUDE_CONFIG_DIR", bin.join("config"));
+    for (key, value) in extra_env {
+        cmd.env(key, value);
+    }
     cmd.output().expect("greenbelay runs")
 }
 
@@ -1453,7 +1466,7 @@ impl PinWorld {
         cmd.args(["review-brief", "-C"])
             .arg(&self.repo)
             .args(["--base", "HEAD~1"]);
-        cmd.env("GREENBELAY_ADR_LINT", self.bin.join("adr-lint"));
+        cmd.env("GREENBELAY_GREENSPOTTER", self.bin.join("greenspotter"));
         cmd.env("CLAUDE_CONFIG_DIR", self.bin.join("config"));
         cmd.env("GREENBELAY_GH_DEADLINE_MS", deadline_ms);
         cmd.env_remove("GREENBELAY_GH");
@@ -1526,7 +1539,7 @@ fn a_missing_journal_directory_is_said_in_the_pin_section() {
         .args(["review-brief", "-C"])
         .arg(&world.repo)
         .args(["--base", "HEAD~1"])
-        .env("GREENBELAY_ADR_LINT", world.bin.join("adr-lint"))
+        .env("GREENBELAY_GREENSPOTTER", world.bin.join("greenspotter"))
         .env("PATH", std::env::join_paths(dirs).unwrap())
         .env("GREENBELAY_GH", &gh)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -1647,4 +1660,57 @@ fn fresh_scratch(label: &str) -> std::path::PathBuf {
             Err(error) => panic!("scratch directory {}: {error}", dir.display()),
         }
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn the_retired_adr_lint_variable_gets_a_notice_in_the_full_and_the_delta_brief() {
+    let bin = scratch("retired-env");
+    fake_aval(&bin, BRIEF_AVAL);
+    let repo = two_commit_repo("retired-env-repo");
+    let full_brief_with = |adr_lint_value: &str| {
+        let mut cmd = greenbelay_command();
+        cmd.args([
+            "review-brief",
+            "-C",
+            repo.to_str().unwrap(),
+            "--base",
+            "HEAD~1",
+        ]);
+        let inherited = std::env::var_os("PATH").unwrap_or_default();
+        let mut dirs = vec![bin.clone()];
+        dirs.extend(std::env::split_paths(&inherited));
+        cmd.env("PATH", std::env::join_paths(dirs).unwrap());
+        cmd.env("GREENBELAY_GREENSPOTTER", bin.join("greenspotter"));
+        cmd.env("GREENBELAY_ADR_LINT", adr_lint_value);
+        cmd.output().expect("greenbelay runs")
+    };
+    let set = full_brief_with("/nonexistent");
+    assert_eq!(set.status.code(), Some(0), "{set:?}");
+    let err = String::from_utf8_lossy(&set.stderr);
+    assert_eq!(
+        err.matches("GREENBELAY_ADR_LINT is no longer read: set GREENBELAY_GREENSPOTTER")
+            .count(),
+        1,
+        "{err}"
+    );
+    let empty = full_brief_with("");
+    let err = String::from_utf8_lossy(&empty.stderr);
+    assert!(!err.contains("no longer read"), "{err}");
+
+    let (delta, reviewed) = delta_repo("retired-env-delta", &[("a.txt", "three\n")]);
+    let out = interdiff_env(
+        &bin,
+        &delta,
+        &reviewed,
+        &[],
+        &[("GREENBELAY_ADR_LINT", "x")],
+    );
+    assert!(out.status.success(), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        err.matches("GREENBELAY_ADR_LINT is no longer read").count(),
+        1,
+        "{err}"
+    );
 }

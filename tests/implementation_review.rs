@@ -2513,7 +2513,7 @@ fn rulings_are_appended_once_per_review_and_candidate() {
         keys.sort_unstable();
         wanted.sort_unstable();
         assert_eq!(keys, wanted, "{record}");
-        assert_eq!(record["format"], "adr-lint.ruling/1");
+        assert_eq!(record["format"], "greenspotter.ruling/1");
         assert_eq!(record["tool"], "greenbelay");
         assert_eq!(record["repo"], "app");
         assert_eq!(record["tree"], tree.as_str());
@@ -2549,7 +2549,7 @@ fn rulings_are_appended_once_per_review_and_candidate() {
         .all(|l| l.contains("review=candidates-ruled n=2")));
     assert_eq!(std::fs::read_to_string(&file).unwrap(), first);
 
-    check_with_adr_lint(&file);
+    check_with_greenspotter(&file);
 }
 
 #[test]
@@ -2608,37 +2608,23 @@ fn an_unreadable_rulings_file_is_journalled_and_not_appended_to() {
     );
 }
 
-/// Validates a rulings file with a real `adr-lint` 0.2.0 or newer on PATH;
+/// Validates a rulings file with a real `greenspotter` on PATH;
 /// prints why it did not when there is none.
-fn check_with_adr_lint(file: &Path) {
-    let version = Command::new("adr-lint").arg("--version").output();
-    let Some(version) = version.ok().filter(|v| v.status.success()) else {
-        eprintln!("skipped: no `adr-lint` on PATH to run `ruling-record --check`");
-        return;
-    };
-    let version = String::from_utf8_lossy(&version.stdout).to_string();
-    if version.contains("0.1.") {
-        eprintln!("skipped: `{}` has no ruling-record command", version.trim());
+fn check_with_greenspotter(file: &Path) {
+    let present = Command::new("greenspotter").arg("--version").output();
+    if !present.is_ok_and(|v| v.status.success()) {
+        eprintln!("skipped: no `greenspotter` on PATH to run `ruling-record --check`");
         return;
     }
-    let checked = Command::new("adr-lint")
+    let checked = Command::new("greenspotter")
         .arg("ruling-record")
         .arg("--check")
         .arg(file)
         .output()
         .unwrap();
-    // An installed adr-lint older than the rename names only the old tool
-    // value; the check then says nothing about this record.
-    if String::from_utf8_lossy(&checked.stderr).contains(&format!(
-        "want {} or relais",
-        greenbelay_guard::names::old::RECORD_TOOL
-    )) {
-        eprintln!("skipped: the installed adr-lint predates the greenbelay tool value");
-        return;
-    }
     assert!(
         checked.status.success(),
-        "adr-lint ruling-record --check: {}",
+        "greenspotter ruling-record --check: {}",
         String::from_utf8_lossy(&checked.stderr)
     );
 }

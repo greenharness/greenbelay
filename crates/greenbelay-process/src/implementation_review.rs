@@ -2494,7 +2494,7 @@ fn check_remembered_rules(repo: &Path, name: &str, tree: &str, prompt_rules: &Pr
     );
 }
 
-/// What a passing review did with the candidates adr-lint listed: one
+/// What a passing review did with the candidates greenspotter listed: one
 /// `candidates-checked` note, and one ruling record per ruled candidate.
 /// Never holds the push: a ruling that cannot be written is journalled.
 fn check_candidates(name: &str, tree: &str, candidates: &Reviewed) {

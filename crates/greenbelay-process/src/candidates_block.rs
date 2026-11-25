@@ -1,8 +1,8 @@
-//! adr-lint's candidates in an implementation-review brief, and the
+//! greenspotter's candidates in an implementation-review brief, and the
 //! reviewer's rulings on them (decisions ADR-0044, `harness.tool-boundaries`).
 //!
-//! adr-lint owns the candidate document (`adr-lint.candidates/1`) and the
-//! ruling record (`adr-lint.ruling/1`); this module reads the first and
+//! greenspotter owns the candidate document (`greenspotter.candidates/1`) and the
+//! ruling record (`greenspotter.ruling/1`); this module reads the first and
 //! writes the second. The brief prints a `<<<CANDIDATES …>>>` block for the
 //! reviewer's prompt; the push check reads that block from the prompt and
 //! the `Candidates:` rulings from the reviewer's result. Candidates are
@@ -16,14 +16,14 @@ use greenbelay_guard::journal;
 
 use crate::implementation_review::is_sha256;
 
-/// The format token of the document adr-lint prints.
-pub const DOCUMENT_FORMAT: &str = "adr-lint.candidates/1";
+/// The format token of the document greenspotter prints.
+pub const DOCUMENT_FORMAT: &str = "greenspotter.candidates/1";
 /// The format token of one ruling record.
-pub const RULING_FORMAT: &str = "adr-lint.ruling/1";
-/// Opens the block when adr-lint answered.
+pub const RULING_FORMAT: &str = "greenspotter.ruling/1";
+/// Opens the block when greenspotter answered.
 const BLOCK_OPEN: &str = "<<<CANDIDATES sha=";
 const BLOCK_CLOSE: &str = ">>>";
-/// Stands in the block when adr-lint could not answer.
+/// Stands in the block when greenspotter could not answer.
 pub const UNAVAILABLE: &str = "<<<CANDIDATES unavailable>>>";
 /// Closes the block.
 pub const BLOCK_END: &str = "<<<END CANDIDATES>>>";
@@ -34,7 +34,7 @@ const RULINGS_DIR: &str = "rulings";
 /// A review whose agent id is unknown.
 const UNKNOWN_REVIEW: &str = "unknown";
 
-/// One line adr-lint marked for the reviewer.
+/// One line greenspotter marked for the reviewer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
     pub id: String,
@@ -47,7 +47,7 @@ pub struct Candidate {
     pub text: String,
 }
 
-/// What adr-lint printed: the candidates, the per-rule overflow, and the
+/// What greenspotter printed: the candidates, the per-rule overflow, and the
 /// hash of the exact bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Document {
@@ -71,25 +71,25 @@ fn number_field(object: &serde_json::Value, field: &str, what: &str) -> Result<u
         .ok_or_else(|| format!("{what} has no number `{field}`"))
 }
 
-/// Reads the document adr-lint printed. A format token other than
+/// Reads the document greenspotter printed. A format token other than
 /// [`DOCUMENT_FORMAT`] is refused; fields this reader does not know are
 /// ignored.
 pub fn parse_document(stdout: &[u8]) -> Result<Document, String> {
     let document: serde_json::Value = serde_json::from_slice(stdout)
-        .map_err(|e| format!("adr-lint candidates printed output that is not JSON: {e}"))?;
+        .map_err(|e| format!("greenspotter candidates printed output that is not JSON: {e}"))?;
     match document.get("format").and_then(serde_json::Value::as_str) {
         Some(DOCUMENT_FORMAT) => {}
         Some(other) => {
             return Err(format!(
-                "adr-lint candidates printed format `{other}`, not `{DOCUMENT_FORMAT}`"
+                "greenspotter candidates printed format `{other}`, not `{DOCUMENT_FORMAT}`"
             ))
         }
-        None => return Err("adr-lint candidates printed no `format` token".to_string()),
+        None => return Err("greenspotter candidates printed no `format` token".to_string()),
     }
     let rows = document
         .get("candidates")
         .and_then(serde_json::Value::as_array)
-        .ok_or("adr-lint candidates printed no `candidates` array")?;
+        .ok_or("greenspotter candidates printed no `candidates` array")?;
     let mut candidates = Vec::with_capacity(rows.len());
     for (index, row) in rows.iter().enumerate() {
         let what = format!("candidate {index}");
@@ -154,12 +154,12 @@ pub fn section(document: &Document) -> String {
     let mut out = String::from("## Candidates\n\n");
     if document.candidates.is_empty() {
         out.push_str(
-            "adr-lint found no candidate on the lines this branch adds: no ruling is needed.\n",
+            "greenspotter found no candidate on the lines this branch adds: no ruling is needed.\n",
         );
         return out;
     }
     out.push_str(
-        "adr-lint marked these added lines. A candidate is a line to look at, not a finding. \
+        "greenspotter marked these added lines. A candidate is a line to look at, not a finding. \
          Your result must contain a `Candidates:` block with one line per listed id: \
          `<id> violation: <finding>` or `<id> fine: <one clause quoted from the rule body>`.\n\n",
     );
@@ -186,7 +186,7 @@ pub fn section(document: &Document) -> String {
 /// The unavailable marker and the section naming the cause.
 pub fn unavailable_section(cause: &str) -> String {
     format!(
-        "## Candidates\n\nadr-lint's candidates are unavailable ({}): no ruling is needed. \
+        "## Candidates\n\ngreenspotter's candidates are unavailable ({}): no ruling is needed. \
          They are advisory input; the review goes on without them.\n",
         flat(cause)
     )
@@ -610,7 +610,7 @@ fn recorded_pairs(file: &Path) -> std::io::Result<BTreeSet<(String, String)>> {
     Ok(pairs)
 }
 
-/// Appends one `adr-lint.ruling/1` record per disposed candidate to
+/// Appends one `greenspotter.ruling/1` record per disposed candidate to
 /// `<journal dir>/rulings/<repo>.jsonl`, skipping a (review, candidate) the
 /// file already holds. Returns the number appended. The file is created
 /// 0600 in a 0700 directory and only ever appended to.
@@ -762,7 +762,7 @@ mod tests {
 
     #[test]
     fn a_document_with_another_format_token_is_refused_and_unknown_fields_are_ignored() {
-        let wrong = br#"{"format":"adr-lint.candidates/2","candidates":[]}"#;
+        let wrong = br#"{"format":"greenspotter.candidates/2","candidates":[]}"#;
         assert!(parse_document(wrong).unwrap_err().contains("candidates/2"));
         let row = format!(
             r#"{{"id":"{ID_A}","rule":"r","pattern_id":"p","pattern":"m","path":"a","line":1,"col":2,"text":"t","extra":1}}"#

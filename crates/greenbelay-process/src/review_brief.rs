@@ -138,12 +138,26 @@ fn aval_program() -> std::ffi::OsString {
         .unwrap_or_else(|| std::ffi::OsString::from("aval"))
 }
 
-/// The `adr-lint` program to run: `GREENBELAY_ADR_LINT` names another one,
-/// else `adr-lint` from PATH.
-fn adr_lint_program() -> std::ffi::OsString {
+/// The `greenspotter` program to run: `GREENBELAY_GREENSPOTTER` names another one,
+/// else `greenspotter` from PATH.
+fn greenspotter_program() -> std::ffi::OsString {
+    std::env::var_os(greenbelay_guard::env_var!("GREENSPOTTER"))
+        .filter(|program| !program.is_empty())
+        .unwrap_or_else(|| std::ffi::OsString::from("greenspotter"))
+}
+
+/// A notice when the retired `GREENBELAY_ADR_LINT` is still set: it is no
+/// longer read, so its value would otherwise be dropped without a word.
+fn retired_program_notice() -> Option<String> {
     std::env::var_os(greenbelay_guard::env_var!("ADR_LINT"))
         .filter(|program| !program.is_empty())
-        .unwrap_or_else(|| std::ffi::OsString::from("adr-lint"))
+        .map(|_| {
+            format!(
+                "{} is no longer read: set {}",
+                greenbelay_guard::env_var!("ADR_LINT"),
+                greenbelay_guard::env_var!("GREENSPOTTER")
+            )
+        })
 }
 
 /// True only when no PATH entry holds anything named `aval` (with the
@@ -415,25 +429,25 @@ pub fn render_rules(json: &[u8]) -> Result<String, String> {
 /// The `.adr.yaml` that marks a repository with an aval corpus.
 const CORPUS_FILE: &str = ".adr.yaml";
 
-/// The candidates section and block for the brief: what adr-lint printed, or
+/// The candidates section and block for the brief: what greenspotter printed, or
 /// why it could not.
 enum Candidates {
     Answered(crate::candidates_block::Document),
     Unavailable(String),
 }
 
-/// Asks adr-lint for the candidates the branch adds since `merge_base`.
+/// Asks greenspotter for the candidates the branch adds since `merge_base`.
 /// Advisory input: every failure is an `Unavailable` with its cause.
 fn candidates(repo: &Path, merge_base: &str) -> Candidates {
     let args = ["candidates", "--base", merge_base, "--json", "--max", "40"];
-    let answer = match run_bounded(&adr_lint_program(), "adr-lint", repo, &args) {
+    let answer = match run_bounded(&greenspotter_program(), "greenspotter", repo, &args) {
         Ok(answer) => answer,
         Err(why) => return Candidates::Unavailable(why.to_string()),
     };
     if !answer.status.success() {
         let said = answer.stderr.lines().next().unwrap_or_default();
         return Candidates::Unavailable(format!(
-            "`adr-lint candidates` exited {}: {said}",
+            "`greenspotter candidates` exited {}: {said}",
             answer.status
         ));
     }
@@ -529,6 +543,7 @@ pub fn build(request: &BriefRequest) -> Result<Brief, BriefError> {
             delta.text.push_str(&section);
             delta.notices.push(notice);
         }
+        delta.notices.extend(retired_program_notice());
         return Ok(delta);
     }
     let range = format!("{merge_base}...HEAD");
@@ -640,8 +655,11 @@ pub fn build(request: &BriefRequest) -> Result<Brief, BriefError> {
     }
 
     if let Some(Candidates::Unavailable(cause)) = &found {
-        notices.push(format!("adr-lint's candidates are unavailable: {cause}"));
+        notices.push(format!(
+            "greenspotter's candidates are unavailable: {cause}"
+        ));
     }
+    notices.extend(retired_program_notice());
     match &code_rules {
         Some((_, rules_text)) => {
             let index = aval(&repo, &["rules", "--level", "constraint"])?;
