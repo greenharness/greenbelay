@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v6.15.0
+
+greenbelay 6.15.0: `heavy-build-unqueued` follows greengate 5.0 (`docs/plans/2026-11-25-now-is-unqueued.md`, #331).
+
 `heavy-build-unqueued` counts `slot run --now` as an unqueued run, and its advice names `--now` as the deliberate way past a stalled line (greengate 5.0 ends a wait on a stall and refuses `--on-timeout run`). `--on-timeout=run` is still recognised for older versions but is never advised. Phase 6 of `docs/plans/2026-11-25-now-is-unqueued.md`.
 
 ## v6.14.0
