@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 branch: prog/follow-ups/t02-three-sessions-one-owner
 repos: [greenbelay]
 adrs: [decisions:ADR-0039, decisions:ADR-0075, decisions:ADR-0083]
@@ -285,7 +285,7 @@ under `NO_COLOR` and when stdout is not a TTY (reuse guard/ui.rs). The board's i
   Files: `src/hook.rs`, `src/main.rs`,
   `crates/greenbelay-guard/src/owner.rs`,
   `crates/greenbelay-process/src/board.rs`.
-- [ ] Phase 6: the f107 replay as an integration test, then docs and a
+- [x] Phase 6: the f107 replay as an integration test, then docs and a
   release.
   - Files: `tests/three_sessions_one_owner.rs`, `README.md`,
     `CHANGELOG.md`, and the ticket
