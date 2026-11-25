@@ -364,6 +364,7 @@ const RULE_TOOLS: &[(&str, Tool)] = &[
     ("unsplit-expansion", Tool::Bash),
     ("path-operand-missing", Tool::Bash),
     ("stat-bsd-format", Tool::Bash),
+    ("pkill-option-after-pattern", Tool::Bash),
     ("whole-file-dump", Tool::Bash),
     ("persisted-output-dump", Tool::AnyTool),
     ("file-reread", Tool::AnyTool),

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+New rule `pkill-option-after-pattern` (`deny`): refuses `pkill`/`pgrep` with an option after the pattern (`pkill -f "x" -n`). BSD pkill stops reading options at the pattern, so the trailing `-n` became a second pattern that matched every `login … --noprofile` and closed every Ghostty tab but one on 2026-11-25. Silent where `pgrep -V` names procps (Linux), which permutes its arguments.
+
 ## v6.15.0
 
 greenbelay 6.15.0: `heavy-build-unqueued` follows greengate 5.0 (`docs/plans/2026-11-25-now-is-unqueued.md`, #331).
