@@ -215,7 +215,7 @@ fn a_settings_file_without_the_lsp_block_is_reported_by_name() {
     assert!(!fixed.contains("missing:"), "{fixed}");
 }
 
-/// The PostToolUse write block (`adr-lint-written`) is named when missing,
+/// The PostToolUse write block (`greenspotter-written`) is named when missing,
 /// and install restores it.
 #[test]
 fn a_settings_file_without_the_write_block_is_reported_by_name() {

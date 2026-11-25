@@ -1,5 +1,5 @@
-//! `adr-lint-written`, end to end through the real hook binary, with fake
-//! `amont` and `adr-lint` programs (decisions ADR-0044, behaviour 4).
+//! `greenspotter-written`, end to end through the real hook binary, with fake
+//! `amont` and `greenspotter` programs (decisions ADR-0044, behaviour 4).
 //!
 //! Each fake appends a line to a file when it runs, so a test can say how
 //! often, and from where, it was asked.
@@ -12,7 +12,7 @@ use std::process::{Command, Stdio};
 
 const FINDING: &str = r##"[{"path":"src/a.rs","line":7,"col":3,"rule":"tests.first-properties","message":"an ignored test needs a reason","detail":"d","text":"#[ignore]"}]"##;
 /// The row as amont lists it before `amont trust`: `unusable`, no command.
-const GATE_OPEN: &str = r#"{"format":"amont-list-v1","checks":[{"id":"pre-commit-adr-lint-check","status":"unusable","command":null}]}"#;
+const GATE_OPEN: &str = r#"{"format":"amont-list-v1","checks":[{"id":"pre-commit-greenspotter-check","status":"unusable","command":null}]}"#;
 const GATE_CLOSED: &str = r#"{"format":"amont-list-v1","checks":[{"id":"pre-commit-cargo-test","command":"cargo test"}]}"#;
 
 struct World {
@@ -62,14 +62,14 @@ impl World {
         common::write_fake(&self.bin("greengate"), &script);
     }
 
-    /// An `adr-lint` that records its arguments, then runs `body`.
+    /// An `greenspotter` that records its arguments, then runs `body`.
     #[cfg(unix)] // a #!/bin/sh fake
-    fn fake_adr_lint(&self, body: &str) {
+    fn fake_greenspotter(&self, body: &str) {
         let script = format!(
             "#!/bin/sh\necho \"$*\" >> '{}'\n{body}\n",
-            self.log("adr-lint").display()
+            self.log("greenspotter").display()
         );
-        common::write_fake(&self.bin("adr-lint"), &script);
+        common::write_fake(&self.bin("greenspotter"), &script);
     }
 
     fn runs(&self, name: &str) -> Vec<String> {
@@ -102,7 +102,7 @@ impl World {
             .env("CLAUDE_CONFIG_DIR", self.root.join("config"))
             .env_remove("XDG_STATE_HOME")
             .env("PATH", path)
-            .env("GREENBELAY_ADR_LINT", self.bin("adr-lint"))
+            .env("GREENBELAY_GREENSPOTTER", self.bin("greenspotter"))
             .env("GIT_CONFIG_GLOBAL", self.root.join("no-global-gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env_remove("GREENBELAY_OFF")
@@ -159,7 +159,7 @@ fn reason(stdout: &str) -> String {
 fn a_finding_on_a_vendored_repository_comes_back_as_advice_and_is_journalled() {
     let w = World::new("finding");
     w.fake_amont(GATE_OPEN);
-    w.fake_adr_lint(&format!("printf '%s' '{FINDING}'\nexit 1"));
+    w.fake_greenspotter(&format!("printf '%s' '{FINDING}'\nexit 1"));
     let (stdout, _) = w.edit("adr-a", "src/a.rs");
     let said = reason(&stdout);
     assert!(
@@ -171,13 +171,13 @@ fn a_finding_on_a_vendored_repository_comes_back_as_advice_and_is_journalled() {
         "{stdout}"
     );
     assert!(
-        said.contains("adr-lint: allow <rule-id> -- <reason>"),
+        said.contains("greenspotter: allow <rule-id> -- <reason>"),
         "{stdout}"
     );
-    assert_eq!(w.runs("adr-lint"), ["check --json -- src/a.rs"]);
+    assert_eq!(w.runs("greenspotter"), ["check --json -- src/a.rs"]);
     let rows = w.journal("adr-a");
     assert!(
-        rows.iter().any(|r| r.contains("adr-lint-written")
+        rows.iter().any(|r| r.contains("greenspotter-written")
             && r.contains(" advised ")
             && r.contains("tests.first-properties src/a.rs #[ignore]")),
         "{rows:?}"
@@ -189,10 +189,10 @@ fn a_finding_on_a_vendored_repository_comes_back_as_advice_and_is_journalled() {
 fn a_repository_without_the_check_row_is_left_alone() {
     let w = World::new("closed");
     w.fake_amont(GATE_CLOSED);
-    w.fake_adr_lint(&format!("printf '%s' '{FINDING}'\nexit 1"));
+    w.fake_greenspotter(&format!("printf '%s' '{FINDING}'\nexit 1"));
     let (stdout, _) = w.edit("adr-b", "src/a.rs");
     assert_eq!(stdout, "");
-    assert!(w.runs("adr-lint").is_empty());
+    assert!(w.runs("greenspotter").is_empty());
 }
 
 #[cfg(unix)] // fake programs are #!/bin/sh scripts
@@ -200,23 +200,23 @@ fn a_repository_without_the_check_row_is_left_alone() {
 fn a_file_that_is_not_source_runs_neither_program() {
     let w = World::new("markdown");
     w.fake_amont(GATE_OPEN);
-    w.fake_adr_lint(&format!("printf '%s' '{FINDING}'\nexit 1"));
+    w.fake_greenspotter(&format!("printf '%s' '{FINDING}'\nexit 1"));
     let (stdout, _) = w.edit("adr-c", "README.md");
     assert_eq!(stdout, "");
     assert!(w.runs("amont").is_empty());
-    assert!(w.runs("adr-lint").is_empty());
+    assert!(w.runs("greenspotter").is_empty());
 }
 
 #[cfg(unix)] // fake programs are #!/bin/sh scripts
 #[test]
-fn a_slow_adr_lint_is_killed_and_journalled_and_the_hook_returns() {
+fn a_slow_greenspotter_is_killed_and_journalled_and_the_hook_returns() {
     let w = World::new("slow");
     w.fake_amont(GATE_OPEN);
     // A clean run first: it warms the gate and times the hook's own start,
     // which a loaded machine stretches and the deadline must not be blamed for.
-    w.fake_adr_lint("exit 0");
+    w.fake_greenspotter("exit 0");
     let (_, baseline) = w.edit("adr-d", "src/a.rs");
-    w.fake_adr_lint("sleep 3");
+    w.fake_greenspotter("sleep 3");
     let (stdout, took) = w.edit("adr-d", "src/a.rs");
     assert_eq!(stdout, "");
     // Killed at 1 s: well short of the 3 s the fake would take.
@@ -225,7 +225,10 @@ fn a_slow_adr_lint_is_killed_and_journalled_and_the_hook_returns() {
         "{took:?} against a clean run of {baseline:?}"
     );
     let rows = w.journal("adr-d");
-    assert!(rows.iter().any(|r| r.contains("adr-lint-slow")), "{rows:?}");
+    assert!(
+        rows.iter().any(|r| r.contains("greenspotter-slow")),
+        "{rows:?}"
+    );
 }
 
 #[cfg(unix)] // fake programs are #!/bin/sh scripts
@@ -233,14 +236,14 @@ fn a_slow_adr_lint_is_killed_and_journalled_and_the_hook_returns() {
 fn a_failure_is_journalled_once_per_session_and_never_shown() {
     let w = World::new("exit3");
     w.fake_amont(GATE_OPEN);
-    w.fake_adr_lint("exit 3");
+    w.fake_greenspotter("exit 3");
     let (first, _) = w.edit("adr-e", "src/a.rs");
     let (second, _) = w.edit("adr-e", "src/a.rs");
     assert_eq!((first.as_str(), second.as_str()), ("", ""));
     let rows = w.journal("adr-e");
     let failures = rows
         .iter()
-        .filter(|r| r.contains("adr-lint-exit-3"))
+        .filter(|r| r.contains("greenspotter-exit-3"))
         .count();
     assert_eq!(failures, 1, "{rows:?}");
 }
@@ -250,11 +253,11 @@ fn a_failure_is_journalled_once_per_session_and_never_shown() {
 fn the_gate_is_asked_once_per_session_and_repository() {
     let w = World::new("cache");
     w.fake_amont(GATE_OPEN);
-    w.fake_adr_lint("exit 0");
+    w.fake_greenspotter("exit 0");
     w.edit("adr-f", "src/a.rs");
     w.edit("adr-f", "src/a.rs");
     assert_eq!(w.runs("amont").len(), 1);
-    assert_eq!(w.runs("adr-lint").len(), 2);
+    assert_eq!(w.runs("greenspotter").len(), 2);
 }
 
 #[cfg(unix)] // fake programs are #!/bin/sh scripts
@@ -262,10 +265,10 @@ fn the_gate_is_asked_once_per_session_and_repository() {
 fn a_greengate_list_envelope_opens_the_gate() {
     let w = World::new("greengate-list");
     w.fake_amont(&GATE_OPEN.replace("amont-list-v1", "greengate-list-v1"));
-    w.fake_adr_lint("exit 0");
+    w.fake_greenspotter("exit 0");
     w.edit("adr-gg", "src/a.rs");
     assert_eq!(w.runs("amont").len(), 1);
-    assert_eq!(w.runs("adr-lint"), ["check --json -- src/a.rs"]);
+    assert_eq!(w.runs("greenspotter"), ["check --json -- src/a.rs"]);
 }
 
 #[cfg(unix)] // fake programs are #!/bin/sh scripts
@@ -273,10 +276,10 @@ fn a_greengate_list_envelope_opens_the_gate() {
 fn the_gate_is_asked_in_the_files_repository_not_the_payload_cwd() {
     let w = World::new("root");
     w.fake_amont(GATE_OPEN);
-    w.fake_adr_lint("exit 0");
+    w.fake_greenspotter("exit 0");
     w.written("adr-g", &w.repo.join("src/a.rs"), &w.root.join("elsewhere"));
     assert_eq!(w.runs("amont"), [w.repo.display().to_string()]);
-    assert_eq!(w.runs("adr-lint"), ["check --json -- src/a.rs"]);
+    assert_eq!(w.runs("greenspotter"), ["check --json -- src/a.rs"]);
 }
 
 #[cfg(unix)] // fake programs are #!/bin/sh scripts
@@ -284,10 +287,10 @@ fn the_gate_is_asked_in_the_files_repository_not_the_payload_cwd() {
 fn a_failing_amont_closes_the_gate_and_is_journalled() {
     let w = World::new("badamont");
     w.fake_amont("not json");
-    w.fake_adr_lint(&format!("printf '%s' '{FINDING}'\nexit 1"));
+    w.fake_greenspotter(&format!("printf '%s' '{FINDING}'\nexit 1"));
     let (stdout, _) = w.edit("adr-h", "src/a.rs");
     assert_eq!(stdout, "");
-    assert!(w.runs("adr-lint").is_empty());
+    assert!(w.runs("greenspotter").is_empty());
     let rows = w.journal("adr-h");
     assert!(
         rows.iter().any(|r| r.contains("amont-list-unexpected")),
@@ -300,7 +303,7 @@ fn a_failing_amont_closes_the_gate_and_is_journalled() {
 fn observing_journals_the_findings_and_says_nothing() {
     let w = World::new("observe");
     w.fake_amont(GATE_OPEN);
-    w.fake_adr_lint(&format!("printf '%s' '{FINDING}'\nexit 1"));
+    w.fake_greenspotter(&format!("printf '%s' '{FINDING}'\nexit 1"));
     // The harness points GIT_CONFIG_GLOBAL at this file; a person sets a
     // stance by writing one.
     std::fs::write(
@@ -312,7 +315,7 @@ fn observing_journals_the_findings_and_says_nothing() {
     assert_eq!(stdout, "");
     let rows = w.journal("adr-i");
     assert!(
-        rows.iter().any(|r| r.contains("adr-lint-written")
+        rows.iter().any(|r| r.contains("greenspotter-written")
             && r.contains(" watched ")
             && r.contains("tests.first-properties")),
         "{rows:?}"

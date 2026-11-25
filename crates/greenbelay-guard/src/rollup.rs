@@ -378,7 +378,7 @@ const RULE_TOOLS: &[(&str, Tool)] = &[
     ("agent-guidance-written", Tool::AnyTool),
     ("agent-guidance-shape", Tool::AnyTool),
     ("work-overlap", Tool::AnyTool),
-    ("adr-lint-written", Tool::AnyTool),
+    ("greenspotter-written", Tool::AnyTool),
     ("test-output-trimmed", Tool::Bash),
     ("workspace-root-write", Tool::Bash),
     ("heavy-build-unqueued", Tool::Bash),

@@ -57,7 +57,7 @@ pub const RULES: &[Rule] = &[
     crate::rules::agent_guidance_written::RULE,
     crate::rules::agent_guidance_shape::RULE,
     crate::rules::work_overlap::RULE,
-    crate::rules::adr_lint_written::RULE,
+    crate::rules::greenspotter_written::RULE,
     crate::rules::test_output_trimmed::RULE,
     crate::rules::workspace_root_write::RULE,
     crate::rules::heavy_build_unqueued::RULE,
