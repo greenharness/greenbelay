@@ -146,6 +146,20 @@ fn greenspotter_program() -> std::ffi::OsString {
         .unwrap_or_else(|| std::ffi::OsString::from("greenspotter"))
 }
 
+/// A notice when the retired `GREENBELAY_ADR_LINT` is still set: it is no
+/// longer read, so its value would otherwise be dropped without a word.
+fn retired_program_notice() -> Option<String> {
+    std::env::var_os(greenbelay_guard::env_var!("ADR_LINT"))
+        .filter(|program| !program.is_empty())
+        .map(|_| {
+            format!(
+                "{} is no longer read: set {}",
+                greenbelay_guard::env_var!("ADR_LINT"),
+                greenbelay_guard::env_var!("GREENSPOTTER")
+            )
+        })
+}
+
 /// True only when no PATH entry holds anything named `aval` (with the
 /// platform's executable suffixes). A non-executable file, a dangling symlink
 /// or a lookup that fails for another reason is a candidate, not absence: the
@@ -529,6 +543,7 @@ pub fn build(request: &BriefRequest) -> Result<Brief, BriefError> {
             delta.text.push_str(&section);
             delta.notices.push(notice);
         }
+        delta.notices.extend(retired_program_notice());
         return Ok(delta);
     }
     let range = format!("{merge_base}...HEAD");
@@ -644,10 +659,7 @@ pub fn build(request: &BriefRequest) -> Result<Brief, BriefError> {
             "greenspotter's candidates are unavailable: {cause}"
         ));
     }
-    if std::env::var_os(greenbelay_guard::env_var!("ADR_LINT")).is_some_and(|v| !v.is_empty()) {
-        notices
-            .push("GREENBELAY_ADR_LINT is no longer read: set GREENBELAY_GREENSPOTTER".to_string());
-    }
+    notices.extend(retired_program_notice());
     match &code_rules {
         Some((_, rules_text)) => {
             let index = aval(&repo, &["rules", "--level", "constraint"])?;

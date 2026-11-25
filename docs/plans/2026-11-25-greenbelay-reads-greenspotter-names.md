@@ -26,6 +26,8 @@ from PATH. CI pins greenspotter 0.20.0.
 - `GREENBELAY_GREENSPOTTER` names the program, else `greenspotter` from PATH.
 - A document with another format token is refused as before.
 - Old `adr-lint.ruling/1` rows stay as history.
+- `GREENBELAY_ADR_LINT` set and non-empty: it is not read, and the full and
+  the `--interdiff` brief each print one stderr notice (exit stays 0).
 
 ## Phases
 - [x] Phase 1 — rename the spawn, the formats and the CI pin:

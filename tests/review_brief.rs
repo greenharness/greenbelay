@@ -929,6 +929,17 @@ fn interdiff_with(
     head: &str,
     more: &[&str],
 ) -> Output {
+    interdiff_env(bin, repo, head, more, &[])
+}
+
+#[cfg(unix)]
+fn interdiff_env(
+    bin: &std::path::Path,
+    repo: &std::path::Path,
+    head: &str,
+    more: &[&str],
+    extra_env: &[(&str, &str)],
+) -> Output {
     let mut cmd = greenbelay_command();
     cmd.args([
         "review-brief",
@@ -946,6 +957,9 @@ fn interdiff_with(
     cmd.env("PATH", std::env::join_paths(dirs).unwrap());
     cmd.env("GREENBELAY_GREENSPOTTER", bin.join("greenspotter"));
     cmd.env("CLAUDE_CONFIG_DIR", bin.join("config"));
+    for (key, value) in extra_env {
+        cmd.env(key, value);
+    }
     cmd.output().expect("greenbelay runs")
 }
 
@@ -1646,4 +1660,56 @@ fn fresh_scratch(label: &str) -> std::path::PathBuf {
             Err(error) => panic!("scratch directory {}: {error}", dir.display()),
         }
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn the_retired_adr_lint_variable_gets_a_notice_in_the_full_and_the_delta_brief() {
+    let bin = scratch("retired-env");
+    fake_aval(&bin, BRIEF_AVAL);
+    let repo = two_commit_repo("retired-env-repo");
+    let full = |value: &str| {
+        let mut cmd = greenbelay_command();
+        cmd.args([
+            "review-brief",
+            "-C",
+            repo.to_str().unwrap(),
+            "--base",
+            "HEAD~1",
+        ]);
+        let inherited = std::env::var_os("PATH").unwrap_or_default();
+        let mut dirs = vec![bin.clone()];
+        dirs.extend(std::env::split_paths(&inherited));
+        cmd.env("PATH", std::env::join_paths(dirs).unwrap());
+        cmd.env("GREENBELAY_GREENSPOTTER", bin.join("greenspotter"));
+        cmd.env("GREENBELAY_ADR_LINT", value);
+        cmd.output().expect("greenbelay runs")
+    };
+    let set = full("/nonexistent");
+    assert_eq!(set.status.code(), Some(0), "{set:?}");
+    let err = String::from_utf8_lossy(&set.stderr);
+    assert_eq!(
+        err.matches("GREENBELAY_ADR_LINT is no longer read: set GREENBELAY_GREENSPOTTER")
+            .count(),
+        1,
+        "{err}"
+    );
+    let empty = full("");
+    let err = String::from_utf8_lossy(&empty.stderr);
+    assert!(!err.contains("no longer read"), "{err}");
+
+    let (delta, reviewed) = delta_repo("retired-env-delta", &[("a.txt", "three\n")]);
+    let out = interdiff_env(
+        &bin,
+        &delta,
+        &reviewed,
+        &[],
+        &[("GREENBELAY_ADR_LINT", "x")],
+    );
+    assert!(out.status.success(), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("GREENBELAY_ADR_LINT is no longer read"),
+        "{err}"
+    );
 }
