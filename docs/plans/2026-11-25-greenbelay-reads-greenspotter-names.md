@@ -28,7 +28,7 @@ from PATH. CI pins greenspotter 0.20.0.
 - Old `adr-lint.ruling/1` rows stay as history.
 
 ## Phases
-- [ ] Phase 1 — rename the spawn, the formats and the CI pin:
+- [x] Phase 1 — rename the spawn, the formats and the CI pin:
   `crates/greenbelay-process/src/review_brief.rs`,
   `crates/greenbelay-process/src/candidates_block.rs`,
   `crates/greenbelay-process/src/implementation_review.rs`, `src/main.rs`,
@@ -37,8 +37,12 @@ from PATH. CI pins greenspotter 0.20.0.
   `.github/workflows/ci.yaml`
 
 ## Verification
-`cargo test --workspace` passes (it did on the edited tree, 2026-11-25); CI's
-`greenspotter sync --check` step concludes `success`.
+| Check | Input | Expected | Actual |
+| --- | --- | --- | --- |
+| Suite | `cargo test --workspace` on the edited tree, and the commit gate (clippy, tests) on both commits | pass | pass; `check_with_greenspotter` ran the real greenspotter 0.20.0 `ruling-record --check` on a record the new code wrote |
+| New spawn on real input | `target/debug/greenbelay review-brief --plan <this plan>` on the committed tree, installed greenspotter 0.20.0 | a `<<<CANDIDATES sha=… n=…>>>` block | `n=3`, block present, exit 0 |
+| Old variable | same, with `GREENBELAY_ADR_LINT=x` | one stderr notice, exit 0 | notice printed |
+| CI pin | `greenspotter sync --check` step | recorded after the run | see the PR checks |
 
 ## Decision log
 - 2026-11-25: landed without a `## Review panel`: written after the edits as
