@@ -2827,14 +2827,14 @@ usage: ", greenbelay_guard::bin!(), " review-brief [-C <dir>] [--plan <path>] [-
                                 [--interdiff <head>]
 
 The markdown brief an implementation reviewer is launched with: the
-<<<TREE ...>>> block, the <<<RULES sha=...>>> line and adr-lint's
+<<<TREE ...>>> block, the <<<RULES sha=...>>> line and greenspotter's
 <<<CANDIDATES ...>>> block (paste them verbatim into the reviewer prompt),
 the plan's Verification section, the diff since the merge-base, the
 candidates, the code rules in full (a --profile brief: its own judge rules
 and an index of the rest, ADR-0065), the constraint rules, the decisions that
 bear on the changed files, and the plan's Non-goals. A repository with no
 .adr.yaml gets no rules line and a note that no decided code rules apply.
-adr-lint is `adr-lint` from PATH, or $GREENBELAY_ADR_LINT; when it cannot
+greenspotter is `greenspotter` from PATH, or $GREENBELAY_GREENSPOTTER; when it cannot
 answer, the block is <<<CANDIDATES unavailable>>> and the brief goes on.
 
   -C <dir>        the repository (default: the current directory)

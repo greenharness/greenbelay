@@ -57,30 +57,30 @@ jobs:
       - run: python3 -I scripts/test_release_manifest.py
       # general.no-disabled-safety: the clippy settings that refuse a
       # reasonless `#[allow]` are still in Cargo.toml (ADR-0044). CI only,
-      # not `make lint`: a contributor need not install adr-lint, and clippy
+      # not `make lint`: a contributor need not install greenspotter, and clippy
       # already refuses an `#[allow]`. The tarball is pinned by its checksum.
-      - name: adr-lint sync --check
+      - name: greenspotter sync --check
         env:
           GH_TOKEN: ${{ github.token }}
-          ADR_LINT: "0.8.0"
-          ADR_LINT_SHA256: 4298718e843d5253ed84a64a4b7ed98ee5bab5bd3dc0d0bd1aeb59920d92be03
+          GREENSPOTTER: "0.20.0"
+          GREENSPOTTER_SHA256: f189d5a10fd7d94f2a08947d2292420417eecec490d15633e18d78a167becfc8
         run: |
-          name="adr-lint-$ADR_LINT-x86_64-unknown-linux-gnu"
+          name="greenspotter-$GREENSPOTTER-x86_64-unknown-linux-gnu"
           # Through the API, not the web route, which throttles anonymous downloads (504s on 2026-11-08).
           for attempt in 1 2 3; do
             rc=0
-            timeout 120 gh release download "v$ADR_LINT" --repo fredericrous/adr-lint \
+            timeout 120 gh release download "v$GREENSPOTTER" --repo greenharness/greenspotter \
               --pattern "$name.tar.gz" -O "$RUNNER_TEMP/$name.tar.gz" --clobber || rc=$?
             [ "$rc" = 0 ] && break
             if [ "$attempt" = 3 ]; then
-              echo "::error::could not download $name.tar.gz from fredericrous/adr-lint v$ADR_LINT (exit $rc; 124 = timed out after 120 s)"
+              echo "::error::could not download $name.tar.gz from greenharness/greenspotter v$GREENSPOTTER (exit $rc; 124 = timed out after 120 s)"
               exit 1
             fi
             sleep $((attempt * 5))
           done
-          echo "$ADR_LINT_SHA256  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          echo "$GREENSPOTTER_SHA256  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP"
-          "$RUNNER_TEMP/$name/adr-lint" sync --check
+          "$RUNNER_TEMP/$name/greenspotter" sync --check
 
   # The floor `rust-version` claims, compiled against.
   #

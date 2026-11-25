@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Breaking: `review-brief` spawns `greenspotter` in place of `adr-lint`**
+  (programme topo-spotter-rename t13). `GREENBELAY_GREENSPOTTER` names another
+  program; `GREENBELAY_ADR_LINT` is removed, with no alias. The candidates
+  reader accepts only `greenspotter.candidates/1`, and rulings are written as
+  `greenspotter.ruling/1`; old `adr-lint.ruling/1` rows stay as history. CI pins
+  greenspotter 0.20.0 from `greenharness/greenspotter`. The write-time
+  `adr-lint-written` hook still runs `adr-lint check` (a later ticket).
+
 ## v6.13.0
 
 greenbelay 6.13.0: sessions on one task agree on who owns it, with owner

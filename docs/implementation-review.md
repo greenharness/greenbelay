@@ -269,7 +269,7 @@ no rules line, `rules-stale` when the rules changed since, `rules-unknown`
 when the pass predates the stored sha or `aval` could not answer.
 
 A third line, `candidates-checked`, records what the review did with the
-candidates adr-lint listed. Its excerpt is `tree=<12 hex> review=<...>`:
+candidates greenspotter listed. Its excerpt is `tree=<12 hex> review=<...>`:
 `candidates-ruled n=<n>` when every listed id has a ruling,
 `candidates-undisposed n=<k>/<n>` when `k` of `n` do not,
 `candidates-unlisted` when the reviewer's prompt had no block,
@@ -279,26 +279,26 @@ the judgment, and `status` counts it in no bucket.
 
 ## Candidates and rulings
 
-`greenbelay review-brief` runs `adr-lint candidates --base <merge-base>
---json --max 40` in the repository (`adr-lint` from PATH, or the program
-named by `GREENBELAY_ADR_LINT`; a bounded wait; stdin from /dev/null). A
-candidate is a line adr-lint marked on a line the branch adds, for the
-reviewer to rule on; adr-lint owns the document (`adr-lint.candidates/1`)
-and the ruling record (`adr-lint.ruling/1`). The reader refuses any other
+`greenbelay review-brief` runs `greenspotter candidates --base <merge-base>
+--json --max 40` in the repository (`greenspotter` from PATH, or the program
+named by `GREENBELAY_GREENSPOTTER`; a bounded wait; stdin from /dev/null). A
+candidate is a line greenspotter marked on a line the branch adds, for the
+reviewer to rule on; greenspotter owns the document (`greenspotter.candidates/1`)
+and the ruling record (`greenspotter.ruling/1`). The reader refuses any other
 `format` token and ignores unknown fields.
 
 Right after the RULES line the brief prints a block to paste verbatim into
 the reviewer prompt:
 
 ```
-<<<CANDIDATES sha=<sha256 of adr-lint's stdout> n=<count>>>>
+<<<CANDIDATES sha=<sha256 of greenspotter's stdout> n=<count>>>>
 <id> <rule> <pattern_id> <path>:<line>
 <<<END CANDIDATES>>>
 ```
 
 and a `## Candidates` section in the body with each candidate's id, place,
 rule, pattern message and text, the per-rule overflow counts, and the
-instruction for the result. When adr-lint is missing, fails or prints
+instruction for the result. When greenspotter is missing, fails or prints
 another format, the block is `<<<CANDIDATES unavailable>>>`, the section
 names the cause, stderr carries one line, and the brief still exits 0.
 
@@ -309,14 +309,14 @@ rule body>`. An id is the full 64 hex or a unique prefix of at least 12.
 On a passing review (the transcript, the tree memory and the patch memory
 alike; the pass file keeps what the prompt listed and the result ruled) the
 push check journals the `candidates-checked` line above and appends, for each
-ruling, one `adr-lint.ruling/1` line to
+ruling, one `greenspotter.ruling/1` line to
 `~/.claude/greenbelay/rulings/<repo>.jsonl` (created 0600 in a 0700
 directory, appended to and never rewritten): `format`, `review` (the
 reviewer's agent id), `tool` (`amont-agent`), `repo`, `tree` (the content
 id), `candidate`, `rule`, `pattern_id`, `pattern` (the message from the
 brief's section, the rule id when unknown), `ruling`, `clause` and `at`
 (RFC 3339 UTC). A retried push of the same review appends no second record
-for the same review and candidate. `adr-lint ruling-record --check <file>`
+for the same review and candidate. `greenspotter ruling-record --check <file>`
 validates the file.
 
 A repository with no `.adr.yaml` gets a brief with no RULES line and a
