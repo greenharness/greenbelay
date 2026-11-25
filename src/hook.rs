@@ -2404,8 +2404,8 @@ fn greenspotter_gate(op: &crate::payload::FileOp, root: &std::path::Path) -> boo
 /// An Edit, MultiEdit or Write that has run: the file is checked by
 /// `greenspotter check --json` when its repository vendors that row.
 fn on_post_write(op: &crate::payload::FileOp) -> Decision {
-    use rules::greenspotter_written as al;
-    if !al::considered(&op.path) {
+    use rules::greenspotter_written as written;
+    if !written::considered(&op.path) {
         return Decision::Silent;
     }
     let Some(dir) = op.path.parent() else {
@@ -2432,7 +2432,7 @@ fn on_post_write(op: &crate::payload::FileOp) -> Decision {
         GREENSPOTTER_DEADLINE,
     );
     let verdict = match ran {
-        Ran::Exited { code, stdout } => al::interpret(code, &stdout),
+        Ran::Exited { code, stdout } => written::interpret(code, &stdout),
         Ran::TimedOut => {
             greenspotter_note(op, &root, "-", "greenspotter-slow", &relative);
             return Decision::Silent;
@@ -2443,26 +2443,26 @@ fn on_post_write(op: &crate::payload::FileOp) -> Decision {
         }
     };
     match verdict {
-        al::Verdict::Clean => Decision::Silent,
-        al::Verdict::Failed(outcome) => {
+        written::Verdict::Clean => Decision::Silent,
+        written::Verdict::Failed(outcome) => {
             greenspotter_note_once(op, &root, outcome, &relative);
             Decision::Silent
         }
-        al::Verdict::Findings(findings) => {
-            let stance = crate::stance::resolve(&al::RULE);
+        written::Verdict::Findings(findings) => {
+            let stance = crate::stance::resolve(&written::RULE);
             for finding in &findings {
                 greenspotter_note(
                     op,
                     &root,
                     stance.as_str(),
                     outcome_of(stance),
-                    &al::excerpt(finding),
+                    &written::excerpt(finding),
                 );
             }
             match stance {
                 Stance::Observe => Decision::Silent,
                 // The ceiling is advise (`max_stance`); a deny stance still advises.
-                Stance::Advise | Stance::Deny => Decision::Assert(al::phrase(&findings)),
+                Stance::Advise | Stance::Deny => Decision::Assert(written::phrase(&findings)),
             }
         }
     }

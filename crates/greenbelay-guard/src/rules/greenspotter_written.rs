@@ -48,8 +48,11 @@ pub const LIST_FORMAT: &str = "amont-list-v1";
 /// census of greengate's hard rename.
 pub const LIST_FORMATS: [&str; 2] = ["greengate-list-v1", LIST_FORMAT];
 
-/// The id amont gives the row greenspotter's `amont.pack` declares.
-pub const ROW_ID: &str = "pre-commit-greenspotter-check";
+/// The id greengate gives the row greenspotter's pack declares, then the id
+/// the same row had under adr-lint's pack: a repository the fleet sweep
+/// (topo-spotter-rename t10) has not reached still vendors the old one, and
+/// keeps its write-time check. Both are read until that sweep.
+pub const ROW_IDS: [&str; 2] = ["pre-commit-greenspotter-check", "pre-commit-adr-lint-check"];
 
 /// The extensions greenspotter's code rules apply to.
 const EXTENSIONS: &[&str] = &["rs", "ts", "tsx", "go", "py"];
@@ -86,9 +89,12 @@ pub fn gate(document: &str) -> Gate {
     let Some(checks) = doc.get("checks").and_then(|c| c.as_array()) else {
         return Gate::Unexpected;
     };
-    let vendored = checks
-        .iter()
-        .any(|check| check.get("id").and_then(|id| id.as_str()) == Some(ROW_ID));
+    let vendored = checks.iter().any(|check| {
+        check
+            .get("id")
+            .and_then(|id| id.as_str())
+            .is_some_and(|id| ROW_IDS.contains(&id))
+    });
     if vendored {
         Gate::Open
     } else {
@@ -206,6 +212,11 @@ mod tests {
         let untrusted = r#"{"format":"amont-list-v1","checks":[{"id":"pre-commit-cargo-test","command":null},{"id":"pre-commit-greenspotter-check","status":"unusable","command":null}]}"#;
         let trusted = r#"{"format":"amont-list-v1","checks":[{"id":"pre-commit-greenspotter-check","status":"runs","command":"greenspotter check --"}]}"#;
         assert_eq!(gate(untrusted), Gate::Open);
+        // A repository the fleet sweep has not reached lists the old id.
+        assert_eq!(
+            gate(&untrusted.replace(ROW_IDS[0], "pre-commit-adr-lint-check")),
+            Gate::Open
+        );
         assert_eq!(gate(trusted), Gate::Open);
         // greengate 4.0 names the same envelope `greengate-list-v1`.
         assert_eq!(

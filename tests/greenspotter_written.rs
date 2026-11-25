@@ -22,8 +22,10 @@ struct World {
 
 impl World {
     fn new(name: &str) -> World {
-        let root =
-            std::env::temp_dir().join(format!("greenbelay-adrlint-{}-{name}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "greenbelay-greenspotter-{}-{name}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("repo/src")).unwrap();
         std::fs::create_dir_all(root.join("bin")).unwrap();
@@ -62,7 +64,7 @@ impl World {
         common::write_fake(&self.bin("greengate"), &script);
     }
 
-    /// An `greenspotter` that records its arguments, then runs `body`.
+    /// A `greenspotter` that records its arguments, then runs `body`.
     #[cfg(unix)] // a #!/bin/sh fake
     fn fake_greenspotter(&self, body: &str) {
         let script = format!(
@@ -103,6 +105,8 @@ impl World {
             .env_remove("XDG_STATE_HOME")
             .env("PATH", path)
             .env("GREENBELAY_GREENSPOTTER", self.bin("greenspotter"))
+            // The retired variable, set in every run: the hook must not read it.
+            .env("GREENBELAY_ADR_LINT", self.bin("adr-lint"))
             .env("GIT_CONFIG_GLOBAL", self.root.join("no-global-gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env_remove("GREENBELAY_OFF")
@@ -160,7 +164,7 @@ fn a_finding_on_a_vendored_repository_comes_back_as_advice_and_is_journalled() {
     let w = World::new("finding");
     w.fake_amont(GATE_OPEN);
     w.fake_greenspotter(&format!("printf '%s' '{FINDING}'\nexit 1"));
-    let (stdout, _) = w.edit("adr-a", "src/a.rs");
+    let (stdout, _) = w.edit("gs-a", "src/a.rs");
     let said = reason(&stdout);
     assert!(
         said.contains("src/a.rs:7:3: tests.first-properties: an ignored test needs a reason"),
@@ -175,7 +179,7 @@ fn a_finding_on_a_vendored_repository_comes_back_as_advice_and_is_journalled() {
         "{stdout}"
     );
     assert_eq!(w.runs("greenspotter"), ["check --json -- src/a.rs"]);
-    let rows = w.journal("adr-a");
+    let rows = w.journal("gs-a");
     assert!(
         rows.iter().any(|r| r.contains("greenspotter-written")
             && r.contains(" advised ")
@@ -190,7 +194,7 @@ fn a_repository_without_the_check_row_is_left_alone() {
     let w = World::new("closed");
     w.fake_amont(GATE_CLOSED);
     w.fake_greenspotter(&format!("printf '%s' '{FINDING}'\nexit 1"));
-    let (stdout, _) = w.edit("adr-b", "src/a.rs");
+    let (stdout, _) = w.edit("gs-b", "src/a.rs");
     assert_eq!(stdout, "");
     assert!(w.runs("greenspotter").is_empty());
 }
@@ -201,7 +205,7 @@ fn a_file_that_is_not_source_runs_neither_program() {
     let w = World::new("markdown");
     w.fake_amont(GATE_OPEN);
     w.fake_greenspotter(&format!("printf '%s' '{FINDING}'\nexit 1"));
-    let (stdout, _) = w.edit("adr-c", "README.md");
+    let (stdout, _) = w.edit("gs-c", "README.md");
     assert_eq!(stdout, "");
     assert!(w.runs("amont").is_empty());
     assert!(w.runs("greenspotter").is_empty());
@@ -215,16 +219,16 @@ fn a_slow_greenspotter_is_killed_and_journalled_and_the_hook_returns() {
     // A clean run first: it warms the gate and times the hook's own start,
     // which a loaded machine stretches and the deadline must not be blamed for.
     w.fake_greenspotter("exit 0");
-    let (_, baseline) = w.edit("adr-d", "src/a.rs");
+    let (_, baseline) = w.edit("gs-d", "src/a.rs");
     w.fake_greenspotter("sleep 3");
-    let (stdout, took) = w.edit("adr-d", "src/a.rs");
+    let (stdout, took) = w.edit("gs-d", "src/a.rs");
     assert_eq!(stdout, "");
     // Killed at 1 s: well short of the 3 s the fake would take.
     assert!(
         took < baseline + std::time::Duration::from_secs(2),
         "{took:?} against a clean run of {baseline:?}"
     );
-    let rows = w.journal("adr-d");
+    let rows = w.journal("gs-d");
     assert!(
         rows.iter().any(|r| r.contains("greenspotter-slow")),
         "{rows:?}"
@@ -237,10 +241,10 @@ fn a_failure_is_journalled_once_per_session_and_never_shown() {
     let w = World::new("exit3");
     w.fake_amont(GATE_OPEN);
     w.fake_greenspotter("exit 3");
-    let (first, _) = w.edit("adr-e", "src/a.rs");
-    let (second, _) = w.edit("adr-e", "src/a.rs");
+    let (first, _) = w.edit("gs-e", "src/a.rs");
+    let (second, _) = w.edit("gs-e", "src/a.rs");
     assert_eq!((first.as_str(), second.as_str()), ("", ""));
-    let rows = w.journal("adr-e");
+    let rows = w.journal("gs-e");
     let failures = rows
         .iter()
         .filter(|r| r.contains("greenspotter-exit-3"))
@@ -254,8 +258,8 @@ fn the_gate_is_asked_once_per_session_and_repository() {
     let w = World::new("cache");
     w.fake_amont(GATE_OPEN);
     w.fake_greenspotter("exit 0");
-    w.edit("adr-f", "src/a.rs");
-    w.edit("adr-f", "src/a.rs");
+    w.edit("gs-f", "src/a.rs");
+    w.edit("gs-f", "src/a.rs");
     assert_eq!(w.runs("amont").len(), 1);
     assert_eq!(w.runs("greenspotter").len(), 2);
 }
@@ -266,7 +270,7 @@ fn a_greengate_list_envelope_opens_the_gate() {
     let w = World::new("greengate-list");
     w.fake_amont(&GATE_OPEN.replace("amont-list-v1", "greengate-list-v1"));
     w.fake_greenspotter("exit 0");
-    w.edit("adr-gg", "src/a.rs");
+    w.edit("gs-gg", "src/a.rs");
     assert_eq!(w.runs("amont").len(), 1);
     assert_eq!(w.runs("greenspotter"), ["check --json -- src/a.rs"]);
 }
@@ -277,7 +281,7 @@ fn the_gate_is_asked_in_the_files_repository_not_the_payload_cwd() {
     let w = World::new("root");
     w.fake_amont(GATE_OPEN);
     w.fake_greenspotter("exit 0");
-    w.written("adr-g", &w.repo.join("src/a.rs"), &w.root.join("elsewhere"));
+    w.written("gs-g", &w.repo.join("src/a.rs"), &w.root.join("elsewhere"));
     assert_eq!(w.runs("amont"), [w.repo.display().to_string()]);
     assert_eq!(w.runs("greenspotter"), ["check --json -- src/a.rs"]);
 }
@@ -288,10 +292,10 @@ fn a_failing_amont_closes_the_gate_and_is_journalled() {
     let w = World::new("badamont");
     w.fake_amont("not json");
     w.fake_greenspotter(&format!("printf '%s' '{FINDING}'\nexit 1"));
-    let (stdout, _) = w.edit("adr-h", "src/a.rs");
+    let (stdout, _) = w.edit("gs-h", "src/a.rs");
     assert_eq!(stdout, "");
     assert!(w.runs("greenspotter").is_empty());
-    let rows = w.journal("adr-h");
+    let rows = w.journal("gs-h");
     assert!(
         rows.iter().any(|r| r.contains("amont-list-unexpected")),
         "{rows:?}"
@@ -311,13 +315,40 @@ fn observing_journals_the_findings_and_says_nothing() {
         "[greenbelay]\n\tstance = observe\n",
     )
     .unwrap();
-    let (stdout, _) = w.edit("adr-i", "src/a.rs");
+    let (stdout, _) = w.edit("gs-i", "src/a.rs");
     assert_eq!(stdout, "");
-    let rows = w.journal("adr-i");
+    let rows = w.journal("gs-i");
     assert!(
         rows.iter().any(|r| r.contains("greenspotter-written")
             && r.contains(" watched ")
             && r.contains("tests.first-properties")),
         "{rows:?}"
     );
+}
+
+#[cfg(unix)] // fake programs are #!/bin/sh scripts
+#[test]
+fn a_repository_vendoring_the_old_adr_lint_row_still_opens_the_gate() {
+    let w = World::new("old-row");
+    w.fake_amont(&GATE_OPEN.replace("pre-commit-greenspotter-check", "pre-commit-adr-lint-check"));
+    w.fake_greenspotter("exit 0");
+    let (stdout, _) = w.edit("gs-old", "src/a.rs");
+    assert_eq!(stdout, "");
+    assert_eq!(w.runs("greenspotter"), ["check --json -- src/a.rs"]);
+}
+
+#[cfg(unix)] // fake programs are #!/bin/sh scripts
+#[test]
+fn the_retired_adr_lint_variable_is_not_read() {
+    let w = World::new("retired-var");
+    w.fake_amont(GATE_OPEN);
+    w.fake_greenspotter("exit 0");
+    let script = format!(
+        "#!/bin/sh\necho \"$*\" >> '{}'\nexit 0\n",
+        w.log("adr-lint").display()
+    );
+    common::write_fake(&w.bin("adr-lint"), &script);
+    w.edit("gs-retired", "src/a.rs");
+    assert!(w.runs("adr-lint").is_empty());
+    assert_eq!(w.runs("greenspotter"), ["check --json -- src/a.rs"]);
 }
