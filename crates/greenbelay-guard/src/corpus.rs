@@ -168,6 +168,10 @@ const EMBEDDED: &[(&str, &str)] = &[
         include_str!("../tests/corpus/stat-bsd-format.cases"),
     ),
     (
+        "pkill-option-after-pattern",
+        include_str!("../tests/corpus/pkill-option-after-pattern.cases"),
+    ),
+    (
         "whole-file-dump",
         include_str!("../tests/corpus/whole-file-dump.cases"),
     ),
