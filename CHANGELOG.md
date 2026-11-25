@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v6.17.0
+
+greenbelay 6.17.0: the write-time hook runs `greenspotter` (`docs/plans/2026-11-25-write-hook-spawns-greenspotter.md`, #337).
+
 - **Breaking: the write-time hook runs `greenspotter`** (programme
   topo-spotter-rename t15). The rule `adr-lint-written` is now
   `greenspotter-written`; it runs `greenspotter check --json -- <path>` and
