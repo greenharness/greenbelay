@@ -59,9 +59,18 @@ const ECHOED_WORDS: usize = 8;
 struct Heavy<'a> {
     program: &'a str,
     args: &'a [Word],
-    /// The clause is a `slot run` that skips the queue (`--now`, or the older
-    /// `--on-timeout=run`) rather than a bare command.
-    skips_queue: bool,
+    launch: Launch<'a>,
+}
+
+/// How a heavy clause comes to run unqueued.
+enum Launch<'a> {
+    /// Started bare, outside any queue.
+    Bare,
+    /// `slot run --now`: at once, skipping the queue (greengate 5.0).
+    Now { gate: &'a str },
+    /// `slot run --on-timeout=run`: queued first, unqueued when no slot frees
+    /// (older versions; greengate 5.0 refuses it).
+    OnTimeoutRun { gate: &'a str },
 }
 
 /// Build commands beyond the runners `test-output-trimmed` knows.
@@ -98,7 +107,7 @@ fn unqueued(cmd: &Simple) -> Option<Heavy<'_>> {
     is_heavy(program, cmd.args()).then(|| Heavy {
         program,
         args: cmd.args(),
-        skips_queue: false,
+        launch: Launch::Bare,
     })
 }
 
@@ -116,14 +125,17 @@ fn slot_run_fallback(cmd: &Simple) -> Option<Heavy<'_>> {
     if operands.next() != Some("slot") || operands.next() != Some("run") {
         return None;
     }
-    let runs_unqueued = own.iter().enumerate().any(|(i, a)| {
-        *a == "--now"
-            || *a == "--on-timeout=run"
-            || (*a == "--on-timeout" && own.get(i + 1) == Some(&"run"))
-    });
-    if !runs_unqueued {
+    let gate = cmd.program()?;
+    let gate = gate.rsplit('/').next().unwrap_or(gate);
+    let launch = if own.contains(&"--now") {
+        Launch::Now { gate }
+    } else if own.iter().enumerate().any(|(i, a)| {
+        *a == "--on-timeout=run" || (*a == "--on-timeout" && own.get(i + 1) == Some(&"run"))
+    }) {
+        Launch::OnTimeoutRun { gate }
+    } else {
         return None;
-    }
+    };
     let (program, rest) = args[separator + 1..].split_first()?;
     if program.quoted || !is_heavy(&program.text, rest) {
         return None;
@@ -131,7 +143,7 @@ fn slot_run_fallback(cmd: &Simple) -> Option<Heavy<'_>> {
     Some(Heavy {
         program: &program.text,
         args: rest,
-        skips_queue: true,
+        launch,
     })
 }
 
@@ -148,19 +160,30 @@ fn examine(parsed: &Parsed) -> Option<Finding> {
              so it runs beside every other session's and the machine thrashes until \
              gates time out."
         );
-        let remedy = if heavy.skips_queue {
+        let queued = |gate: &str| {
             format!(
-                "`--now` runs it at once, unqueued. Drop it to queue: `amont slot run -- {shown}` \
-                 waits at most 90 s (`--max-wait`) for a slot, and exit 75 means no slot \
-                 freed and the command was not launched. `amont slots` shows who holds them."
+                "`{gate} slot run -- {shown}` waits at most 90 s (`--max-wait`) for a slot, \
+                 and exit 75 means no slot freed and the command was not launched. \
+                 `{gate} slots` shows who holds them."
             )
-        } else {
-            format!(
+        };
+        let remedy = match heavy.launch {
+            Launch::Bare => format!(
                 "Run it as `amont slot run -- {shown}`: it waits at most 90 s \
-                 (`--max-wait`) for a slot; exit 75 means no slot freed and the command \
-                 was not launched. Retry later, or pass `--now` to run it at once, \
-                 unqueued, when you accept the load. `amont slots` shows who holds them."
-            )
+                 (`--max-wait`) for a slot; exit 75 means no slot freed, or the line \
+                 stalled, and the command was not launched. Retry later, or pass `--now` \
+                 to run it at once, unqueued, past a stalled line when you accept the \
+                 load. `amont slots` shows who holds them."
+            ),
+            Launch::Now { gate } => format!(
+                "`--now` runs it at once, unqueued. Drop it to queue: {}",
+                queued(gate)
+            ),
+            Launch::OnTimeoutRun { gate } => format!(
+                "`--on-timeout=run` runs it unqueued when no slot frees in time \
+                 (greengate 5.0 refuses it). Drop it to queue: {}",
+                queued(gate)
+            ),
         };
         return Some(Finding {
             reason,
@@ -264,6 +287,7 @@ mod tests {
         let finding = examine(&lex("cargo test")).unwrap();
         assert!(finding.remedy.contains("`--now`"));
         assert!(!finding.remedy.contains("--on-timeout"));
+        assert!(finding.remedy.contains("stalled"));
     }
 
     #[test]
@@ -272,8 +296,30 @@ mod tests {
         assert!(finding.remedy.contains("`--now` runs it at once, unqueued"));
         assert!(finding
             .remedy
-            .contains("amont slot run -- cargo test -p foo"));
+            .contains("greengate slot run -- cargo test -p foo"));
+        assert!(finding.remedy.contains("greengate slots"));
         assert!(!finding.remedy.contains("--on-timeout"));
+    }
+
+    #[test]
+    fn the_advice_for_the_older_flag_does_not_talk_about_now() {
+        for c in [
+            "amont slot run --on-timeout=run -- cargo test",
+            "amont slot run --on-timeout run -- cargo test",
+        ] {
+            let finding = examine(&lex(c)).unwrap();
+            assert!(!finding.remedy.contains("`--now` runs"), "{c}");
+            assert!(
+                finding
+                    .remedy
+                    .contains("--on-timeout=run` runs it unqueued"),
+                "{c}"
+            );
+            assert!(
+                finding.remedy.contains("amont slot run -- cargo test"),
+                "{c}"
+            );
+        }
     }
 
     #[test]
