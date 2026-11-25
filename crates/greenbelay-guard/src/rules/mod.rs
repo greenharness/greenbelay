@@ -27,7 +27,6 @@ use std::ops::Range;
 
 use crate::shell::Parsed;
 
-pub mod adr_lint_written;
 pub mod agent_guidance_shape;
 pub mod agent_guidance_written;
 pub mod agent_preferred_model;
@@ -49,6 +48,7 @@ pub mod gh_pr_merge_auto;
 pub mod git_add_broad;
 pub mod glob_in_flag_value;
 pub mod glob_no_match;
+pub mod greenspotter_written;
 pub mod gui_open_unbounded;
 pub mod heavy_build_unqueued;
 pub mod kubectl_gitops;

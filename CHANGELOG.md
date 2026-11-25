@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Breaking: the write-time hook runs `greenspotter`** (programme
+  topo-spotter-rename t15). The rule `adr-lint-written` is now
+  `greenspotter-written`; it runs `greenspotter check --json -- <path>` and
+  `GREENBELAY_GREENSPOTTER` names another program. `GREENBELAY_ADR_LINT` is no
+  longer read (no alias). The gate opens on the row id greenspotter's pack
+  declares, `pre-commit-greenspotter-check`, and still on
+  `pre-commit-adr-lint-check` for a repository the fleet sweep has not reached.
+  Journal keys follow the rename (`greenspotter-slow`, `greenspotter-unavailable`,
+  `greenspotter-exit-*`, `greenspotter-unparsed`); old `adr-lint-written` rows
+  stay as history, and a stance override keyed `adr-lint-written` must be
+  renamed. The waiver hint reads `greenspotter: allow <rule-id> -- <reason>`.
+
 ## v6.16.0
 
 greenbelay 6.16.0: `pkill-option-after-pattern` refuses an option after pkill's pattern (#335).

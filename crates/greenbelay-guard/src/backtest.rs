@@ -174,7 +174,7 @@ pub const NOT_SHELL: &[&str] = &[
     rules::agent_guidance_written::RULE.id,
     rules::agent_guidance_shape::RULE.id,
     rules::work_overlap::RULE.id,
-    rules::adr_lint_written::RULE.id,
+    rules::greenspotter_written::RULE.id,
 ];
 
 pub struct Report {

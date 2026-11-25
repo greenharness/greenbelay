@@ -345,7 +345,7 @@ pub enum Event {
     /// or that failed on a path that is not there, is not a read.
     PostFile(Box<FileOp>),
     /// An Edit, MultiEdit or Write that has run and succeeded: the file on
-    /// disk is the result. `adr-lint-written` checks it.
+    /// disk is the result. `greenspotter-written` checks it.
     PostWrite(Box<FileOp>),
     /// A Grep tool call about to run: `symbol-grep-not-lsp` judges it. A
     /// Grep that has run is not ours: there is no `PostToolUse` block for it.

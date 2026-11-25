@@ -2245,8 +2245,8 @@ fn on_post_file(op: &crate::payload::FileOp) -> Decision {
     Decision::Silent
 }
 
-/// How long `adr-lint check` gets on one file.
-const ADR_LINT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(1);
+/// How long `greenspotter check` gets on one file.
+const GREENSPOTTER_DEADLINE: std::time::Duration = std::time::Duration::from_secs(1);
 /// How long `amont list --json` gets: it takes about a second, and is asked
 /// once per session and repository. Well under the hook's own 10 s timeout,
 /// so a hung `amont` ends here and its closed gate is cached, instead of
@@ -2314,35 +2314,35 @@ fn run_with_deadline(
     }
 }
 
-/// The `adr-lint` program to run: `GREENBELAY_ADR_LINT`, else PATH's.
-fn adr_lint_program() -> std::ffi::OsString {
-    std::env::var_os(greenbelay_guard::env_var!("ADR_LINT"))
+/// The `greenspotter` program to run: `GREENBELAY_GREENSPOTTER`, else PATH's.
+fn greenspotter_program() -> std::ffi::OsString {
+    std::env::var_os(greenbelay_guard::env_var!("GREENSPOTTER"))
         .filter(|program| !program.is_empty())
-        .unwrap_or_else(|| std::ffi::OsString::from("adr-lint"))
+        .unwrap_or_else(|| std::ffi::OsString::from("greenspotter"))
 }
 
-/// Journals a note under `adr-lint-written` at most once per session and
+/// Journals a note under `greenspotter-written` at most once per session and
 /// outcome.
-fn adr_lint_note_once(
+fn greenspotter_note_once(
     op: &crate::payload::FileOp,
     root: &std::path::Path,
     outcome: &str,
     excerpt: &str,
 ) {
-    let key = format!("adr-lint-written {outcome}");
+    let key = format!("greenspotter-written {outcome}");
     let first = match crate::lsp::told(&op.session, &key) {
         crate::lsp::Told::Before => false,
         crate::lsp::Told::First | crate::lsp::Told::Unrecorded(_) => true,
     };
     if first {
-        adr_lint_note(op, root, "-", outcome, excerpt);
+        greenspotter_note(op, root, "-", outcome, excerpt);
     }
 }
 
 /// `stance` is `-` for a note that is not about a finding: the stance is
 /// resolved (several `git config` reads) only when there is one to say. The
 /// repository is the written file's, not the session's working directory.
-fn adr_lint_note(
+fn greenspotter_note(
     op: &crate::payload::FileOp,
     root: &std::path::Path,
     stance: &str,
@@ -2350,7 +2350,7 @@ fn adr_lint_note(
     excerpt: &str,
 ) {
     journal::record(&journal::Entry {
-        rule: rules::adr_lint_written::RULE.id,
+        rule: rules::greenspotter_written::RULE.id,
         stance,
         outcome,
         session: &op.session,
@@ -2360,13 +2360,13 @@ fn adr_lint_note(
     });
 }
 
-/// Does the repository at `root` vendor adr-lint's `check` row? Asked of
+/// Does the repository at `root` vendor greenspotter's `check` row? Asked of
 /// `amont list --json` once per session and repository; the answer is kept on
 /// the session's record.
-fn adr_lint_gate(op: &crate::payload::FileOp, root: &std::path::Path) -> bool {
-    use rules::adr_lint_written::{gate, Gate};
-    let open_key = format!("adr-lint-written gate-open {}", root.display());
-    let closed_key = format!("adr-lint-written gate-closed {}", root.display());
+fn greenspotter_gate(op: &crate::payload::FileOp, root: &std::path::Path) -> bool {
+    use rules::greenspotter_written::{gate, Gate};
+    let open_key = format!("greenspotter-written gate-open {}", root.display());
+    let closed_key = format!("greenspotter-written gate-closed {}", root.display());
     if crate::lsp::was_told(&op.session, &open_key) {
         return true;
     }
@@ -2388,12 +2388,12 @@ fn adr_lint_gate(op: &crate::payload::FileOp, root: &std::path::Path) -> bool {
             Gate::Open => true,
             Gate::Closed => false,
             Gate::Unexpected => {
-                adr_lint_note_once(op, root, "amont-list-unexpected", &shown);
+                greenspotter_note_once(op, root, "amont-list-unexpected", &shown);
                 false
             }
         },
         Ran::Exited { .. } | Ran::TimedOut | Ran::Failed(_) => {
-            adr_lint_note_once(op, root, "amont-list-failed", &shown);
+            greenspotter_note_once(op, root, "amont-list-failed", &shown);
             false
         }
     };
@@ -2402,10 +2402,10 @@ fn adr_lint_gate(op: &crate::payload::FileOp, root: &std::path::Path) -> bool {
 }
 
 /// An Edit, MultiEdit or Write that has run: the file is checked by
-/// `adr-lint check --json` when its repository vendors that row.
+/// `greenspotter check --json` when its repository vendors that row.
 fn on_post_write(op: &crate::payload::FileOp) -> Decision {
-    use rules::adr_lint_written as al;
-    if !al::considered(&op.path) {
+    use rules::greenspotter_written as written;
+    if !written::considered(&op.path) {
         return Decision::Silent;
     }
     let Some(dir) = op.path.parent() else {
@@ -2421,48 +2421,48 @@ fn on_post_write(op: &crate::payload::FileOp) -> Decision {
     else {
         return Decision::Silent;
     };
-    if !adr_lint_gate(op, &root) {
+    if !greenspotter_gate(op, &root) {
         return Decision::Silent;
     }
     let relative = relative.to_string_lossy().into_owned();
     let ran = run_with_deadline(
-        &adr_lint_program(),
+        &greenspotter_program(),
         &["check", "--json", "--", &relative],
         &root,
-        ADR_LINT_DEADLINE,
+        GREENSPOTTER_DEADLINE,
     );
     let verdict = match ran {
-        Ran::Exited { code, stdout } => al::interpret(code, &stdout),
+        Ran::Exited { code, stdout } => written::interpret(code, &stdout),
         Ran::TimedOut => {
-            adr_lint_note(op, &root, "-", "adr-lint-slow", &relative);
+            greenspotter_note(op, &root, "-", "greenspotter-slow", &relative);
             return Decision::Silent;
         }
         Ran::Failed(why) => {
-            adr_lint_note_once(op, &root, "adr-lint-unavailable", &why);
+            greenspotter_note_once(op, &root, "greenspotter-unavailable", &why);
             return Decision::Silent;
         }
     };
     match verdict {
-        al::Verdict::Clean => Decision::Silent,
-        al::Verdict::Failed(outcome) => {
-            adr_lint_note_once(op, &root, outcome, &relative);
+        written::Verdict::Clean => Decision::Silent,
+        written::Verdict::Failed(outcome) => {
+            greenspotter_note_once(op, &root, outcome, &relative);
             Decision::Silent
         }
-        al::Verdict::Findings(findings) => {
-            let stance = crate::stance::resolve(&al::RULE);
+        written::Verdict::Findings(findings) => {
+            let stance = crate::stance::resolve(&written::RULE);
             for finding in &findings {
-                adr_lint_note(
+                greenspotter_note(
                     op,
                     &root,
                     stance.as_str(),
                     outcome_of(stance),
-                    &al::excerpt(finding),
+                    &written::excerpt(finding),
                 );
             }
             match stance {
                 Stance::Observe => Decision::Silent,
                 // The ceiling is advise (`max_stance`); a deny stance still advises.
-                Stance::Advise | Stance::Deny => Decision::Assert(al::phrase(&findings)),
+                Stance::Advise | Stance::Deny => Decision::Assert(written::phrase(&findings)),
             }
         }
     }

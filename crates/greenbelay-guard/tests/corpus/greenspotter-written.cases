@@ -12,9 +12,9 @@
 #
 # This rule is answered from the Edit, MultiEdit and Write payload, never from
 # a command string, so `examine` never fires and every line here is a
-# negative: shell commands that only mention adr-lint.
+# negative: shell commands that only mention greenspotter.
 
-nomatch	adr-lint check --json -- src/main.rs
+nomatch	greenspotter check --json -- src/main.rs
 nomatch	cat src/lib.rs
 nomatch	git add src/lib.rs && git commit -m "fix: x"
 nomatch	sed -n 1,20p crates/a/src/lib.rs
