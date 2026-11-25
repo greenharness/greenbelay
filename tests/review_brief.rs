@@ -1668,7 +1668,7 @@ fn the_retired_adr_lint_variable_gets_a_notice_in_the_full_and_the_delta_brief()
     let bin = scratch("retired-env");
     fake_aval(&bin, BRIEF_AVAL);
     let repo = two_commit_repo("retired-env-repo");
-    let full = |value: &str| {
+    let full_brief_with = |adr_lint_value: &str| {
         let mut cmd = greenbelay_command();
         cmd.args([
             "review-brief",
@@ -1682,10 +1682,10 @@ fn the_retired_adr_lint_variable_gets_a_notice_in_the_full_and_the_delta_brief()
         dirs.extend(std::env::split_paths(&inherited));
         cmd.env("PATH", std::env::join_paths(dirs).unwrap());
         cmd.env("GREENBELAY_GREENSPOTTER", bin.join("greenspotter"));
-        cmd.env("GREENBELAY_ADR_LINT", value);
+        cmd.env("GREENBELAY_ADR_LINT", adr_lint_value);
         cmd.output().expect("greenbelay runs")
     };
-    let set = full("/nonexistent");
+    let set = full_brief_with("/nonexistent");
     assert_eq!(set.status.code(), Some(0), "{set:?}");
     let err = String::from_utf8_lossy(&set.stderr);
     assert_eq!(
@@ -1694,7 +1694,7 @@ fn the_retired_adr_lint_variable_gets_a_notice_in_the_full_and_the_delta_brief()
         1,
         "{err}"
     );
-    let empty = full("");
+    let empty = full_brief_with("");
     let err = String::from_utf8_lossy(&empty.stderr);
     assert!(!err.contains("no longer read"), "{err}");
 
@@ -1708,8 +1708,9 @@ fn the_retired_adr_lint_variable_gets_a_notice_in_the_full_and_the_delta_brief()
     );
     assert!(out.status.success(), "{out:?}");
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        err.contains("GREENBELAY_ADR_LINT is no longer read"),
+    assert_eq!(
+        err.matches("GREENBELAY_ADR_LINT is no longer read").count(),
+        1,
         "{err}"
     );
 }

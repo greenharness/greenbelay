@@ -43,7 +43,7 @@ from PATH. CI pins greenspotter 0.20.0.
 | --- | --- | --- | --- |
 | Suite | `cargo test --workspace` on the edited tree, and the commit gate (clippy, tests) on both commits | pass | pass; `check_with_greenspotter` ran the real greenspotter 0.20.0 `ruling-record --check` on a record the new code wrote |
 | New spawn on real input | `target/debug/greenbelay review-brief --plan <this plan>` on the committed tree, installed greenspotter 0.20.0 | a `<<<CANDIDATES sha=… n=…>>>` block | `n=3`, block present, exit 0 |
-| Old variable | same, with `GREENBELAY_ADR_LINT=x` | one stderr notice, exit 0 | notice printed |
+| Old variable | same, with `GREENBELAY_ADR_LINT=x`; and `--interdiff` | one stderr notice per brief, exit 0 | notice printed on the full brief by hand; both paths, and an empty value, by `the_retired_adr_lint_variable_gets_a_notice_in_the_full_and_the_delta_brief` |
 | CI pin | `greenspotter sync --check` step | recorded after the run | see the PR checks |
 
 ## Decision log
