@@ -291,7 +291,7 @@ under `NO_COLOR` and when stdout is not a TTY (reuse guard/ui.rs). The board's i
     `CHANGELOG.md`, and the ticket
     `docs/programmes/follow-ups/t02-three-sessions-one-owner.md` with its
     `map.md`.
-  - The release is greenbelay 6.11.0, cut with `tag-release`.
+  - The release is greenbelay 6.13.0 (6.11.0 and 6.12.0 shipped meanwhile), cut with `tag-release`.
   - The release installs the binary on this machine, and the new hooks
     are checked live.
 
