@@ -2,10 +2,15 @@
 
 ## Unreleased
 
+## v6.14.0
+
+greenbelay 6.14.0: `review-brief` reads the greenspotter names
+(`docs/plans/2026-11-25-greenbelay-reads-greenspotter-names.md`, #330).
+
 - **Breaking: `review-brief` spawns `greenspotter` in place of `adr-lint`**
   (programme topo-spotter-rename t13). `GREENBELAY_GREENSPOTTER` names another
-  program; `review-brief` stops reading `GREENBELAY_ADR_LINT` (no alias; it prints a notice when that variable is set). The candidates
-  reader accepts only `greenspotter.candidates/1`, and rulings are written as
+  program; `review-brief` stops reading `GREENBELAY_ADR_LINT` (no alias; it prints a
+  notice when that variable is set). The candidates reader accepts only `greenspotter.candidates/1`, and rulings are written as
   `greenspotter.ruling/1`; old `adr-lint.ruling/1` rows stay as history. CI pins
   greenspotter 0.20.0 from `greenharness/greenspotter`. The write-time
   `adr-lint-written` hook still runs `adr-lint check` and still reads
