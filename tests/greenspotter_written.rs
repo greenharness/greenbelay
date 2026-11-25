@@ -83,6 +83,19 @@ impl World {
     /// A finished Write of `file`, reported from `cwd`.
     #[cfg(unix)] // PATH is joined with ':'
     fn written(&self, session: &str, file: &Path, cwd: &Path) -> (String, std::time::Duration) {
+        self.written_finding_greenspotter(session, file, cwd, Lookup::Override)
+    }
+
+    /// As `written`, with `GREENBELAY_GREENSPOTTER` set to the fake
+    /// (`Override`) or unset, so the fake is found on PATH (`Path`).
+    #[cfg(unix)] // PATH is joined with ':'
+    fn written_finding_greenspotter(
+        &self,
+        session: &str,
+        file: &Path,
+        cwd: &Path,
+        lookup: Lookup,
+    ) -> (String, std::time::Duration) {
         let payload = serde_json::json!({
             "hook_event_name": "PostToolUse",
             "tool_name": "Write",
@@ -99,12 +112,16 @@ impl World {
             std::env::var("PATH").unwrap_or_default()
         );
         let started = std::time::Instant::now();
-        let mut child = Command::new(env!("CARGO_BIN_EXE_greenbelay"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_greenbelay"));
+        match lookup {
+            Lookup::Override => command.env("GREENBELAY_GREENSPOTTER", self.bin("greenspotter")),
+            Lookup::Path => command.env_remove("GREENBELAY_GREENSPOTTER"),
+        };
+        let mut child = command
             .arg("hook")
             .env("CLAUDE_CONFIG_DIR", self.root.join("config"))
             .env_remove("XDG_STATE_HOME")
             .env("PATH", path)
-            .env("GREENBELAY_GREENSPOTTER", self.bin("greenspotter"))
             // The retired variable, set in every run: the hook must not read it.
             .env("GREENBELAY_ADR_LINT", self.bin("adr-lint"))
             .env("GIT_CONFIG_GLOBAL", self.root.join("no-global-gitconfig"))
@@ -329,26 +346,42 @@ fn observing_journals_the_findings_and_says_nothing() {
 #[cfg(unix)] // fake programs are #!/bin/sh scripts
 #[test]
 fn a_repository_vendoring_the_old_adr_lint_row_still_opens_the_gate() {
-    let w = World::new("old-row");
-    w.fake_amont(&GATE_OPEN.replace("pre-commit-greenspotter-check", "pre-commit-adr-lint-check"));
-    w.fake_greenspotter("exit 0");
-    let (stdout, _) = w.edit("gs-old", "src/a.rs");
+    let world = World::new("old-row");
+    world.fake_amont(
+        &GATE_OPEN.replace("pre-commit-greenspotter-check", "pre-commit-adr-lint-check"),
+    );
+    world.fake_greenspotter("exit 0");
+    let (stdout, _) = world.edit("gs-old", "src/a.rs");
     assert_eq!(stdout, "");
-    assert_eq!(w.runs("greenspotter"), ["check --json -- src/a.rs"]);
+    assert_eq!(world.runs("greenspotter"), ["check --json -- src/a.rs"]);
 }
 
 #[cfg(unix)] // fake programs are #!/bin/sh scripts
 #[test]
 fn the_retired_adr_lint_variable_is_not_read() {
-    let w = World::new("retired-var");
-    w.fake_amont(GATE_OPEN);
-    w.fake_greenspotter("exit 0");
+    let world = World::new("retired-var");
+    world.fake_amont(GATE_OPEN);
+    world.fake_greenspotter("exit 0");
     let script = format!(
         "#!/bin/sh\necho \"$*\" >> '{}'\nexit 0\n",
-        w.log("adr-lint").display()
+        world.log("adr-lint").display()
     );
-    common::write_fake(&w.bin("adr-lint"), &script);
-    w.edit("gs-retired", "src/a.rs");
-    assert!(w.runs("adr-lint").is_empty());
-    assert_eq!(w.runs("greenspotter"), ["check --json -- src/a.rs"]);
+    common::write_fake(&world.bin("adr-lint"), &script);
+    // With GREENBELAY_GREENSPOTTER unset, so a fallback to the retired
+    // variable would be reached and run the adr-lint fake.
+    world.written_finding_greenspotter(
+        "gs-retired",
+        &world.repo.join("src/a.rs"),
+        &world.repo,
+        Lookup::Path,
+    );
+    assert!(world.runs("adr-lint").is_empty());
+    assert_eq!(world.runs("greenspotter"), ["check --json -- src/a.rs"]);
+}
+
+/// How the hook finds `greenspotter` in a run.
+#[derive(Clone, Copy)]
+enum Lookup {
+    Override,
+    Path,
 }
