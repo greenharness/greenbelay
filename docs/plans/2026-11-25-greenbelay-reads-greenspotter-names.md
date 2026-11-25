@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 plan-id: p-t13-greenspotter
 branch: feat/greenspotter-names
 repos: [greenbelay]
@@ -49,3 +49,9 @@ from PATH. CI pins greenspotter 0.20.0.
 ## Decision log
 - 2026-11-25: landed without a `## Review panel`: written after the edits as
   a programme ticket record; the implementation review is the check.
+
+## Implementation review
+- implementation-review: approve on the third pass; fixed the placeholder test name, the unticked phase, the missing real-input check, and the missing notice test.
+- backend, lang:rust, unix: approve at delta 2; fixed the hook wording in the changelog, stale names, the notice on the `--interdiff` path and its text from `env_var!`.
+- deliberate: the notice test's `full_brief_with` repeats the PATH setup that `interdiff_env` has (Rust, optional).
+- deliberate: the CI-pin row reads "see the PR checks": CI cannot run before the push.
