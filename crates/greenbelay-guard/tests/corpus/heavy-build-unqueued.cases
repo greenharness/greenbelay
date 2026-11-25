@@ -17,6 +17,8 @@ match	xcodebuild -scheme App build
 match	cargo build --release
 match	swift build
 match	amont slot run --on-timeout=run -- cargo test
+match	amont slot run --now -- cargo test
+match	greengate slot run --now -- cargo test
 
 # --- the rule must stay silent ---
 nomatch	amont slot run -- cargo test
