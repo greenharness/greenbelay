@@ -2,9 +2,11 @@
 
 ## Unreleased
 
-Sessions on one task agree on who owns it: owner records per worktree and
-programme ticket, a resume-prompt check, and push attribution
-(`docs/plans/2026-11-24-one-owner-per-worktree.md`).
+## v6.13.0
+
+greenbelay 6.13.0: sessions on one task agree on who owns it, with owner
+records per worktree and programme ticket, a resume-prompt check, and push
+attribution (`docs/plans/2026-11-24-one-owner-per-worktree.md`, #328).
 
 - Owner records under `<data dir>/owners/`: a session's first write in a
   worktree claims it (`git config greenbelay.work-owner.auto-claim false`

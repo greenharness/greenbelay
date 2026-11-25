@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 branch: prog/follow-ups/t02-three-sessions-one-owner
 repos: [greenbelay]
 adrs: [decisions:ADR-0039, decisions:ADR-0075, decisions:ADR-0083]
@@ -285,13 +285,13 @@ under `NO_COLOR` and when stdout is not a TTY (reuse guard/ui.rs). The board's i
   Files: `src/hook.rs`, `src/main.rs`,
   `crates/greenbelay-guard/src/owner.rs`,
   `crates/greenbelay-process/src/board.rs`.
-- [ ] Phase 6: the f107 replay as an integration test, then docs and a
+- [x] Phase 6: the f107 replay as an integration test, then docs and a
   release.
   - Files: `tests/three_sessions_one_owner.rs`, `README.md`,
     `CHANGELOG.md`, and the ticket
     `docs/programmes/follow-ups/t02-three-sessions-one-owner.md` with its
     `map.md`.
-  - The release is greenbelay 6.11.0, cut with `tag-release`.
+  - The release is greenbelay 6.13.0 (6.11.0 and 6.12.0 shipped meanwhile), cut with `tag-release`.
   - The release installs the binary on this machine, and the new hooks
     are checked live.
 
