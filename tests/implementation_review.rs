@@ -2608,17 +2608,12 @@ fn an_unreadable_rulings_file_is_journalled_and_not_appended_to() {
     );
 }
 
-/// Validates a rulings file with a real `greenspotter` 0.2.0 or newer on PATH;
+/// Validates a rulings file with a real `greenspotter` on PATH;
 /// prints why it did not when there is none.
 fn check_with_greenspotter(file: &Path) {
-    let version = Command::new("greenspotter").arg("--version").output();
-    let Some(version) = version.ok().filter(|v| v.status.success()) else {
+    let present = Command::new("greenspotter").arg("--version").output();
+    if !present.is_ok_and(|v| v.status.success()) {
         eprintln!("skipped: no `greenspotter` on PATH to run `ruling-record --check`");
-        return;
-    };
-    let version = String::from_utf8_lossy(&version.stdout).to_string();
-    if version.contains("0.1.") {
-        eprintln!("skipped: `{}` has no ruling-record command", version.trim());
         return;
     }
     let checked = Command::new("greenspotter")
@@ -2627,15 +2622,6 @@ fn check_with_greenspotter(file: &Path) {
         .arg(file)
         .output()
         .unwrap();
-    // An installed greenspotter older than the rename names only the old tool
-    // value; the check then says nothing about this record.
-    if String::from_utf8_lossy(&checked.stderr).contains(&format!(
-        "want {} or relais",
-        greenbelay_guard::names::old::RECORD_TOOL
-    )) {
-        eprintln!("skipped: the installed greenspotter predates the greenbelay tool value");
-        return;
-    }
     assert!(
         checked.status.success(),
         "greenspotter ruling-record --check: {}",

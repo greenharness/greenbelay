@@ -298,7 +298,7 @@ const ID_TWO: &str = "2222222222222222222222222222222222222222222222222222222222
 
 /// A fake `greenspotter` that records its arguments and prints `document`.
 #[cfg(unix)]
-fn fake_adr_lint(dir: &std::path::Path, document: &str) {
+fn fake_greenspotter(dir: &std::path::Path, document: &str) {
     use std::os::unix::fs::PermissionsExt;
     std::fs::write(dir.join("candidates.json"), document).unwrap();
     let path = dir.join("greenspotter");
@@ -342,11 +342,11 @@ fn brief_text(bin: &std::path::Path, repo: &std::path::Path) -> (Output, String)
 
 #[cfg(unix)]
 #[test]
-fn the_brief_carries_adr_lints_candidates_right_after_the_rules_line() {
+fn the_brief_carries_greenspotters_candidates_right_after_the_rules_line() {
     let bin = scratch("cand-two");
     fake_aval(&bin, BRIEF_AVAL);
     let document = two_candidates();
-    fake_adr_lint(&bin, &document);
+    fake_greenspotter(&bin, &document);
     let repo = two_commit_repo("cand-two-repo");
     let (out, brief) = brief_text(&bin, &repo);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
@@ -391,7 +391,7 @@ fn no_candidates_is_an_empty_block_and_no_ruling_is_needed() {
     let bin = scratch("cand-zero");
     fake_aval(&bin, BRIEF_AVAL);
     let document = r#"{"format":"greenspotter.candidates/1","base":"b","head":"h","candidates":[],"overflow":{}}"#;
-    fake_adr_lint(&bin, document);
+    fake_greenspotter(&bin, document);
     let repo = two_commit_repo("cand-zero-repo");
     let (out, brief) = brief_text(&bin, &repo);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
@@ -407,7 +407,7 @@ fn no_candidates_is_an_empty_block_and_no_ruling_is_needed() {
 
 #[cfg(unix)]
 #[test]
-fn a_missing_adr_lint_leaves_the_brief_with_an_unavailable_marker() {
+fn a_missing_greenspotter_leaves_the_brief_with_an_unavailable_marker() {
     let bin = scratch("cand-missing");
     fake_aval(&bin, BRIEF_AVAL);
     let repo = two_commit_repo("cand-missing-repo");
@@ -423,10 +423,10 @@ fn a_missing_adr_lint_leaves_the_brief_with_an_unavailable_marker() {
 
 #[cfg(unix)]
 #[test]
-fn a_wrong_format_token_or_a_failing_adr_lint_is_unavailable_too() {
+fn a_wrong_format_token_or_a_failing_greenspotter_is_unavailable_too() {
     let bin = scratch("cand-wrong");
     fake_aval(&bin, BRIEF_AVAL);
-    fake_adr_lint(
+    fake_greenspotter(
         &bin,
         r#"{"format":"greenspotter.candidates/2","candidates":[]}"#,
     );
@@ -455,7 +455,7 @@ fn a_wrong_format_token_or_a_failing_adr_lint_is_unavailable_too() {
 fn a_repository_without_a_corpus_gets_a_brief_without_rules() {
     let bin = scratch("no-corpus");
     fake_aval(&bin, "#!/bin/sh\nexit 1\n");
-    fake_adr_lint(
+    fake_greenspotter(
         &bin,
         r#"{"format":"greenspotter.candidates/1","base":"b","head":"h","candidates":[],"overflow":{}}"#,
     );

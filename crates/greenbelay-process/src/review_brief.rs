@@ -644,6 +644,10 @@ pub fn build(request: &BriefRequest) -> Result<Brief, BriefError> {
             "greenspotter's candidates are unavailable: {cause}"
         ));
     }
+    if std::env::var_os(greenbelay_guard::env_var!("ADR_LINT")).is_some_and(|v| !v.is_empty()) {
+        notices
+            .push("GREENBELAY_ADR_LINT is no longer read: set GREENBELAY_GREENSPOTTER".to_string());
+    }
     match &code_rules {
         Some((_, rules_text)) => {
             let index = aval(&repo, &["rules", "--level", "constraint"])?;
