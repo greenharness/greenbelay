@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v6.18.0
+
+greenbelay 6.18.0: `review-brief` runs `greentopo` (#339).
+
 - **Breaking: `review-brief` runs `greentopo`** (programme topo-spotter-rename
   t16). `GREENBELAY_GREENTOPO` names another program; `GREENBELAY_AVAL` is no
   longer read (no alias) and prints a retired notice. The brief and its errors
