@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v6.18.1
+
+greenbelay 6.18.1: advice and help text name greentopo and greenspotter (#341).
+
 - **Renamed: advice and help text say greentopo and greenspotter** (programme
   topo-spotter-rename t21). The `aval rule` and `aval relevant` lines the
   written-file rules print are now `greentopo rule` and `greentopo relevant`;
