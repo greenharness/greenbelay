@@ -1919,7 +1919,7 @@ struct CopyWorld {
     plan: PathBuf,
 }
 
-const COPY_AVAL: &str = "#!/bin/sh\ncase \"$*\" in\n  \"--json rules --level constraint --governs code --full\") printf '{\"rules\":[]}' ;;\n  *) exit 1 ;;\nesac\n";
+const COPY_GREENTOPO: &str = "#!/bin/sh\ncase \"$*\" in\n  \"--json rules --level constraint --governs code --full\") printf '{\"rules\":[]}' ;;\n  *) exit 1 ;;\nesac\n";
 const COPY_RULES: &str = "{\"rules\":[]}";
 
 #[cfg(unix)]
@@ -1949,7 +1949,7 @@ impl CopyWorld {
         .unwrap();
         git(&repo, &["commit", "-qam", "pin"]);
         std::fs::create_dir_all(w.root.join("bin")).unwrap();
-        script(&w.root.join("bin/aval"), COPY_AVAL);
+        script(&w.root.join("bin/greentopo"), COPY_GREENTOPO);
         let plan = w.plan("p.md", BODY, "repos=tool");
         let world = CopyWorld { w, repo, plan };
         world.register();
@@ -2034,7 +2034,7 @@ impl CopyWorld {
                 cmd.env("GREENBELAY_GH", gh);
             }
             None => {
-                // A PATH with git and the fake aval and no gh at all.
+                // A PATH with git and the fake greentopo and no gh at all.
                 let only = self.w.root.join("only-git");
                 std::fs::create_dir_all(&only).unwrap();
                 let git_path =
@@ -2042,9 +2042,12 @@ impl CopyWorld {
                         .unwrap();
                 let _ = std::fs::remove_file(only.join("git")); // a link from an earlier call; absence is the goal
                 std::os::unix::fs::symlink(git_path.trim(), only.join("git")).unwrap();
-                let _ = std::fs::remove_file(only.join("aval")); // same
-                std::os::unix::fs::symlink(self.w.root.join("bin/aval"), only.join("aval"))
-                    .unwrap();
+                let _ = std::fs::remove_file(only.join("greentopo")); // same
+                std::os::unix::fs::symlink(
+                    self.w.root.join("bin/greentopo"),
+                    only.join("greentopo"),
+                )
+                .unwrap();
                 cmd.env("PATH", &only);
             }
         }

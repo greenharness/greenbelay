@@ -1,6 +1,6 @@
 //! The implementation-review brief and the hash of the code rules it carries
 //! (decisions ADR-0043, ADR-0044, ADR-0065: a profile's brief carries its own
-//! judge rules and an id-and-title index of the rest). One function hashes the `aval` output
+//! judge rules and an id-and-title index of the rest). One function hashes the `greentopo` output
 //! ([`rules_sha`]); the brief, the CLI and the push check all call it.
 
 use greenbelay_guard::names::BIN;
@@ -18,7 +18,7 @@ pub const RULES_OPEN: &str = "<<<RULES sha=";
 const RULES_CLOSE: &str = ">>>";
 /// The full diff goes into the brief below this size.
 const FULL_DIFF_LIMIT_BYTES: usize = 60 * 1024;
-/// `aval` answers in well under a second; this bounds a hung one.
+/// `greentopo` answers in well under a second; this bounds a hung one.
 const AVAL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 const AVAL_POLL: std::time::Duration = std::time::Duration::from_millis(10);
 const PLANS_DIR: &str = "docs/plans";
@@ -32,11 +32,11 @@ const RULES_ARGS: [&str; 7] = [
     "--full",
 ];
 
-/// What `aval` could not do: it is not installed, or the command line and why
+/// What `greentopo` could not do: it is not installed, or the command line and why
 /// it failed.
 #[derive(Debug, PartialEq, Eq)]
 pub enum AvalFailed {
-    /// `GREENBELAY_AVAL` is unset and no PATH entry is named `aval` at all.
+    /// `GREENBELAY_GREENTOPO` is unset and no PATH entry is named `greentopo` at all.
     NotInstalled,
     Failed(String),
 }
@@ -44,7 +44,7 @@ pub enum AvalFailed {
 impl std::fmt::Display for AvalFailed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AvalFailed::NotInstalled => f.write_str("aval is not installed"),
+            AvalFailed::NotInstalled => f.write_str("greentopo is not installed"),
             AvalFailed::Failed(why) => f.write_str(why),
         }
     }
@@ -123,19 +123,27 @@ impl From<AvalFailed> for BriefError {
     }
 }
 
-/// What an `aval` call answered: how it exited and what it printed.
+/// What an `greentopo` call answered: how it exited and what it printed.
 pub(crate) struct AvalAnswer {
     pub(crate) status: std::process::ExitStatus,
     pub(crate) stdout: Vec<u8>,
     pub(crate) stderr: String,
 }
 
-/// The `aval` program to run: `GREENBELAY_AVAL` names another one (tests,
-/// or an `aval` outside PATH), else `aval` from PATH.
-fn aval_program() -> std::ffi::OsString {
-    std::env::var_os(greenbelay_guard::env_var!("AVAL"))
+/// The `greentopo` program to run: `GREENBELAY_GREENTOPO` names another one
+/// (tests, or a `greentopo` outside PATH), else `greentopo` from PATH.
+fn greentopo_program() -> std::ffi::OsString {
+    program_named(
+        std::env::var_os(greenbelay_guard::env_var!("GREENTOPO")),
+        "greentopo",
+    )
+}
+
+/// The override when it is set and non-empty, else the program's own name.
+fn program_named(override_value: Option<std::ffi::OsString>, name: &str) -> std::ffi::OsString {
+    override_value
         .filter(|program| !program.is_empty())
-        .unwrap_or_else(|| std::ffi::OsString::from("aval"))
+        .unwrap_or_else(|| std::ffi::OsString::from(name))
 }
 
 /// The `greenspotter` program to run: `GREENBELAY_GREENSPOTTER` names another one,
@@ -146,33 +154,52 @@ fn greenspotter_program() -> std::ffi::OsString {
         .unwrap_or_else(|| std::ffi::OsString::from("greenspotter"))
 }
 
-/// A notice when the retired `GREENBELAY_ADR_LINT` is still set: it is no
-/// longer read, so its value would otherwise be dropped without a word.
-fn retired_program_notice() -> Option<String> {
-    std::env::var_os(greenbelay_guard::env_var!("ADR_LINT"))
-        .filter(|program| !program.is_empty())
-        .map(|_| {
-            format!(
-                "{} is no longer read: set {}",
-                greenbelay_guard::env_var!("ADR_LINT"),
-                greenbelay_guard::env_var!("GREENSPOTTER")
-            )
-        })
+/// A notice for each retired variable (`GREENBELAY_ADR_LINT`,
+/// `GREENBELAY_AVAL`) still set: it is no longer read, so its value would
+/// otherwise be dropped without a word.
+fn retired_program_notice() -> Vec<String> {
+    retired_notices(
+        std::env::var_os(greenbelay_guard::env_var!("ADR_LINT")),
+        std::env::var_os(greenbelay_guard::env_var!("AVAL")),
+    )
 }
 
-/// True only when no PATH entry holds anything named `aval` (with the
+fn retired_notices(
+    adr_lint: Option<std::ffi::OsString>,
+    aval: Option<std::ffi::OsString>,
+) -> Vec<String> {
+    let set = |value: Option<std::ffi::OsString>| value.is_some_and(|program| !program.is_empty());
+    let mut notices = Vec::new();
+    if set(adr_lint) {
+        notices.push(format!(
+            "{} is no longer read: set {}",
+            greenbelay_guard::env_var!("ADR_LINT"),
+            greenbelay_guard::env_var!("GREENSPOTTER")
+        ));
+    }
+    if set(aval) {
+        notices.push(format!(
+            "{} is no longer read: set {}",
+            greenbelay_guard::env_var!("AVAL"),
+            greenbelay_guard::env_var!("GREENTOPO")
+        ));
+    }
+    notices
+}
+
+/// True only when no PATH entry holds anything named `greentopo` (with the
 /// platform's executable suffixes). A non-executable file, a dangling symlink
 /// or a lookup that fails for another reason is a candidate, not absence: the
 /// spawn then says what is wrong.
-fn no_aval_on_path() -> bool {
-    let mut names = vec![std::ffi::OsString::from("aval")];
+fn no_greentopo_on_path() -> bool {
+    let mut names = vec![std::ffi::OsString::from("greentopo")];
     if cfg!(windows) {
         let suffixes = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
         names.extend(
             suffixes
                 .split(';')
                 .filter(|suffix| !suffix.is_empty())
-                .map(|suffix| std::ffi::OsString::from(format!("aval{suffix}"))),
+                .map(|suffix| std::ffi::OsString::from(format!("greentopo{suffix}"))),
         );
     }
     let path = std::env::var_os("PATH").unwrap_or_default();
@@ -186,15 +213,16 @@ fn no_aval_on_path() -> bool {
     })
 }
 
-/// Runs `aval` with a deadline: a hung `aval` is killed and reported, so the
+/// Runs `greentopo` with a deadline: a hung `greentopo` is killed and reported, so the
 /// push check that calls it never waits on it for long.
 fn run_aval(dir: &Path, args: &[&str]) -> Result<AvalAnswer, AvalFailed> {
-    if std::env::var_os(greenbelay_guard::env_var!("AVAL")).is_none_or(|program| program.is_empty())
-        && no_aval_on_path()
+    if std::env::var_os(greenbelay_guard::env_var!("GREENTOPO"))
+        .is_none_or(|program| program.is_empty())
+        && no_greentopo_on_path()
     {
         return Err(AvalFailed::NotInstalled);
     }
-    run_bounded(&aval_program(), "aval", dir, args)
+    run_bounded(&greentopo_program(), "greentopo", dir, args)
 }
 
 /// Runs a program with stdin from /dev/null and a deadline; `name` is how
@@ -287,7 +315,7 @@ pub(crate) fn run_bounded_for(
 fn aval(dir: &Path, args: &[&str]) -> Result<Vec<u8>, AvalFailed> {
     let answer = run_aval(dir, args)?;
     if !answer.status.success() {
-        let line = format!("aval {}", args.join(" "));
+        let line = format!("greentopo {}", args.join(" "));
         let said = if answer.stderr.is_empty() {
             String::new()
         } else {
@@ -301,7 +329,7 @@ fn aval(dir: &Path, args: &[&str]) -> Result<Vec<u8>, AvalFailed> {
     Ok(answer.stdout)
 }
 
-/// The code rules as `aval` printed them, and the hash of exactly those bytes.
+/// The code rules as `greentopo` printed them, and the hash of exactly those bytes.
 pub struct Rules {
     pub json: Vec<u8>,
     pub sha: String,
@@ -320,7 +348,7 @@ pub fn sha_of(bytes: &[u8]) -> String {
     hex(&sha256(bytes))
 }
 
-/// The hash of the code rules `aval` reports for the repository at `dir`.
+/// The hash of the code rules `greentopo` reports for the repository at `dir`.
 /// The only implementation: the brief, `rules-sha` and the push check call it.
 pub fn rules_sha(dir: &Path) -> Result<String, AvalFailed> {
     rules(dir).map(|rules| rules.sha)
@@ -391,11 +419,11 @@ pub fn section(text: &str, heading: &str) -> Option<String> {
 /// Each rule as `## <id> [<level>]`, its statement, its body.
 pub fn render_rules(json: &[u8]) -> Result<String, String> {
     let document: serde_json::Value =
-        serde_json::from_slice(json).map_err(|e| format!("aval rules is not JSON: {e}"))?;
+        serde_json::from_slice(json).map_err(|e| format!("greentopo rules is not JSON: {e}"))?;
     let rules = document
         .get("rules")
         .and_then(serde_json::Value::as_array)
-        .ok_or("aval rules has no `rules` array")?;
+        .ok_or("greentopo rules has no `rules` array")?;
     // A rule the reviewer is bound to must have its text: a missing field is
     // an aval defect, never an empty rule.
     let text = |rule: &serde_json::Value, field: &str| -> Result<String, String> {
@@ -407,7 +435,7 @@ pub fn render_rules(json: &[u8]) -> Result<String, String> {
                     .get("id")
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("<no id>");
-                format!("aval rules: rule `{id}` has no string `{field}`")
+                format!("greentopo rules: rule `{id}` has no string `{field}`")
             })
     };
     let rendered = rules
@@ -426,7 +454,7 @@ pub fn render_rules(json: &[u8]) -> Result<String, String> {
     Ok(rendered.join("\n"))
 }
 
-/// The `.adr.yaml` that marks a repository with an aval corpus.
+/// The `.adr.yaml` that marks a repository with a greentopo corpus.
 const CORPUS_FILE: &str = ".adr.yaml";
 
 /// The candidates section and block for the brief: what greenspotter printed, or
@@ -673,8 +701,8 @@ pub fn build(request: &BriefRequest) -> Result<Brief, BriefError> {
                     brief.push_str(&format!(
                         "# Constraint rules (index)\n\n\
                          The other constraints, by id and title. Implementation-review \
-                         reads every code rule in full. Fetch one with the `aval_rule` \
-                         tool or `aval rule <id>` only when your review needs it.\n\n{}\n\n",
+                         reads every code rule in full. Fetch one with the `greentopo_rule` \
+                         tool or `greentopo rule <id>` only when your review needs it.\n\n{}\n\n",
                         constraint_index(&index)
                     ));
                 }
@@ -690,25 +718,25 @@ pub fn build(request: &BriefRequest) -> Result<Brief, BriefError> {
         None if aval_missing => {
             if let Some(profile) = &request.profile {
                 brief.push_str(&format!(
-                    "## Judge rules for {profile}\n\nNot read: aval is not installed.\n\n"
+                    "## Judge rules for {profile}\n\nNot read: greentopo is not installed.\n\n"
                 ));
             }
             brief.push_str(
-                "# Code rules\n\nThis repository has an aval corpus (.adr.yaml), but aval is not installed, so its decided code rules were not read. Review against the plan; do not treat the code as unconstrained.\n",
+                "# Code rules\n\nThis repository has a greentopo corpus (.adr.yaml), but greentopo is not installed, so its decided code rules were not read. Review against the plan; do not treat the code as unconstrained.\n",
             );
             notices.push(format!(
-                "{} has {CORPUS_FILE} but aval is not installed: the brief carries no decided code rules; install it (brew install fredericrous/tap/aval) or set GREENBELAY_AVAL",
+                "{} has {CORPUS_FILE} but greentopo is not installed: the brief carries no decided code rules; install it (brew install fredericrous/tap/greentopo) or set GREENBELAY_GREENTOPO",
                 repo.display()
             ));
         }
         None => {
             if let Some(profile) = &request.profile {
                 brief.push_str(&format!(
-                    "## Judge rules for {profile}\n\nNone: this repository has no aval corpus.\n\n"
+                    "## Judge rules for {profile}\n\nNone: this repository has no greentopo corpus.\n\n"
                 ));
             }
             brief.push_str(&format!(
-                "# Code rules\n\nThis repository has no aval corpus (no {CORPUS_FILE}), so no decided code rules apply.\n"
+                "# Code rules\n\nThis repository has no greentopo corpus (no {CORPUS_FILE}), so no decided code rules apply.\n"
             ));
             notices.push(format!(
                 "{} has no {CORPUS_FILE}: the brief carries no decided code rules",
@@ -860,7 +888,7 @@ fn plan_of(
     Ok((label, Some(text)))
 }
 
-/// `aval relevant` for every changed file, each key resolved.
+/// `greentopo relevant` for every changed file, each key resolved.
 fn decisions(repo: &Path, range: &str) -> Result<String, BriefError> {
     let changed = git::stdout_in(repo, &["diff", "--name-only", range])
         .ok_or_else(|| BriefError::Repository(format!("`git diff --name-only {range}` failed")))?;
@@ -873,7 +901,7 @@ fn decisions(repo: &Path, range: &str) -> Result<String, BriefError> {
     let relevant = aval(repo, &args)?;
     let relevance: serde_json::Value = serde_json::from_slice(&relevant).map_err(|e| {
         BriefError::Aval(AvalFailed::Failed(format!(
-            "`aval --json relevant` printed output that is not JSON: {e}"
+            "`greentopo --json relevant` printed output that is not JSON: {e}"
         )))
     })?;
     // Only an empty `keys` array means no decision applies; a missing one is an aval defect.
@@ -882,7 +910,7 @@ fn decisions(repo: &Path, range: &str) -> Result<String, BriefError> {
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| {
             BriefError::Aval(AvalFailed::Failed(
-                "`aval --json relevant` printed no `keys` array".to_string(),
+                "`greentopo --json relevant` printed no `keys` array".to_string(),
             ))
         })?;
     let mut keys: Vec<String> = Vec::with_capacity(rows.len());
@@ -892,7 +920,7 @@ fn decisions(repo: &Path, range: &str) -> Result<String, BriefError> {
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| {
                 BriefError::Aval(AvalFailed::Failed(format!(
-                    "`aval --json relevant` row {index} of `keys` has no string `key`"
+                    "`greentopo --json relevant` row {index} of `keys` has no string `key`"
                 )))
             })?;
         keys.push(key.to_string());
@@ -908,7 +936,7 @@ fn decisions(repo: &Path, range: &str) -> Result<String, BriefError> {
                 .next()
                 .unwrap_or("nothing on stderr");
             return Err(BriefError::Aval(AvalFailed::Failed(format!(
-                "`aval resolve {key}` printed nothing ({}): {said}",
+                "`greentopo resolve {key}` printed nothing ({}): {said}",
                 resolved.status
             ))));
         }
