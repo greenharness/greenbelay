@@ -1298,7 +1298,7 @@ mod tests {
         assert_eq!(kind("Bash", "git commit -m x"), "check-git-hook");
         assert_eq!(kind("Bash", "git status"), "git");
         assert_eq!(kind("Bash", "ls"), "shell");
-        assert_eq!(kind("mcp__aval__aval_rule", ""), "mcp");
+        assert_eq!(kind("mcp__greentopo__greentopo_rule", ""), "mcp");
         assert_eq!(kind("Read", ""), "read");
         let names: HashSet<&str> = Kind::ALL.iter().map(|k| k.as_str()).collect();
         assert_eq!(names.len(), Kind::ALL.len(), "every kind has its own name");

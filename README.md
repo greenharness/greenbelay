@@ -95,7 +95,7 @@ without a ticket record is not found. [More](docs/owners.md).
 
 ## Runs alone
 
-`aval`, `greenspotter`, `amont` and `gh` are optional. Without `aval`, `review-brief`
+`greentopo`, `greenspotter`, `amont` and `gh` are optional. Without `greentopo`, `review-brief`
 prints the brief with a section saying the decided code rules were not read
 and exits 0 (`rules-sha` still exits 3, and the push check journals the
 rules as unknown). Without `greenspotter`, the brief marks its candidates

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Renamed: advice and help text say greentopo and greenspotter** (programme
+  topo-spotter-rename t21). The `aval rule` and `aval relevant` lines the
+  written-file rules print are now `greentopo rule` and `greentopo relevant`;
+  `rules-sha`, `review-brief` and the `review-brief` errors name greentopo.
+  The retired `GREENBELAY_ADR_LINT` and `GREENBELAY_AVAL` variables still print
+  their notice and are not read. Repository config moves to greentopo 2.0.0,
+  greenspotter 0.20.1 and `greenspotter.toml`.
+
 ## v6.18.0
 
 greenbelay 6.18.0: `review-brief` runs `greentopo` (#339).

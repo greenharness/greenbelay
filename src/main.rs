@@ -171,7 +171,7 @@ usage: ",
   block sha [-C <dir>] [--base <ref>]
                         the fingerprint of the branch's change, as a copy of
                         a reviewed block is recognised by
-  rules-sha [-C <dir>]  the sha256 of the code rules `aval` reports, as an
+  rules-sha [-C <dir>]  the sha256 of the code rules `greentopo` reports, as an
                         implementation-review brief binds them
   review-brief [-C <dir>] [--plan <path>] [--base <ref>]
                         the implementation-review brief: tree and rules
@@ -2813,11 +2813,11 @@ usage: ",
     " rules-sha [-C <dir>]
 
 The lowercase sha256 hex of the stdout of
-`aval --json rules --level constraint --governs code --full`, run in <dir>
+`greentopo --json rules --level constraint --governs code --full`, run in <dir>
 (default: the current directory). An implementation-review brief carries it
 as <<<RULES sha=<64 hex>>>>; the push check compares it.
 
-Prints one line on stdout. Exit 0; 3 when aval is missing or fails (the
+Prints one line on stdout. Exit 0; 3 when greentopo is missing or fails (the
 command on stderr, nothing on stdout); 2 on a usage error.
 "
 );
@@ -2864,7 +2864,7 @@ answer, the block is <<<CANDIDATES unavailable>>> and the brief goes on.
                   the branch read another head, or what changed is 60 KB or more; it
                   is never cut.
 
-Exit 0; 1 when the repository or its base cannot be read; 3 when aval is missing or fails (nothing on
+Exit 0; 1 when the repository or its base cannot be read; 3 when greentopo is missing or fails (nothing on
 stdout); 2 on a usage error.
 ");
 
@@ -3026,7 +3026,7 @@ fn run_review_brief(args: &[OsString]) -> ExitCode {
             print!("{}", brief.text);
             ExitCode::SUCCESS
         }
-        Err(review_brief::BriefError::Aval(why)) => {
+        Err(review_brief::BriefError::Greentopo(why)) => {
             eprintln!("{BIN}: {why}");
             ExitCode::from(3)
         }

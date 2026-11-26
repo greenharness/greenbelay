@@ -92,6 +92,6 @@ greenbelay/plans: 1 open plan in docs/plans/ (read one on demand; they are histo
 
 Closed plans (`done`, `abandoned`, `imported`) print nothing. A plan with no
 `status`, or one outside that list, is reported: nothing else reads plan
-front matter, `aval check` included. Nothing from a plan's body beyond those
+front matter, `greentopo check` included. Nothing from a plan's body beyond those
 two lines is loaded — an old plan is history, and loading it into every
 session would compete with the instructions that are current.

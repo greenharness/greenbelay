@@ -18,7 +18,7 @@ Its prompt carries, in order: the review block, `Round 1.` or `Delta.`, a
 brief the session builds once, and its output contract. The brief is the
 landed plan's path and Verification section, the diff against the default
 branch without `docs/plans/` (its stat when it is large), the repository's
-active constraints (`aval rules --level constraint`), and the plan's
+active constraints (`greentopo rules --level constraint`), and the plan's
 Non-goals. It checks plan conformance, that every recorded verification is
 an observable check, violated constraints (rule id and `file:line`), tests
 that cannot fail, and scope past the phases or the Non-goals.
@@ -266,7 +266,7 @@ excerpt is `tree=<12 hex> review=<rules-current|rules-missing|rules-stale|rules-
 `rules-current` when the review read the rules as they are now (the count the
 rollout reads before the check may deny), `rules-missing` when its prompt had
 no rules line, `rules-stale` when the rules changed since, `rules-unknown`
-when the pass predates the stored sha or `aval` could not answer.
+when the pass predates the stored sha or `greentopo` could not answer.
 
 A third line, `candidates-checked`, records what the review did with the
 candidates greenspotter listed. Its excerpt is `tree=<12 hex> review=<...>`:
@@ -323,13 +323,13 @@ A repository with no `.adr.yaml` gets a brief with no RULES line and a
 `# Code rules` section saying that no decided code rules apply (stderr says
 so in one line); `rules-sha` there still exits 3.
 A repository with `.adr.yaml` where greentopo is not installed (`GREENBELAY_GREENTOPO`
-unset and no `aval` on PATH, not even a non-executable file or a dangling
+unset and no `greentopo` on PATH, not even a non-executable file or a dangling
 symlink) also gets the brief, with no RULES line and a `# Code rules` section
 saying the decided code rules were not read; stderr says so in one line. The
-`review-brief` exit codes: 0 the brief was printed (aval not installed
-included), 1 a repository error, 3 an installed aval failed or
+`review-brief` exit codes: 0 the brief was printed (greentopo not installed
+included), 1 a repository error, 3 an installed greentopo failed or
 `GREENBELAY_GREENTOPO` points nowhere. A row of `greentopo relevant`
-without a string `key` is an aval error (exit 3) naming the row.
+without a string `key` is an greentopo error (exit 3) naming the row.
 
 Away from a push: `overruled`, `answered`, `unbound`, `unknown`,
 `prefilled`, `unrecorded` for the marked question, and `denied` for a

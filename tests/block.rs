@@ -81,7 +81,7 @@ fn crlf_another_indent_and_trailing_blanks_still_match() {
 fn a_pin_changed_as_context_does_not_count() {
     let with_pin = |pin: &str| {
         format!(
-            "diff --git a/ci.yaml b/ci.yaml\n--- a/ci.yaml\n+++ b/ci.yaml\n@@ -3,3 +3,4 @@ env:\n   AVAL_VERSION: {pin}\n+  step: one\n   other: x\n"
+            "diff --git a/ci.yaml b/ci.yaml\n--- a/ci.yaml\n+++ b/ci.yaml\n@@ -3,3 +3,4 @@ env:\n   GREENTOPO_VERSION: {pin}\n+  step: one\n   other: x\n"
         )
     };
     assert_eq!(

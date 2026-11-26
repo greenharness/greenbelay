@@ -647,7 +647,7 @@ fn an_greentopo_with_a_missing_interpreter_exits_3() {
 
 /// An `greentopo` whose code rules carry `Reviewed by:` lines.
 #[cfg(unix)]
-const PROFILE_AVAL: &str = r#"#!/bin/sh
+const PROFILE_GREENTOPO: &str = r#"#!/bin/sh
 case "$*" in
   "--json rules --level constraint --governs code --full")
     printf '%s' '{"rules":[{"id":"cli.unix-only","level":"constraint","statement":"S1.","body":"UNIX-RULE-TEXT\n\n**Checked by:** judge.\n\n**Reviewed by:** unix, tui.","active":true},{"id":"errors.backend-only","level":"constraint","statement":"S2.","body":"BACKEND-RULE-TEXT\n\n**Checked by:** judge.\n\n**Reviewed by:** backend.","active":true},{"id":"types.mixed","level":"constraint","statement":"S3.","body":"MIXED-RULE-TEXT\n\n**Checked by:** exact (a lint), judge (the rest).\n\n**Reviewed by:** unix.","active":true},{"id":"errors.typed","level":"constraint","statement":"S4.","body":"LANGUAGE-RULE-TEXT\n\n**Checked by:** judge.\n\n**Reviewed by:** language.","active":true}]}' ;;
@@ -681,7 +681,7 @@ fn profile_brief(name: &str, profile: &str, greentopo: &str) -> (Output, String)
 #[cfg(unix)]
 #[test]
 fn a_unix_profile_holds_the_judge_rules_unix_reviews() {
-    let (out, brief) = profile_brief("profile-unix", "unix", PROFILE_AVAL);
+    let (out, brief) = profile_brief("profile-unix", "unix", PROFILE_GREENTOPO);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert!(brief.contains("## Judge rules for unix"), "{brief}");
     assert!(brief.contains("Profile: unix\n"), "{brief}");
@@ -698,7 +698,7 @@ fn a_unix_profile_holds_the_judge_rules_unix_reviews() {
 #[cfg(unix)]
 #[test]
 fn a_profile_brief_carries_its_rules_and_an_id_index_only() {
-    let (out, brief) = profile_brief("profile-slim", "unix", PROFILE_AVAL);
+    let (out, brief) = profile_brief("profile-slim", "unix", PROFILE_GREENTOPO);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert!(!brief.contains("# Code rules (in full)"), "{brief}");
     assert!(!brief.contains("BACKEND-RULE-TEXT"), "{brief}");
@@ -710,7 +710,7 @@ fn a_profile_brief_carries_its_rules_and_an_id_index_only() {
         "the RULES line stays: {brief}"
     );
     let bin = scratch("profile-slim-ir");
-    fake_greentopo(&bin, PROFILE_AVAL);
+    fake_greentopo(&bin, PROFILE_GREENTOPO);
     let repo = two_commit_repo("profile-slim-ir-repo");
     let (_, full) = brief_text(&bin, &repo);
     assert!(full.contains("# Code rules (in full)"), "{full}");
@@ -720,7 +720,7 @@ fn a_profile_brief_carries_its_rules_and_an_id_index_only() {
 #[cfg(unix)]
 #[test]
 fn a_lang_profile_holds_the_language_rules() {
-    let (out, brief) = profile_brief("profile-lang", "lang:rust", PROFILE_AVAL);
+    let (out, brief) = profile_brief("profile-lang", "lang:rust", PROFILE_GREENTOPO);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert!(brief.contains("## Judge rules for lang:rust"), "{brief}");
     let judge = &brief[brief.find("## Judge rules for lang:rust").unwrap()..];
@@ -730,7 +730,8 @@ fn a_lang_profile_holds_the_language_rules() {
 #[cfg(unix)]
 #[test]
 fn an_unknown_reviewed_by_name_exits_1_and_an_unknown_profile_exits_2() {
-    let greentopo = PROFILE_AVAL.replace("**Reviewed by:** backend.", "**Reviewed by:** wizard.");
+    let greentopo =
+        PROFILE_GREENTOPO.replace("**Reviewed by:** backend.", "**Reviewed by:** wizard.");
     let (out, _) = profile_brief("profile-bad-name", "unix", &greentopo);
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     assert!(out.stdout.is_empty(), "{out:?}");
@@ -739,7 +740,7 @@ fn an_unknown_reviewed_by_name_exits_1_and_an_unknown_profile_exits_2() {
         err.contains("errors.backend-only") && err.contains("wizard"),
         "{err}"
     );
-    let (out, _) = profile_brief("profile-unknown", "wizard", PROFILE_AVAL);
+    let (out, _) = profile_brief("profile-unknown", "wizard", PROFILE_GREENTOPO);
     assert_eq!(out.status.code(), Some(2), "{out:?}");
 }
 
@@ -751,7 +752,7 @@ fn an_unknown_reviewed_by_name_fails_the_brief_without_a_profile() {
     let bin = scratch("generic-bad-name");
     fake_greentopo(
         &bin,
-        &PROFILE_AVAL.replace("**Reviewed by:** backend.", "**Reviewed by:** wizard."),
+        &PROFILE_GREENTOPO.replace("**Reviewed by:** backend.", "**Reviewed by:** wizard."),
     );
     let repo = two_commit_repo("generic-bad-name-repo");
     let out = run(
@@ -777,7 +778,7 @@ fn an_unknown_reviewed_by_name_fails_the_brief_without_a_profile() {
 #[cfg(unix)]
 #[test]
 fn a_profile_brief_carries_no_candidates() {
-    let (out, brief) = profile_brief("profile-no-candidates", "unix", PROFILE_AVAL);
+    let (out, brief) = profile_brief("profile-no-candidates", "unix", PROFILE_GREENTOPO);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert!(!brief.contains("<<<CANDIDATES"), "{brief}");
     assert!(!brief.contains("## Candidates"), "{brief}");

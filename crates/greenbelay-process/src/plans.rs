@@ -8,7 +8,7 @@
 //! every session competes with the instructions that are current
 //! (`work.plans-are-not-context`).
 //!
-//! `aval check` does not read `docs/plans/`, so this is also the one place a
+//! `greentopo check` does not read `docs/plans/`, so this is also the one place a
 //! malformed `status` is noticed.
 
 use std::path::Path;
