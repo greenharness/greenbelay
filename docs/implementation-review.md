@@ -322,13 +322,13 @@ validates the file.
 A repository with no `.adr.yaml` gets a brief with no RULES line and a
 `# Code rules` section saying that no decided code rules apply (stderr says
 so in one line); `rules-sha` there still exits 3.
-A repository with `.adr.yaml` where aval is not installed (`GREENBELAY_AVAL`
+A repository with `.adr.yaml` where greentopo is not installed (`GREENBELAY_GREENTOPO`
 unset and no `aval` on PATH, not even a non-executable file or a dangling
 symlink) also gets the brief, with no RULES line and a `# Code rules` section
 saying the decided code rules were not read; stderr says so in one line. The
 `review-brief` exit codes: 0 the brief was printed (aval not installed
 included), 1 a repository error, 3 an installed aval failed or
-`GREENBELAY_AVAL` points nowhere. A row of `aval relevant`
+`GREENBELAY_GREENTOPO` points nowhere. A row of `greentopo relevant`
 without a string `key` is an aval error (exit 3) naming the row.
 
 Away from a push: `overruled`, `answered`, `unbound`, `unknown`,

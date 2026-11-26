@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Breaking: `review-brief` runs `greentopo`** (programme topo-spotter-rename
+  t16). `GREENBELAY_GREENTOPO` names another program; `GREENBELAY_AVAL` is no
+  longer read (no alias) and prints a retired notice. The brief and its errors
+  say greentopo (`greentopo_rule`, `greentopo rule <id>`, "greentopo is not
+  installed").
+
 ## v6.17.0
 
 greenbelay 6.17.0: the write-time hook runs `greenspotter` (`docs/plans/2026-11-25-write-hook-spawns-greenspotter.md`, #337).

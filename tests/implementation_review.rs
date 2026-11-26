@@ -79,9 +79,9 @@ impl World {
             root,
             ids: std::cell::Cell::new(0),
         };
-        // No test runs the machine's own `aval`: a fake prints `abc` always,
-        // on every platform, and `bin` names it through `GREENBELAY_AVAL`.
-        world.fake_aval("abc");
+        // No test runs the machine's own `greentopo`: a fake prints `abc` always,
+        // on every platform, and `bin` names it through `GREENBELAY_GREENTOPO`.
+        world.fake_greentopo("abc");
         world
     }
 
@@ -133,13 +133,13 @@ impl World {
 
     fn bin(&self) -> Command {
         let mut c = greenbelay_command();
-        // The fakes (`aval`, and `amont` or `git` where a test installs
+        // The fakes (`greentopo`, and `amont` or `git` where a test installs
         // them) come first on PATH.
         let path = std::env::var_os("PATH").unwrap_or_default();
         let mut dirs = vec![self.root.join("bin")];
         dirs.extend(std::env::split_paths(&path));
         c.env("PATH", std::env::join_paths(dirs).unwrap());
-        c.env("GREENBELAY_AVAL", self.aval_path());
+        c.env("GREENBELAY_GREENTOPO", self.greentopo_path());
         c.env_remove("GREENBELAY_PLAN_ROOT");
         c.env("CLAUDE_CONFIG_DIR", self.root.join("claude"))
             .env_remove("XDG_STATE_HOME")
@@ -149,17 +149,21 @@ impl World {
         c
     }
 
-    /// Where the fake `aval` is: a `#!/bin/sh` script on unix, a batch file
-    /// on Windows. `bin` passes the path in `GREENBELAY_AVAL`, because
-    /// Windows finds only `aval.exe` on PATH, never a script.
-    fn aval_path(&self) -> PathBuf {
-        let name = if cfg!(windows) { "aval.bat" } else { "aval" };
+    /// Where the fake `greentopo` is: a `#!/bin/sh` script on unix, a batch file
+    /// on Windows. `bin` passes the path in `GREENBELAY_GREENTOPO`, because
+    /// Windows finds only `greentopo.exe` on PATH, never a script.
+    fn greentopo_path(&self) -> PathBuf {
+        let name = if cfg!(windows) {
+            "greentopo.bat"
+        } else {
+            "greentopo"
+        };
         self.root.join("bin").join(name)
     }
 
-    /// An `aval` that prints `stdout` whatever it is asked.
-    fn fake_aval(&self, stdout: &str) {
-        let path = self.aval_path();
+    /// An `greentopo` that prints `stdout` whatever it is asked.
+    fn fake_greentopo(&self, stdout: &str) {
+        let path = self.greentopo_path();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         #[cfg(unix)]
         {
@@ -404,7 +408,7 @@ printf '{"branch":"%s","remote":"origin","push_url":"u","pushed":"%s","dst":"ref
     }
 
     /// The review block and the rules line a brief carries; the rules line
-    /// matches what the fake `aval` prints.
+    /// matches what the fake `greentopo` prints.
     fn block(&self, dir: &Path) -> String {
         format!("{}\n<<<RULES sha={ABC_SHA}>>>", self.block_only(dir))
     }
@@ -2235,7 +2239,7 @@ fn only_the_hook_writes_a_provenance_record() {
     assert!(matches!(said, Said::Silent), "{said:?}");
 }
 
-/// The sha256 of the bytes `abc`, which the fake `aval` prints.
+/// The sha256 of the bytes `abc`, which the fake `greentopo` prints.
 const ABC_SHA: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 
 /// Pushes a reviewed tree whose reviewer prompt is `block` plus `extra`, and
@@ -4455,7 +4459,7 @@ fn a_copy_of_an_unregistered_block_is_a_miss() {
 fn a_copy_after_a_rules_change_is_a_miss() {
     let (w, _, copy) = registered_pilot("copy-rules");
     pin_passed(&w, &copy);
-    w.fake_aval("another");
+    w.fake_greentopo("another");
     denied_with(
         push_copy(&w, &copy, "s2"),
         "rules changed since registration",

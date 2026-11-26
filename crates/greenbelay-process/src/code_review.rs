@@ -604,15 +604,15 @@ fn names_role(name: &str, role: &str) -> bool {
 }
 
 /// Every active rule's text whose checks are all `judge` and whose
-/// `Reviewed by:` names `role`, from the `aval rules` JSON. A name outside
+/// `Reviewed by:` names `role`, from the `greentopo rules` JSON. A name outside
 /// [`REVIEWER_NAMES`] is an error naming the rule.
 fn judge_rules(json: &[u8], role: &str) -> Result<Vec<String>, String> {
     let document: serde_json::Value =
-        serde_json::from_slice(json).map_err(|e| format!("aval rules is not JSON: {e}"))?;
+        serde_json::from_slice(json).map_err(|e| format!("greentopo rules is not JSON: {e}"))?;
     let rules = document
         .get("rules")
         .and_then(serde_json::Value::as_array)
-        .ok_or("aval rules has no `rules` array")?;
+        .ok_or("greentopo rules has no `rules` array")?;
     let mut out = Vec::new();
     for rule in rules {
         if rule.get("active").and_then(serde_json::Value::as_bool) == Some(false) {
