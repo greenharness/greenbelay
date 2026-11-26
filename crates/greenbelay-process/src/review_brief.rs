@@ -19,8 +19,8 @@ const RULES_CLOSE: &str = ">>>";
 /// The full diff goes into the brief below this size.
 const FULL_DIFF_LIMIT_BYTES: usize = 60 * 1024;
 /// `greentopo` answers in well under a second; this bounds a hung one.
-const AVAL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
-const AVAL_POLL: std::time::Duration = std::time::Duration::from_millis(10);
+const GREENTOPO_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+const GREENTOPO_POLL: std::time::Duration = std::time::Duration::from_millis(10);
 const PLANS_DIR: &str = "docs/plans";
 const RULES_ARGS: [&str; 7] = [
     "--json",
@@ -35,17 +35,17 @@ const RULES_ARGS: [&str; 7] = [
 /// What `greentopo` could not do: it is not installed, or the command line and why
 /// it failed.
 #[derive(Debug, PartialEq, Eq)]
-pub enum AvalFailed {
+pub enum GreentopoFailed {
     /// `GREENBELAY_GREENTOPO` is unset and no PATH entry is named `greentopo` at all.
     NotInstalled,
     Failed(String),
 }
 
-impl std::fmt::Display for AvalFailed {
+impl std::fmt::Display for GreentopoFailed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AvalFailed::NotInstalled => f.write_str("greentopo is not installed"),
-            AvalFailed::Failed(why) => f.write_str(why),
+            GreentopoFailed::NotInstalled => f.write_str("greentopo is not installed"),
+            GreentopoFailed::Failed(why) => f.write_str(why),
         }
     }
 }
@@ -53,7 +53,7 @@ impl std::fmt::Display for AvalFailed {
 /// Why a brief could not be built.
 #[derive(Debug, PartialEq, Eq)]
 pub enum BriefError {
-    Aval(AvalFailed),
+    Greentopo(GreentopoFailed),
     Repository(String),
     /// A delta brief was refused: the full brief is the answer.
     DeltaRefused(DeltaRefusal),
@@ -62,7 +62,7 @@ pub enum BriefError {
 impl std::fmt::Display for BriefError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BriefError::Aval(why) => why.fmt(f),
+            BriefError::Greentopo(why) => why.fmt(f),
             BriefError::Repository(why) => f.write_str(why),
             BriefError::DeltaRefused(why) => why.fmt(f),
         }
@@ -117,14 +117,14 @@ impl std::fmt::Display for DeltaRefusal {
     }
 }
 
-impl From<AvalFailed> for BriefError {
-    fn from(why: AvalFailed) -> Self {
-        BriefError::Aval(why)
+impl From<GreentopoFailed> for BriefError {
+    fn from(why: GreentopoFailed) -> Self {
+        BriefError::Greentopo(why)
     }
 }
 
-/// What an `greentopo` call answered: how it exited and what it printed.
-pub(crate) struct AvalAnswer {
+/// What a `greentopo` call answered: how it exited and what it printed.
+pub(crate) struct GreentopoAnswer {
     pub(crate) status: std::process::ExitStatus,
     pub(crate) stdout: Vec<u8>,
     pub(crate) stderr: String,
@@ -215,12 +215,12 @@ fn no_greentopo_on_path() -> bool {
 
 /// Runs `greentopo` with a deadline: a hung `greentopo` is killed and reported, so the
 /// push check that calls it never waits on it for long.
-fn run_aval(dir: &Path, args: &[&str]) -> Result<AvalAnswer, AvalFailed> {
+fn run_greentopo(dir: &Path, args: &[&str]) -> Result<GreentopoAnswer, GreentopoFailed> {
     if std::env::var_os(greenbelay_guard::env_var!("GREENTOPO"))
         .is_none_or(|program| program.is_empty())
         && no_greentopo_on_path()
     {
-        return Err(AvalFailed::NotInstalled);
+        return Err(GreentopoFailed::NotInstalled);
     }
     run_bounded(&greentopo_program(), "greentopo", dir, args)
 }
@@ -232,8 +232,8 @@ fn run_bounded(
     name: &str,
     dir: &Path,
     args: &[&str],
-) -> Result<AvalAnswer, AvalFailed> {
-    run_bounded_for(program, name, dir, args, &[], AVAL_DEADLINE)
+) -> Result<GreentopoAnswer, GreentopoFailed> {
+    run_bounded_for(program, name, dir, args, &[], GREENTOPO_DEADLINE)
 }
 
 /// [`run_bounded`] with the caller's own deadline and extra child environment.
@@ -244,7 +244,7 @@ pub(crate) fn run_bounded_for(
     args: &[&str],
     envs: &[(&str, &str)],
     limit: std::time::Duration,
-) -> Result<AvalAnswer, AvalFailed> {
+) -> Result<GreentopoAnswer, GreentopoFailed> {
     use std::io::Read;
     let line = format!("{name} {}", args.join(" "));
     let mut child = Command::new(program)
@@ -255,20 +255,20 @@ pub(crate) fn run_bounded_for(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| AvalFailed::Failed(format!("`{line}` could not run: {e}")))?;
+        .map_err(|e| GreentopoFailed::Failed(format!("`{line}` could not run: {e}")))?;
     let mut pipe = child
         .stdout
         .take()
-        .ok_or_else(|| AvalFailed::Failed(format!("`{line}` has no stdout")))?;
+        .ok_or_else(|| GreentopoFailed::Failed(format!("`{line}` has no stdout")))?;
     let reader = std::thread::spawn(move || {
         let mut printed = Vec::new();
         pipe.read_to_end(&mut printed).map(|_| printed)
     });
-    // stderr on its own thread too: a full pipe would otherwise stall aval.
+    // stderr on its own thread too: a full pipe would otherwise stall greentopo.
     let mut err_pipe = child
         .stderr
         .take()
-        .ok_or_else(|| AvalFailed::Failed(format!("`{line}` has no stderr")))?;
+        .ok_or_else(|| GreentopoFailed::Failed(format!("`{line}` has no stderr")))?;
     let err_reader = std::thread::spawn(move || {
         let mut said = Vec::new();
         err_pipe.read_to_end(&mut said).map(|_| said)
@@ -278,17 +278,17 @@ pub(crate) fn run_bounded_for(
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(AVAL_POLL);
+                std::thread::sleep(GREENTOPO_POLL);
             }
             Ok(None) => {
                 let killed = child.kill().and_then(|()| child.wait());
-                return Err(AvalFailed::Failed(format!(
+                return Err(GreentopoFailed::Failed(format!(
                     "`{line}` timed out after {} s (kill: {killed:?})",
                     limit.as_secs()
                 )));
             }
             Err(e) => {
-                return Err(AvalFailed::Failed(format!(
+                return Err(GreentopoFailed::Failed(format!(
                     "`{line}` could not be waited on: {e}"
                 )))
             }
@@ -296,24 +296,24 @@ pub(crate) fn run_bounded_for(
     };
     let stdout = reader
         .join()
-        .map_err(|_| AvalFailed::Failed(format!("`{line}` output reader panicked")))?
-        .map_err(|e| AvalFailed::Failed(format!("`{line}` output could not be read: {e}")))?;
-    // What aval said goes into an error message only; an unreadable stderr says nothing.
+        .map_err(|_| GreentopoFailed::Failed(format!("`{line}` output reader panicked")))?
+        .map_err(|e| GreentopoFailed::Failed(format!("`{line}` output could not be read: {e}")))?;
+    // What greentopo said goes into an error message only; an unreadable stderr says nothing.
     let stderr = err_reader
         .join()
         .ok()
         .and_then(Result::ok)
         .map(|said| String::from_utf8_lossy(&said).trim().to_string())
         .unwrap_or_default();
-    Ok(AvalAnswer {
+    Ok(GreentopoAnswer {
         status,
         stdout,
         stderr,
     })
 }
 
-fn aval(dir: &Path, args: &[&str]) -> Result<Vec<u8>, AvalFailed> {
-    let answer = run_aval(dir, args)?;
+fn greentopo(dir: &Path, args: &[&str]) -> Result<Vec<u8>, GreentopoFailed> {
+    let answer = run_greentopo(dir, args)?;
     if !answer.status.success() {
         let line = format!("greentopo {}", args.join(" "));
         let said = if answer.stderr.is_empty() {
@@ -321,7 +321,7 @@ fn aval(dir: &Path, args: &[&str]) -> Result<Vec<u8>, AvalFailed> {
         } else {
             format!(": {}", answer.stderr.lines().next().unwrap_or_default())
         };
-        return Err(AvalFailed::Failed(format!(
+        return Err(GreentopoFailed::Failed(format!(
             "`{line}` exited {}{said}",
             answer.status
         )));
@@ -337,8 +337,8 @@ pub struct Rules {
 
 /// Runs the rules command once and hashes its stdout: the only place the
 /// rules hash is computed.
-pub fn rules(dir: &Path) -> Result<Rules, AvalFailed> {
-    let json = aval(dir, &RULES_ARGS)?;
+pub fn rules(dir: &Path) -> Result<Rules, GreentopoFailed> {
+    let json = greentopo(dir, &RULES_ARGS)?;
     let sha = sha_of(&json);
     Ok(Rules { json, sha })
 }
@@ -350,7 +350,7 @@ pub fn sha_of(bytes: &[u8]) -> String {
 
 /// The hash of the code rules `greentopo` reports for the repository at `dir`.
 /// The only implementation: the brief, `rules-sha` and the push check call it.
-pub fn rules_sha(dir: &Path) -> Result<String, AvalFailed> {
+pub fn rules_sha(dir: &Path) -> Result<String, GreentopoFailed> {
     rules(dir).map(|rules| rules.sha)
 }
 
@@ -382,7 +382,7 @@ pub fn parse_rules_sha(prompt: &str) -> Option<String> {
 /// rollout can count the pushes the check passed.
 pub fn rules_excerpt(
     prompt_sha: Option<&str>,
-    current: &Result<String, AvalFailed>,
+    current: &Result<String, GreentopoFailed>,
 ) -> &'static str {
     match (prompt_sha, current) {
         (_, Err(_)) => "review=rules-unknown",
@@ -425,7 +425,7 @@ pub fn render_rules(json: &[u8]) -> Result<String, String> {
         .and_then(serde_json::Value::as_array)
         .ok_or("greentopo rules has no `rules` array")?;
     // A rule the reviewer is bound to must have its text: a missing field is
-    // an aval defect, never an empty rule.
+    // a greentopo defect, never an empty rule.
     let text = |rule: &serde_json::Value, field: &str| -> Result<String, String> {
         rule.get(field)
             .and_then(serde_json::Value::as_str)
@@ -514,14 +514,14 @@ pub fn build(request: &BriefRequest) -> Result<Brief, BriefError> {
         ))
     })?;
     let has_corpus = repo.join(CORPUS_FILE).is_file();
-    let aval_missing;
+    let greentopo_missing;
     let mut judge_section = None;
     let code_rules = if has_corpus {
         match rules(&repo) {
             Ok(code_rules) => {
-                aval_missing = false;
+                greentopo_missing = false;
                 let text = render_rules(&code_rules.json)
-                    .map_err(|why| BriefError::Aval(AvalFailed::Failed(why)))?;
+                    .map_err(|why| BriefError::Greentopo(GreentopoFailed::Failed(why)))?;
                 crate::code_review::check_reviewed_by(&code_rules.json)
                     .map_err(BriefError::Repository)?;
                 if let Some(profile) = &request.profile {
@@ -532,14 +532,14 @@ pub fn build(request: &BriefRequest) -> Result<Brief, BriefError> {
                 }
                 Some((code_rules.sha, text))
             }
-            Err(AvalFailed::NotInstalled) => {
-                aval_missing = true;
+            Err(GreentopoFailed::NotInstalled) => {
+                greentopo_missing = true;
                 None
             }
             Err(failed) => return Err(failed.into()),
         }
     } else {
-        aval_missing = false;
+        greentopo_missing = false;
         None
     };
     let tree = crate::content_id::content_id(&repo, "HEAD").map_err(BriefError::Repository)?;
@@ -690,7 +690,7 @@ pub fn build(request: &BriefRequest) -> Result<Brief, BriefError> {
     notices.extend(retired_program_notice());
     match &code_rules {
         Some((_, rules_text)) => {
-            let index = aval(&repo, &["rules", "--level", "constraint"])?;
+            let index = greentopo(&repo, &["rules", "--level", "constraint"])?;
             let index = String::from_utf8_lossy(&index);
             match &judge_section {
                 // A profile seat reads the rules it judges in full and an id
@@ -715,7 +715,7 @@ pub fn build(request: &BriefRequest) -> Result<Brief, BriefError> {
             brief.push_str("# Decisions that apply to the changed paths\n\n");
             brief.push_str(&decisions(&repo, &range)?);
         }
-        None if aval_missing => {
+        None if greentopo_missing => {
             if let Some(profile) = &request.profile {
                 brief.push_str(&format!(
                     "## Judge rules for {profile}\n\nNot read: greentopo is not installed.\n\n"
@@ -898,18 +898,18 @@ fn decisions(repo: &Path, range: &str) -> Result<String, BriefError> {
         args.push("--path");
         args.push(file);
     }
-    let relevant = aval(repo, &args)?;
+    let relevant = greentopo(repo, &args)?;
     let relevance: serde_json::Value = serde_json::from_slice(&relevant).map_err(|e| {
-        BriefError::Aval(AvalFailed::Failed(format!(
+        BriefError::Greentopo(GreentopoFailed::Failed(format!(
             "`greentopo --json relevant` printed output that is not JSON: {e}"
         )))
     })?;
-    // Only an empty `keys` array means no decision applies; a missing one is an aval defect.
+    // Only an empty `keys` array means no decision applies; a missing one is a greentopo defect.
     let rows = relevance
         .get("keys")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| {
-            BriefError::Aval(AvalFailed::Failed(
+            BriefError::Greentopo(GreentopoFailed::Failed(
                 "`greentopo --json relevant` printed no `keys` array".to_string(),
             ))
         })?;
@@ -919,7 +919,7 @@ fn decisions(repo: &Path, range: &str) -> Result<String, BriefError> {
             .get("key")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| {
-                BriefError::Aval(AvalFailed::Failed(format!(
+                BriefError::Greentopo(GreentopoFailed::Failed(format!(
                     "`greentopo --json relevant` row {index} of `keys` has no string `key`"
                 )))
             })?;
@@ -928,14 +928,14 @@ fn decisions(repo: &Path, range: &str) -> Result<String, BriefError> {
     let mut out = String::new();
     for key in keys {
         // `undecided`, `retired` and `unknown` are answers that exit non-zero.
-        let resolved = run_aval(repo, &["resolve", &key])?;
+        let resolved = run_greentopo(repo, &["resolve", &key])?;
         if resolved.stdout.iter().all(u8::is_ascii_whitespace) {
             let said = resolved
                 .stderr
                 .lines()
                 .next()
                 .unwrap_or("nothing on stderr");
-            return Err(BriefError::Aval(AvalFailed::Failed(format!(
+            return Err(BriefError::Greentopo(GreentopoFailed::Failed(format!(
                 "`greentopo resolve {key}` printed nothing ({}): {said}",
                 resolved.status
             ))));
@@ -1362,7 +1362,7 @@ fn diff_of(before: &[u8], after: &[u8]) -> std::io::Result<Vec<u8>> {
     }
 }
 
-/// One line per rule of `aval rules --level constraint` (`constraint <id>
+/// One line per rule of `greentopo rules --level constraint` (`constraint <id>
 /// <statement>`): the id and a title, the statement's first 72 characters
 /// cut at a word. Lines that are not a constraint row are left out.
 fn constraint_index(index: &str) -> String {
@@ -1536,14 +1536,14 @@ mod tests {
 
     #[test]
     fn the_three_outcomes_compare_the_prompt_with_the_current_rules() {
-        let now: Result<String, AvalFailed> = Ok(SHA.to_string());
+        let now: Result<String, GreentopoFailed> = Ok(SHA.to_string());
         assert_eq!(rules_excerpt(None, &now), "review=rules-missing");
         assert_eq!(
             rules_excerpt(Some(&"0".repeat(64)), &now),
             "review=rules-stale"
         );
         assert_eq!(rules_excerpt(Some(SHA), &now), "review=rules-current");
-        let failed: Result<String, AvalFailed> = Err(AvalFailed::Failed("x".into()));
+        let failed: Result<String, GreentopoFailed> = Err(GreentopoFailed::Failed("x".into()));
         assert_eq!(rules_excerpt(Some(SHA), &failed), "review=rules-unknown");
     }
 

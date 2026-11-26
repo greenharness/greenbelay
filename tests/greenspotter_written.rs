@@ -188,7 +188,7 @@ fn a_finding_on_a_vendored_repository_comes_back_as_advice_and_is_journalled() {
         "{stdout}"
     );
     assert!(
-        said.contains("aval rule tests.first-properties"),
+        said.contains("greentopo rule tests.first-properties"),
         "{stdout}"
     );
     assert!(

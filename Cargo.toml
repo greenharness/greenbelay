@@ -87,7 +87,7 @@ greenbelay-guard = { path = "crates/greenbelay-guard", version = "=6.18.0" }
 greenbelay-process = { path = "crates/greenbelay-process", version = "=6.18.0" }
 
 [workspace.lints.clippy]
-# adr-lint sync: general.linters-police-suppressions
+# greenspotter sync: general.linters-police-suppressions
 allow_attributes = "deny"
 allow_attributes_without_reason = "deny"
 

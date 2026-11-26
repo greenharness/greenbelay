@@ -14,7 +14,7 @@ use greenbelay_guard::names::BIN;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use crate::review_brief::{run_bounded_for, AvalFailed};
+use crate::review_brief::{run_bounded_for, GreentopoFailed};
 
 const MARKER: &str = "# release-pin:";
 const VERSION_SLOT: &str = "{version}";
@@ -210,8 +210,8 @@ pub fn check(repo: &Path, merge_base: &str) -> Outcome {
     ];
     let answer = match run_bounded_for(&program, "gh", repo, &args, &GH_ENV, gh_deadline()) {
         Ok(answer) => answer,
-        Err(AvalFailed::NotInstalled) => return Outcome::failed(GH_MISSING),
-        Err(AvalFailed::Failed(why)) => return Outcome::failed(why),
+        Err(GreentopoFailed::NotInstalled) => return Outcome::failed(GH_MISSING),
+        Err(GreentopoFailed::Failed(why)) => return Outcome::failed(why),
     };
     if !answer.status.success() {
         let said = answer.stderr.lines().next().unwrap_or_default();

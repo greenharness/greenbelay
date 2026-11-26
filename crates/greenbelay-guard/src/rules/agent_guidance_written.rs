@@ -68,7 +68,7 @@ pub fn phrase(shown: &str) -> String {
     crate::decision::phrase(
         RULE.id,
         &format!("`{file}` is agent guidance: the `guidance.*` and `prose.*` rules apply (ADR-0026, ADR-0032)."),
-        &format!("`aval relevant --path {shown}` lists them."),
+        &format!("`greentopo relevant --path {shown}` lists them."),
     )
 }
 
@@ -111,7 +111,7 @@ mod tests {
         assert!(t.contains("`SKILL.md`"), "{t}");
         assert!(t.contains("ADR-0026") && t.contains("ADR-0032"), "{t}");
         assert!(
-            t.contains("aval relevant --path /r/skills/x/SKILL.md"),
+            t.contains("greentopo relevant --path /r/skills/x/SKILL.md"),
             "{t}"
         );
     }

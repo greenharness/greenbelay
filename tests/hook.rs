@@ -2737,7 +2737,7 @@ fn guidance_an_edit_to_a_skill_is_told_the_guidance_rules() {
     );
     assert!(said.reason().contains("ADR-0026"), "{}", said.stdout);
     assert!(
-        said.reason().contains("aval relevant --path"),
+        said.reason().contains("greentopo relevant --path"),
         "{}",
         said.stdout
     );

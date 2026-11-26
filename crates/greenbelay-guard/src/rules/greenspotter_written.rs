@@ -160,7 +160,7 @@ pub fn excerpt(finding: &LintFinding) -> String {
     format!("{} {} {}", finding.rule, finding.path, finding.text.trim())
 }
 
-/// The advice: each finding, one `aval rule` line per distinct rule, and how
+/// The advice: each finding, one `greentopo rule` line per distinct rule, and how
 /// to waive.
 pub fn phrase(findings: &[LintFinding]) -> String {
     let mut lines: Vec<String> = findings
@@ -173,7 +173,7 @@ pub fn phrase(findings: &[LintFinding]) -> String {
             rules.push(&finding.rule);
         }
     }
-    lines.extend(rules.iter().map(|rule| format!("aval rule {rule}")));
+    lines.extend(rules.iter().map(|rule| format!("greentopo rule {rule}")));
     let reason = format!(
         "greenspotter found {} on the file just written:\n{}",
         if findings.len() == 1 {
@@ -276,7 +276,11 @@ mod tests {
         assert!(
             text.contains("src/a.rs:3:5: tests.first-properties: an ignored test needs a reason")
         );
-        assert_eq!(text.matches("aval rule tests.first-properties").count(), 1);
+        assert_eq!(
+            text.matches("greentopo rule tests.first-properties")
+                .count(),
+            1
+        );
         assert!(text.contains("greenspotter: allow <rule-id> -- <reason>"));
     }
 
