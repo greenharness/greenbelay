@@ -345,7 +345,7 @@ fn observing_journals_the_findings_and_says_nothing() {
 
 #[cfg(unix)] // fake programs are #!/bin/sh scripts
 #[test]
-fn a_repository_vendoring_the_old_adr_lint_row_still_opens_the_gate() {
+fn a_repository_vendoring_only_the_old_adr_lint_row_is_closed() {
     let world = World::new("old-row");
     world.fake_amont(
         &GATE_OPEN.replace("pre-commit-greenspotter-check", "pre-commit-adr-lint-check"),
@@ -353,7 +353,7 @@ fn a_repository_vendoring_the_old_adr_lint_row_still_opens_the_gate() {
     world.fake_greenspotter("exit 0");
     let (stdout, _) = world.edit("gs-old", "src/a.rs");
     assert_eq!(stdout, "");
-    assert_eq!(world.runs("greenspotter"), ["check --json -- src/a.rs"]);
+    assert!(world.runs("greenspotter").is_empty());
 }
 
 #[cfg(unix)] // fake programs are #!/bin/sh scripts

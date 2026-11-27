@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Removed: the old `pre-commit-adr-lint-check` row id** (programme
+  topo-spotter-rename t22). The `greenspotter-written` gate opens only on
+  `pre-commit-greenspotter-check`; a repository listing only the old id is
+  left alone. A census on 2026-11-27 found none.
+
 ## v6.18.1
 
 greenbelay 6.18.1: advice and help text name greentopo and greenspotter (#341).
