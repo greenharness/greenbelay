@@ -354,6 +354,7 @@ fn a_repository_vendoring_only_the_old_adr_lint_row_is_closed() {
     let (stdout, _) = world.edit("gs-old", "src/a.rs");
     assert_eq!(stdout, "");
     assert!(world.runs("greenspotter").is_empty());
+    assert!(world.journal("gs-old").is_empty());
 }
 
 #[cfg(unix)] // fake programs are #!/bin/sh scripts
