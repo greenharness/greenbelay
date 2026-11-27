@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v6.18.2
+
+greenbelay 6.18.2: the old `pre-commit-adr-lint-check` row id is dropped (#343).
+
 - **Removed: the old `pre-commit-adr-lint-check` row id** (programme
   topo-spotter-rename t22). The `greenspotter-written` gate opens only on
   `pre-commit-greenspotter-check`; a repository listing only the old id is
