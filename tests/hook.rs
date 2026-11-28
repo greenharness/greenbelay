@@ -204,11 +204,13 @@ fn an_unqueued_test_run_is_advised_toward_the_slot_queue() {
     assert_eq!(r.code, 0);
     assert_eq!(r.decision(), None, "advise never decides: {}", r.stdout);
     let advice = r.reason();
+    // The stub answers as both names, and the hook asks `greengate` first.
     assert!(
-        advice.contains("amont slot run -- cargo test --workspace"),
+        advice.contains("greengate slot run -- cargo test --workspace"),
         "{advice}"
     );
     assert!(advice.contains("exit 75"), "{advice}");
+    assert!(!advice.contains("--now"), "1.63.0 has no --now: {advice}");
     let journal = std::fs::read_to_string(home().join("greenbelay").join("journal.log"))
         .expect("the hook wrote a journal");
     assert!(
@@ -233,10 +235,26 @@ fn the_old_slot_variable_no_longer_silences_the_advice() {
     assert_eq!(r.code, 0);
     assert!(
         r.reason()
-            .contains("amont slot run -- cargo test --workspace"),
+            .contains("greengate slot run -- cargo test --workspace"),
         "the advice fires with only AMONT_HOST_SLOT set: {}",
         r.stdout
     );
+}
+
+/// A gate that has `--now` (5.0 or newer) is told about it in the advice for
+/// a bare command; the rule confirms with a `greengate` stub alone on `PATH`.
+#[cfg(unix)]
+#[test]
+fn a_gate_with_now_is_offered_it() {
+    let bin = amont_stub("5.0.0");
+    let r = send_with_path(&bash("cargo test --workspace"), Some(&bin));
+    assert_eq!(r.code, 0);
+    let advice = r.reason();
+    assert!(
+        advice.contains("greengate slot run -- cargo test --workspace"),
+        "{advice}"
+    );
+    assert!(advice.contains("`--now`"), "{advice}");
 }
 
 /// Inside a host slot (`amont slot run` set the variable), or with an amont

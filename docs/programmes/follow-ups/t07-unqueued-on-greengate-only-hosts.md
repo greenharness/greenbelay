@@ -1,7 +1,7 @@
 +++
 type = "task"
 mode = "afk"
-status = "open"
+status = "done"
 blocked_by = []
 repos = ["greenbelay"]
 +++
@@ -37,3 +37,13 @@ name `greengate slot run` when that is the gate found?
 A test with only `greengate` on `PATH` shows the rule confirming (or the
 ticket records why it stays amont-only), and a nine-word command's advice
 does not drop arguments unmarked.
+
+## Outcome
+
+2026-11-28: `confirm` already accepted a greengate-only host (`gate_binary()`
+prefers `greengate`; 4.x and 5.x pass the 1.62.0 floor), so the rule's
+verdict is unchanged. What changed is the advice: the bare-command remedy
+names the gate found, the `--now` sentence appears only at 5.0 or newer, and
+an echoed command cut at eight words ends in `…`. Tests cover the gate name,
+the no-`--now` sentence and the mark; the greengate-only `PATH` case is
+covered by `gate_binary` itself, not by a new `confirm` test.
