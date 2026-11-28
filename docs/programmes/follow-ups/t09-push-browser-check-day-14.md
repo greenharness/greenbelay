@@ -12,7 +12,8 @@ due = "2026-12-05"
 
 On 2026-11-28 ([t01](t01-push-browser-check-day-7.md)), UI pushes passed 57%
 of the time (32% in the last 2.5 days). Most advices were repeats on a tree
-the agent pushed again without a check. Does the share reach the bar by
+the agent pushed again before checking; two of the three repeated trees
+never got a check. Does the share reach the bar by
 2026-12-05? If not, why does an advised session push again instead of
 running the check?
 

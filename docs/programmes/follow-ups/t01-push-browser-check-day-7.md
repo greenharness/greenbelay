@@ -79,18 +79,21 @@ it does not split advices by `check=`.
 - Advised twice on one tree: the 17 journal advices fell on 9 trees, and
   three trees took 11 of them: `851f9014` (cluster-vision) 3 times,
   `d2d94c06` (happier, two sessions) 5 times, and `b8877b0c` (happier) 3
-  times. Those pushes went out again without a check run.
+  times. `851f9014` and `b8877b0c` never reached `bound`; `d2d94c06` did,
+  after its fifth advice (session 41fe3470).
 - `remember-failed`: 0. `deny denied`: 0.
 - `greenbelay corpus check`: `push-browser-check  17 reviewed (9 negative),
   0 unreviewed, precision 100%`.
-- Neither bucket (not counted): 374 `no-ui-repository`, 154 `unresolvable`,
-  38 `no-interface-change`, 1 `delete-only` (journal only).
+- Neither bucket (not counted, journal as of 2026-11-28 ~01:57): 374
+  `no-ui-repository`, 154 `unresolvable`, 38 `no-interface-change`, 1
+  `delete-only`.
 
 ## Resolution
 
 Stay at advise. The pass share is 57%, under the 70% bar, and the latest
 window falls to 32%. No advice is measured as `unreachable`, so this is not
-a demote either. The misses are agents pushing again on an advised tree
-without running the check, not checks that could not run. `graduate` was not
+a demote either. Most misses are agents pushing again on an advised tree before
+running the check (two of the three repeated trees never got one), not
+checks that could not run. `graduate` was not
 run, and the plan stays active. Next check: [t09](t09-push-browser-check-day-14.md),
 due 2026-12-05.
