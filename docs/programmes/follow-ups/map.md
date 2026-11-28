@@ -39,6 +39,9 @@ Released as greenbelay 6.13.0 and installed here.
   [t03](t03-size-boundary-day-7.md) and [t04](t04-prompt-cache-ttl-check.md),
   due 2026-11-30; t06, due 2026-12-02.
 
+- Filed from session 43724200's inbox, 2026-11-28:
+  [t08](t08-changelog-keep-both-review-test.md), the keep-both CHANGELOG test.
+
 ## Not yet specified
 
 - Whether the resume check should also read `implement <plan> in <repo>`
