@@ -154,39 +154,6 @@ fn greenspotter_program() -> std::ffi::OsString {
         .unwrap_or_else(|| std::ffi::OsString::from("greenspotter"))
 }
 
-/// A notice for each retired variable (`GREENBELAY_ADR_LINT`,
-/// `GREENBELAY_AVAL`) still set: it is no longer read, so its value would
-/// otherwise be dropped without a word.
-fn retired_program_notice() -> Vec<String> {
-    retired_notices(
-        std::env::var_os(greenbelay_guard::env_var!("ADR_LINT")),
-        std::env::var_os(greenbelay_guard::env_var!("AVAL")),
-    )
-}
-
-fn retired_notices(
-    adr_lint: Option<std::ffi::OsString>,
-    aval: Option<std::ffi::OsString>,
-) -> Vec<String> {
-    let set = |value: Option<std::ffi::OsString>| value.is_some_and(|program| !program.is_empty());
-    let mut notices = Vec::new();
-    if set(adr_lint) {
-        notices.push(format!(
-            "{} is no longer read: set {}",
-            greenbelay_guard::env_var!("ADR_LINT"),
-            greenbelay_guard::env_var!("GREENSPOTTER")
-        ));
-    }
-    if set(aval) {
-        notices.push(format!(
-            "{} is no longer read: set {}",
-            greenbelay_guard::env_var!("AVAL"),
-            greenbelay_guard::env_var!("GREENTOPO")
-        ));
-    }
-    notices
-}
-
 /// True only when no PATH entry holds anything named `greentopo` (with the
 /// platform's executable suffixes). A non-executable file, a dangling symlink
 /// or a lookup that fails for another reason is a candidate, not absence: the
@@ -571,7 +538,6 @@ pub fn build(request: &BriefRequest) -> Result<Brief, BriefError> {
             delta.text.push_str(&section);
             delta.notices.push(notice);
         }
-        delta.notices.extend(retired_program_notice());
         return Ok(delta);
     }
     let range = format!("{merge_base}...HEAD");
@@ -687,7 +653,6 @@ pub fn build(request: &BriefRequest) -> Result<Brief, BriefError> {
             "greenspotter's candidates are unavailable: {cause}"
         ));
     }
-    notices.extend(retired_program_notice());
     match &code_rules {
         Some((_, rules_text)) => {
             let index = greentopo(&repo, &["rules", "--level", "constraint"])?;

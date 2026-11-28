@@ -1668,86 +1668,99 @@ fn fresh_scratch(label: &str) -> std::path::PathBuf {
     }
 }
 
+/// One `review-brief` run, the full brief (`head` None) or the delta brief
+/// (`--interdiff <head>`), with the fakes in `bin` first on PATH and no
+/// replacement override set: a fallback to a retired variable would only
+/// show when the replacement is absent. `extra` is set on top.
 #[cfg(unix)]
-#[test]
-fn the_retired_adr_lint_variable_gets_a_notice_in_the_full_and_the_delta_brief() {
-    let bin = scratch("retired-env");
-    fake_greentopo(&bin, BRIEF_GREENTOPO);
-    let repo = two_commit_repo("retired-env-repo");
-    let full_brief_with = |adr_lint_value: &str| {
-        let mut cmd = greenbelay_command();
-        cmd.args([
-            "review-brief",
-            "-C",
-            repo.to_str().unwrap(),
-            "--base",
-            "HEAD~1",
-        ]);
-        let inherited = std::env::var_os("PATH").unwrap_or_default();
-        let mut dirs = vec![bin.clone()];
-        dirs.extend(std::env::split_paths(&inherited));
-        cmd.env("PATH", std::env::join_paths(dirs).unwrap());
-        cmd.env("GREENBELAY_GREENSPOTTER", bin.join("greenspotter"));
-        cmd.env("GREENBELAY_ADR_LINT", adr_lint_value);
-        cmd.output().expect("greenbelay runs")
+fn brief_without_overrides(
+    bin: &std::path::Path,
+    repo: &std::path::Path,
+    head: Option<&str>,
+    extra: &[(&str, &str)],
+) -> Output {
+    let mut cmd = greenbelay_command();
+    cmd.args(["review-brief", "-C", repo.to_str().unwrap()]);
+    match head {
+        Some(head) => cmd.args(["--base", "main", "--interdiff", head]),
+        None => cmd.args(["--base", "HEAD~1"]),
     };
-    let set = full_brief_with("/nonexistent");
-    assert_eq!(set.status.code(), Some(0), "{set:?}");
-    let err = String::from_utf8_lossy(&set.stderr);
-    assert_eq!(
-        err.matches("GREENBELAY_ADR_LINT is no longer read: set GREENBELAY_GREENSPOTTER")
-            .count(),
-        1,
-        "{err}"
-    );
-    let empty = full_brief_with("");
-    let err = String::from_utf8_lossy(&empty.stderr);
-    assert!(!err.contains("no longer read"), "{err}");
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let mut dirs = vec![bin.to_path_buf()];
+    dirs.extend(std::env::split_paths(&inherited));
+    cmd.env("PATH", std::env::join_paths(dirs).unwrap());
+    cmd.env("CLAUDE_CONFIG_DIR", bin.join("config"));
+    for var in [
+        "GREENBELAY_GREENTOPO",
+        "GREENBELAY_GREENSPOTTER",
+        "GREENBELAY_AVAL",
+        "GREENBELAY_ADR_LINT",
+    ] {
+        cmd.env_remove(var);
+    }
+    for (key, value) in extra {
+        cmd.env(key, value);
+    }
+    cmd.output().expect("greenbelay runs")
+}
 
-    let (delta, reviewed) = delta_repo("retired-env-delta", &[("a.txt", "three\n")]);
-    let out = interdiff_env(
-        &bin,
-        &delta,
-        &reviewed,
-        &[],
-        &[("GREENBELAY_ADR_LINT", "x")],
-    );
-    assert!(out.status.success(), "{out:?}");
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(
-        err.matches("GREENBELAY_ADR_LINT is no longer read").count(),
-        1,
-        "{err}"
-    );
+/// Sets `var` to a program that leaves a marker when anything runs it, in
+/// the full and the delta brief, and compares each run with the same run
+/// with `var` unset: the same exit, stdout and stderr, no marker, and
+/// neither retired name on stderr.
+#[cfg(unix)]
+fn assert_retired_variable_is_inert(name: &str, var: &str) {
+    let bin = scratch(name);
+    fake_greentopo(&bin, BRIEF_GREENTOPO);
+    fake_greenspotter(&bin, &two_candidates());
+    let marker = bin.join("ran");
+    let retired = bin.join("retired-program");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(
+            &retired,
+            format!("#!/bin/sh\ntouch '{}'\nexit 0\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&retired, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let retired = retired.to_str().unwrap().to_string();
+
+    let full = two_commit_repo(&format!("{name}-repo"));
+    let (delta, reviewed) = delta_repo(&format!("{name}-delta"), &[("a.txt", "three\n")]);
+    for (repo, head, mode) in [
+        (&full, None, "full"),
+        (&delta, Some(reviewed.as_str()), "delta"),
+    ] {
+        let unset = brief_without_overrides(&bin, repo, head, &[]);
+        let set = brief_without_overrides(&bin, repo, head, &[(var, retired.as_str())]);
+        assert!(set.status.success(), "{mode}: {set:?}");
+        assert_eq!(set.status.code(), unset.status.code(), "{mode}: exit");
+        assert_eq!(
+            String::from_utf8_lossy(&set.stdout),
+            String::from_utf8_lossy(&unset.stdout),
+            "{mode}: stdout"
+        );
+        let err = String::from_utf8_lossy(&set.stderr);
+        assert_eq!(
+            err,
+            String::from_utf8_lossy(&unset.stderr),
+            "{mode}: stderr"
+        );
+        assert!(!err.contains("GREENBELAY_AVAL"), "{mode}: {err}");
+        assert!(!err.contains("GREENBELAY_ADR_LINT"), "{mode}: {err}");
+        assert!(!marker.exists(), "{mode}: {var}'s program was run");
+    }
 }
 
 #[cfg(unix)]
 #[test]
-fn the_retired_aval_variable_is_not_spawned_and_gets_a_notice() {
-    let bin = scratch("retired-aval");
-    fake_greentopo(&bin, BRIEF_GREENTOPO);
-    let repo = two_commit_repo("retired-aval-repo");
-    let mut cmd = greenbelay_command();
-    cmd.args([
-        "review-brief",
-        "-C",
-        repo.to_str().unwrap(),
-        "--base",
-        "HEAD~1",
-    ]);
-    let inherited = std::env::var_os("PATH").unwrap_or_default();
-    let mut dirs = vec![bin.clone()];
-    dirs.extend(std::env::split_paths(&inherited));
-    cmd.env("PATH", std::env::join_paths(dirs).unwrap());
-    cmd.env("GREENBELAY_GREENSPOTTER", bin.join("greenspotter"));
-    cmd.env("GREENBELAY_AVAL", "/nonexistent/aval");
-    let out = cmd.output().expect("greenbelay runs");
-    assert_eq!(out.status.code(), Some(0), "{out:?}");
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(
-        err.matches("GREENBELAY_AVAL is no longer read: set GREENBELAY_GREENTOPO")
-            .count(),
-        1,
-        "{err}"
-    );
+fn the_retired_adr_lint_variable_is_not_read_or_named() {
+    assert_retired_variable_is_inert("retired-adr-lint", "GREENBELAY_ADR_LINT");
+}
+
+#[cfg(unix)]
+#[test]
+fn the_retired_aval_variable_is_not_spawned_or_named() {
+    assert_retired_variable_is_inert("retired-aval", "GREENBELAY_AVAL");
 }

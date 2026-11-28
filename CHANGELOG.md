@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Removed: the notices for `GREENBELAY_AVAL` and `GREENBELAY_ADR_LINT`**
+  (programme topo-spotter-rename t28). `review-brief` no longer reads or
+  names either variable; with one set, its output is the same as with it
+  unset. A census on 2026-11-28 found nothing that sets them.
+
 ## v6.18.2
 
 greenbelay 6.18.2: the old `pre-commit-adr-lint-check` row id is dropped (#343).
