@@ -1,7 +1,7 @@
 +++
 type = "task"
 mode = "afk"
-status = "open"
+status = "closed"
 blocked_by = []
 repos = ["greenbelay"]
 +++
@@ -37,3 +37,20 @@ two near cases miss?
 Three tests exist: main's entry kept beside the branch's entry journals
 `reviewed-by-patch-notes-moved` and the push passes; a changed rule file on
 main journals a miss; an `## Unreleased` heading put back journals a miss.
+
+## Resolution
+
+The key holds, and both near cases miss. Four tests in
+`tests/implementation_review.rs`:
+- `a_rebase_keeping_main_s_entry_beside_the_branch_s_entry_keeps_the_review`:
+  a rebase that keeps main's entry beside the branch's entry journals
+  `reviewed-by-patch-notes-moved`, and the push is silent.
+- `a_rule_file_changed_on_main_beside_moved_changelog_context_needs_a_new_review`:
+  an `AGENTS.md` change on main beside a context move is advised `(stale)`.
+- `an_unreleased_heading_put_back_needs_a_new_review`: a heading line put
+  back into the branch's patch is advised `(stale)`.
+- `the_same_rebase_without_the_heading_put_back_keeps_the_review`: the
+  control. The same rebase without the heading keeps the pass, so the heading
+  alone flips the result.
+
+No production change.

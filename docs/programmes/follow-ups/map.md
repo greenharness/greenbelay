@@ -24,6 +24,9 @@ Reached when no ticket here is open.
   advise on day 7 (57% passes, under 70%; 0 of 47 measured advices
   unreachable); day 14 is [t09](t09-push-browser-check-day-14.md), due
   2026-12-05.
+- [t08](t08-changelog-keep-both-review-test.md): the CHANGELOG
+  notes-moved key holds for a keep-both rebase and misses on a rule-file
+  change or a heading put back; four tests (one a control), no production change.
 
 ## Handoff
 
@@ -45,8 +48,6 @@ Released as greenbelay 6.13.0 and installed here.
 
 - Filed from relais f08, 2026-11-28: [t10](t10-drift-known-writers.md),
   name the known writers in `home-fingerprint-drift`.
-- Filed from session 43724200's inbox, 2026-11-28:
-  [t08](t08-changelog-keep-both-review-test.md), the keep-both CHANGELOG test.
 
 ## Not yet specified
 
