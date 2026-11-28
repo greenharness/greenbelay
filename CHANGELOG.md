@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v6.18.3
+
+greenbelay 6.18.3: `review-brief` no longer names the retired `GREENBELAY_AVAL` and `GREENBELAY_ADR_LINT` (#350).
+
 - **Removed: the notices for `GREENBELAY_AVAL` and `GREENBELAY_ADR_LINT`**
   (programme topo-spotter-rename t28). `review-brief` no longer reads or
   names either variable; with one set, its output is the same as with it
