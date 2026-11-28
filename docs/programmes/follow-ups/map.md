@@ -21,7 +21,7 @@ Reached when no ticket here is open.
   exception); the resume prompt is checked, and pushes are credited only on
   publication evidence (greenbelay 6.13.0).
 - [t01](t01-push-browser-check-day-7.md): push-browser-check stays at
-  advise on day 7 (57% passes, under 70%; 0 of 17 measured advices
+  advise on day 7 (57% passes, under 70%; 0 of 47 measured advices
   unreachable); day 14 is [t09](t09-push-browser-check-day-14.md), due
   2026-12-05.
 

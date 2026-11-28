@@ -72,10 +72,13 @@ it does not split advices by `check=`.
 | journal, 11-25 → 11-28 | 6 + 2 + 0 = 8 | 17 | 32% |
 | all | 73 | 55 | **57%** |
 
-- Advices by check, journal only: 14 `missing`, 3 `stale`, 0 `unreachable`,
-  0 `gap`. The rollup's 38 advices have no split, so the unreachable share is
-  0 of 17 measured. Demoting would need at least 17 of those 38 to be
-  `unreachable`.
+- Advices by check: the t22 journal snapshots
+  (`~/.local/state/t12-journal-snapshot/`, twice a day) keep every line from
+  2026-11-23 02:30 UTC. Over that span there are 47 advices, the rollup's 30
+  plus the journal's 17: 40 `missing`, 7 `stale`, 0 `unreachable`, 0 `gap`.
+  Only the 8 advices of 11-21 to 11-22 have no split, so the unreachable share
+  is 0 of 47 measured. Even if all 8 were `unreachable`, the share would be
+  15%, under the 30% demote bar.
 - Advised twice on one tree: the 17 journal advices fell on 9 trees, and
   three trees took 11 of them: `851f9014` (cluster-vision) 3 times,
   `d2d94c06` (happier, two sessions) 5 times, and `b8877b0c` (happier) 3
@@ -91,7 +94,7 @@ it does not split advices by `check=`.
 ## Resolution
 
 Stay at advise. The pass share is 57%, under the 70% bar, and the latest
-window falls to 32%. No advice is measured as `unreachable`, so this is not
+window falls to 32%. None of the 47 measured advices is `unreachable`, so this is not
 a demote either. Most misses are agents pushing again on an advised tree before
 running the check (two of the three repeated trees never got one), not
 checks that could not run. `graduate` was not
