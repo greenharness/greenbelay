@@ -57,7 +57,7 @@ names. Released as greenbelay 6.18.3 and installed on this Mac.
 - With both unset, output is byte-for-byte what 6.18.2 prints.
 
 ## Phases
-- [ ] Phase 1 — in one commit, remove `retired_program_notice` and
+- [x] Phase 1 — in one commit, remove `retired_program_notice` and
   `retired_notices` and their two call sites (full brief, delta brief), and
   flip the two notice tests into
   `the_retired_adr_lint_variable_is_not_read_or_named` and
@@ -77,29 +77,46 @@ names. Released as greenbelay 6.18.3 and installed on this Mac.
   proof the Destination asks for ("no live program reads `aval`").
 - 2026-11-28 — patch release: no flag, key or exit code changes; a stderr
   notice for a variable nothing sets is dropped.
+- 2026-11-28 — the commit gate and checks ran with
+  `PATH=$HOME/.cargo/bin:$PATH`: Homebrew `rust` 1.100.0 (reinstalled
+  11-27) shadows the rustup 1.94.1 pin, and its clippy fails pre-existing
+  `greenbelay-guard` code (`needless_range_loop`).
 
 ## Verification
 - Phase 1: `cargo test --test review_brief -- --exact
   the_retired_adr_lint_variable_is_not_read_or_named
-  the_retired_aval_variable_is_not_spawned_or_named` → 2 passed; each fails
-  when `notices.extend(retired_program_notice())` is put back at the full
-  and then the delta call site → <result>
+  the_retired_aval_variable_is_not_spawned_or_named` → 2 passed. The
+  planned per-call-site mutation was not run; mutation as run: with 6.18.2's
+  whole `review_brief.rs` put back, both fail at the full brief's stderr
+  equality (`tests/review_brief.rs:1745`); each test checks the full brief
+  first, so this run shows the full call site is caught, and the delta one
+  is caught by the same assertion only by symmetry
 - Phase 1: piloted `greenbelay review-brief -C <scratch repo> --base HEAD~1`
   with `GREENBELAY_AVAL=/nonexistent/aval GREENBELAY_ADR_LINT=x`, full and
   `--interdiff` → exit 0, stderr names neither variable, stdout `diff`s
-  empty against the same run unset → <result>
+  empty against the same run unset → on this worktree: exit 0 both modes,
+  `cmp` set vs unset identical (stdout and stderr), 0 lines naming either
+  variable; 6.18.2 on the same input prints `GREENBELAY_AVAL is no longer
+  read: set GREENBELAY_GREENTOPO`
 - Phase 1: with both unset, `cmp` stdout and stderr of 6.18.2 and the branch
-  build on the same scratch repo, full and `--interdiff` → identical →
-  <result>
-- Phase 2: `greenbelay --version` → `greenbelay 6.18.3` → <result>
+  build on the same scratch repo, full and `--interdiff` → identical (both
+  `cmp` exit 0)
+- Phase 2 (next, the release): `greenbelay --version` → `greenbelay 6.18.3`
 - Census, on `HEAD` before the push and on `origin/main` after the merge,
   outside CHANGELOG and `docs/`: `git grep -nIiE
   '(^|[^[:alpha:]])aval|adr-lint|adr_lint'` plus case-sensitive
   `git grep -nE '[a-z]Aval'` → only `tests/greenspotter_written.rs`,
   `crates/greenbelay-guard/src/rules/greenspotter_written.rs`'s row-id
   test, the two flipped tests in `tests/review_brief.rs`, `tests/block.rs`
-  fixture names, `tests/fixtures/block/*.diff` and the guard corpus →
-  <result>
+  fixture names, `tests/fixtures/block/*.diff` and the guard corpus → on
+  HEAD 15069b3c: exactly those (and the vendored `.adr/packs/decisions.pack`,
+  history, left out of the search)
+
+## Implementation review
+- implementation-review (opus): approve-with-changes; Verification and the mutation as run recorded here; CHANGELOG under Unreleased is normal. 43k tok, 28 s.
+- backend: approve, no findings. 57k, 31 s.
+- lang:rust: approve-with-changes; deliberate: `interdiff_env`'s `extra_env` now has one caller passing `&[]`, left for a follow-up rather than another gate round. 57k, 28 s.
+- unix: approve, no findings. 46k, 17 s.
 
 ## Outcome
 <!-- panel: repos=greenbelay reviewers=backend,lang:rust,tui,unix,codex body-sha=c6f652667256 -->
