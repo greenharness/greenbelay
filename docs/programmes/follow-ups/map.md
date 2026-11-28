@@ -43,6 +43,8 @@ Released as greenbelay 6.13.0 and installed here.
   due 2026-11-30; t06, due 2026-12-02; [t09](t09-push-browser-check-day-14.md),
   due 2026-12-05.
 
+- Filed from relais f08, 2026-11-28: [t10](t10-drift-known-writers.md),
+  name the known writers in `home-fingerprint-drift`.
 - Filed from session 43724200's inbox, 2026-11-28:
   [t08](t08-changelog-keep-both-review-test.md), the keep-both CHANGELOG test.
 
