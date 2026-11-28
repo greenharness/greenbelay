@@ -1654,6 +1654,113 @@ fn a_rebase_that_only_moves_changelog_context_keeps_the_review() {
     );
 }
 
+/// Rebases `feat/x` onto `origin/main`, expecting a conflict in
+/// `CHANGELOG.md`, and settles it with `resolved`.
+fn rebase_resolving_changelog(repo: &Path, resolved: &str) {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rebase", "-q", "origin/main"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .output()
+        .expect("git runs");
+    assert!(
+        !out.status.success(),
+        "the entries were expected to conflict"
+    );
+    std::fs::write(repo.join("CHANGELOG.md"), resolved).unwrap();
+    git(repo, &["add", "CHANGELOG.md"]);
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rebase", "--continue"])
+        .env("GIT_EDITOR", "true")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .status()
+        .expect("git runs");
+    assert!(status.success(), "the rebase continued");
+}
+
+#[test]
+fn a_rebase_keeping_main_s_entry_beside_the_branch_s_entry_keeps_the_review() {
+    let world = World::new("notes-both-entries");
+    let repo = world.repo("app");
+    with_notes(&world, &repo);
+    let transcript = reviewed(&world, &repo);
+    git(&repo, &["checkout", "-q", "main"]);
+    world.commit(
+        &repo,
+        &[(
+            "CHANGELOG.md",
+            "# Changelog\nintro\n## Unreleased\n- main entry\n## v1\n- old\n",
+        )],
+    );
+    git(&repo, &["push", "-q", "origin", "main"]);
+    git(&repo, &["fetch", "-q", "origin"]);
+    git(&repo, &["checkout", "-q", "feat/x"]);
+    rebase_resolving_changelog(
+        &repo,
+        "# Changelog\nintro\n## Unreleased\n- main entry\n- new entry\n## v1\n- old\n",
+    );
+    assert_eq!(world.push(&repo, "s1", Some(&transcript)), Said::Silent);
+    let line = world.last_line();
+    assert!(
+        line.contains(" unconfirmed reviewed-by-patch-notes-moved "),
+        "{line}"
+    );
+}
+
+#[test]
+fn a_rule_file_changed_on_main_beside_moved_changelog_context_needs_a_new_review() {
+    let world = World::new("notes-rules");
+    let repo = world.repo("app");
+    with_notes(&world, &repo);
+    let transcript = reviewed(&world, &repo);
+    let mut files: Vec<(&str, &str)> = RELEASED.to_vec();
+    files.push(("AGENTS.md", "new rules\n"));
+    advance_main_and_rebase(&world, &repo, &files);
+    let said = world.push(&repo, "s1", Some(&transcript));
+    assert_ne!(
+        said,
+        Said::Silent,
+        "the pass carried over past a rules change"
+    );
+    assert!(
+        !world.last_line().contains("reviewed-by-patch-notes-moved"),
+        "{}",
+        world.last_line()
+    );
+}
+
+#[test]
+fn an_unreleased_heading_put_back_needs_a_new_review() {
+    let world = World::new("notes-heading");
+    let repo = world.repo("app");
+    with_notes(&world, &repo);
+    // The branch removes the heading line from its patch before the review.
+    world.commit(
+        &repo,
+        &[(
+            "CHANGELOG.md",
+            "# Changelog\nintro\n- new entry\n## v1\n- old\n",
+        )],
+    );
+    let transcript = reviewed(&world, &repo);
+    git(&repo, &["checkout", "-q", "main"]);
+    world.commit(&repo, RELEASED);
+    git(&repo, &["push", "-q", "origin", "main"]);
+    git(&repo, &["fetch", "-q", "origin"]);
+    git(&repo, &["checkout", "-q", "feat/x"]);
+    rebase_resolving_changelog(
+        &repo,
+        "# Changelog\nintro, now longer\n## Unreleased\n- new entry\n## v1\n- old\n",
+    );
+    let said = world.push(&repo, "s1", Some(&transcript));
+    assert!(advised(&said).contains("(stale)"), "{said:?}");
+}
+
 #[test]
 fn an_edited_changelog_entry_or_a_pass_without_a_notes_key_needs_a_new_review() {
     // The entry's own text changed after the review.
