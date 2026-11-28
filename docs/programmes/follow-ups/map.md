@@ -26,7 +26,7 @@ Reached when no ticket here is open.
   2026-12-05.
 - [t08](t08-changelog-keep-both-review-test.md): the CHANGELOG
   notes-moved key holds for a keep-both rebase and misses on a rule-file
-  change or a heading put back; three tests, no production change.
+  change or a heading put back; four tests (one a control), no production change.
 
 ## Handoff
 

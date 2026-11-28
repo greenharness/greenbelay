@@ -1669,6 +1669,17 @@ fn rebase_resolving_changelog(repo: &Path, resolved: &str) {
         !out.status.success(),
         "the entries were expected to conflict"
     );
+    let unmerged = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["diff", "--name-only", "--diff-filter=U"])
+        .output()
+        .expect("git runs");
+    assert_eq!(
+        String::from_utf8_lossy(&unmerged.stdout).trim(),
+        "CHANGELOG.md",
+        "the rebase stopped on something other than the CHANGELOG conflict"
+    );
     std::fs::write(repo.join("CHANGELOG.md"), resolved).unwrap();
     git(repo, &["add", "CHANGELOG.md"]);
     let status = Command::new("git")
@@ -1722,11 +1733,7 @@ fn a_rule_file_changed_on_main_beside_moved_changelog_context_needs_a_new_review
     files.push(("AGENTS.md", "new rules\n"));
     advance_main_and_rebase(&world, &repo, &files);
     let said = world.push(&repo, "s1", Some(&transcript));
-    assert_ne!(
-        said,
-        Said::Silent,
-        "the pass carried over past a rules change"
-    );
+    assert!(advised(&said).contains("(stale)"), "{said:?}");
     assert!(
         !world.last_line().contains("reviewed-by-patch-notes-moved"),
         "{}",
@@ -1734,12 +1741,14 @@ fn a_rule_file_changed_on_main_beside_moved_changelog_context_needs_a_new_review
     );
 }
 
-#[test]
-fn an_unreleased_heading_put_back_needs_a_new_review() {
-    let world = World::new("notes-heading");
+/// A `feat/x` whose reviewed patch removes the `## Unreleased` heading,
+/// rebased onto a release that rewrote a context line, with the conflict
+/// settled as `resolved`. Returns the world, the repository and the
+/// review's transcript.
+fn heading_removed_then_rebased(name: &str, resolved: &str) -> (World, PathBuf, PathBuf) {
+    let world = World::new(name);
     let repo = world.repo("app");
     with_notes(&world, &repo);
-    // The branch removes the heading line from its patch before the review.
     world.commit(
         &repo,
         &[(
@@ -1753,12 +1762,33 @@ fn an_unreleased_heading_put_back_needs_a_new_review() {
     git(&repo, &["push", "-q", "origin", "main"]);
     git(&repo, &["fetch", "-q", "origin"]);
     git(&repo, &["checkout", "-q", "feat/x"]);
-    rebase_resolving_changelog(
-        &repo,
+    rebase_resolving_changelog(&repo, resolved);
+    (world, repo, transcript)
+}
+
+#[test]
+fn an_unreleased_heading_put_back_needs_a_new_review() {
+    let (world, repo, transcript) = heading_removed_then_rebased(
+        "notes-heading",
         "# Changelog\nintro, now longer\n## Unreleased\n- new entry\n## v1\n- old\n",
     );
     let said = world.push(&repo, "s1", Some(&transcript));
     assert!(advised(&said).contains("(stale)"), "{said:?}");
+}
+
+#[test]
+fn the_same_rebase_without_the_heading_put_back_keeps_the_review() {
+    // The control for the test above: the heading alone flips the result.
+    let (world, repo, transcript) = heading_removed_then_rebased(
+        "notes-heading-control",
+        "# Changelog\nintro, now longer\n- new entry\n## v1\n- old\n",
+    );
+    assert_eq!(world.push(&repo, "s1", Some(&transcript)), Said::Silent);
+    let line = world.last_line();
+    assert!(
+        line.contains(" unconfirmed reviewed-by-patch-notes-moved "),
+        "{line}"
+    );
 }
 
 #[test]
