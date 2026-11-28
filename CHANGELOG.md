@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Fixed: `heavy-build-unqueued` advice names the gate that is here**
+  (follow-ups t07). A host with only `greengate` already confirmed the rule;
+  its bare-command advice still said `amont slot run`. It now names the gate
+  found on `PATH`, mentions `--now` only when that gate is 5.0 or newer, and
+  ends a command cut at eight words with `…`.
+
 ## v6.18.3
 
 greenbelay 6.18.3: `review-brief` no longer names the retired `GREENBELAY_AVAL` and `GREENBELAY_ADR_LINT` (#350).

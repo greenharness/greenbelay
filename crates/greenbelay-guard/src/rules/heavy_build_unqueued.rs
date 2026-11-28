@@ -22,9 +22,12 @@
 //!
 //! The rule speaks only when queueing is possible: the hook's environment has
 //! no `GREENHARNESS_HOST_SLOT` (the command already holds a slot otherwise), and
-//! `amont --version` on `PATH` is 1.62.0 or newer (the first with `slot run`).
-//! A version that was read is remembered for the session; the probe has a
-//! short deadline. Amont's slot files are never read: `amont slots` is the query.
+//! the gate on `PATH` (`greengate`, else `amont`) says `--version` 1.62.0 or
+//! newer (the first with `slot run`). A host with only `greengate` confirms.
+//! The advice names that gate, and the `--now` sentence only when it is 5.0 or
+//! newer (4.13 lacks the flag). A version that was read is remembered for the
+//! session; the probe has a short deadline. The slot files are never read:
+//! `<gate> slots` is the query.
 
 use crate::rules::test_output_trimmed::{exempt_words, runner_words};
 use crate::rules::{Confirmed, Context, Evidence, Examine, Finding, Rule, Stance, Trend};
@@ -52,6 +55,21 @@ const FIRST_VERSION_WITH_SLOTS: crate::gate_version::Version = (1, 62, 0);
 /// The variable a slot holder exports to what it runs (greengate 4.0 and
 /// relais). greengate 3.x's `AMONT_HOST_SLOT` is not read.
 const HELD_SLOT_VARIABLE: &str = "GREENHARNESS_HOST_SLOT";
+
+/// The first gate with `slot run --now`.
+const FIRST_VERSION_WITH_NOW: crate::gate_version::Version = (5, 0, 0);
+
+/// The gate the advice names, and what it can do.
+struct Gate {
+    name: &'static str,
+    has_now: bool,
+}
+
+/// What a replay (no host to ask) assumes.
+const ASSUMED_GATE: Gate = Gate {
+    name: "amont",
+    has_now: true,
+};
 
 /// The most words of the command the advice repeats.
 const ECHOED_WORDS: usize = 8;
@@ -148,12 +166,19 @@ fn slot_run_fallback(cmd: &Simple) -> Option<Heavy<'_>> {
 }
 
 fn examine(parsed: &Parsed) -> Option<Finding> {
+    finding(parsed, &ASSUMED_GATE)
+}
+
+fn finding(parsed: &Parsed, found: &Gate) -> Option<Finding> {
     for cmd in parsed.judgeable() {
         let Some(heavy) = unqueued(cmd) else {
             continue;
         };
         let mut shown = vec![heavy.program];
         shown.extend(heavy.args.iter().take(ECHOED_WORDS).map(|w| w.raw.as_str()));
+        if heavy.args.len() > ECHOED_WORDS {
+            shown.push("…"); // the cut is marked: the queued form is not the whole command
+        }
         let shown = shown.join(" ");
         let reason = format!(
             "`{shown}` starts a heavy build or test run outside the host slot queue, \
@@ -168,13 +193,21 @@ fn examine(parsed: &Parsed) -> Option<Finding> {
             )
         };
         let remedy = match heavy.launch {
-            Launch::Bare => format!(
-                "Run it as `amont slot run -- {shown}`: it waits at most 90 s \
-                 (`--max-wait`) for a slot; exit 75 means no slot freed, or the line \
-                 stalled, and the command was not launched. Retry later, or pass `--now` \
-                 to run it at once, unqueued, past a stalled line when you accept the \
-                 load. `amont slots` shows who holds them."
-            ),
+            Launch::Bare => {
+                let gate = found.name;
+                let now = if found.has_now {
+                    " Retry later, or pass `--now` to run it at once, unqueued, past a \
+                     stalled line when you accept the load."
+                } else {
+                    " Retry later."
+                };
+                format!(
+                    "Run it as `{gate} slot run -- {shown}`: it waits at most 90 s \
+                     (`--max-wait`) for a slot; exit 75 means no slot freed, or the line \
+                     stalled, and the command was not launched.{now} `{gate} slots` shows \
+                     who holds them."
+                )
+            }
             Launch::Now { gate } => format!(
                 "`--now` runs it at once, unqueued. Drop it to queue: {}",
                 queued(gate)
@@ -194,35 +227,60 @@ fn examine(parsed: &Parsed) -> Option<Finding> {
     None
 }
 
-fn confirm(context: &Context, _finding: &Finding) -> Confirmed {
+fn confirm(context: &Context, found: &Finding) -> Confirmed {
     if std::env::var_os(HELD_SLOT_VARIABLE).is_some() {
         return Confirmed::No("the hook runs inside a host slot already");
     }
-    if !amont_has_slots(context.session) {
-        return Confirmed::No("amont on PATH is missing, unanswering or older than 1.62.0");
+    let Some(gate) = slot_gate(context.session) else {
+        return Confirmed::No("no gate on PATH is answering, or it is older than 1.62.0");
+    };
+    // The advice names the gate that is here: build it again for that gate.
+    match finding(context.parsed, &gate) {
+        Some(own) if own.span == found.span => Confirmed::YesSaying {
+            floor: None,
+            ceiling: None,
+            reason: own.reason,
+            excerpt: context
+                .command
+                .get(found.span.clone())
+                .unwrap_or_default()
+                .to_string(),
+            remedy: Some(own.remedy),
+        },
+        _ => Confirmed::Yes,
     }
-    Confirmed::Yes
 }
 
-/// Whether `amont` on `PATH` has `slot run`, remembered on the session's
-/// record so the next hook process does not ask. Only a version that was read
-/// is remembered: a missing, failing or slow amont (a loaded host is when the
-/// probe times out) is asked again next time, never recorded as too old.
-fn amont_has_slots(session: &str) -> bool {
+/// The gate on `PATH` (`greengate`, else `amont`) when it has `slot run`,
+/// remembered on the session's record so the next hook process does not ask.
+/// Only a version that was read is remembered: a missing, failing or slow gate
+/// (a loaded host is when the probe times out) is asked again next time, never
+/// recorded as too old.
+fn slot_gate(session: &str) -> Option<Gate> {
     const CAPABLE: &str = "heavy-build-unqueued amont-has-slots";
     const INCAPABLE: &str = "heavy-build-unqueued amont-lacks-slots";
+    const NOW: &str = "heavy-build-unqueued gate-has-now";
+    let program = crate::gate::gate_binary();
+    let name = if program == "greengate" {
+        "greengate"
+    } else {
+        "amont"
+    };
     if crate::lsp::was_told(session, CAPABLE) {
-        return true;
+        let has_now = crate::lsp::was_told(session, NOW);
+        return Some(Gate { name, has_now });
     }
     if crate::lsp::was_told(session, INCAPABLE) {
-        return false;
+        return None;
     }
-    let Some(version) = crate::gate_version::probe(crate::gate::gate_binary()) else {
-        return false;
-    };
+    let version = crate::gate_version::probe(program)?;
     let capable = crate::gate_version::at_least(version, FIRST_VERSION_WITH_SLOTS);
+    let has_now = crate::gate_version::at_least(version, FIRST_VERSION_WITH_NOW);
     let _ = crate::lsp::told(session, if capable { CAPABLE } else { INCAPABLE }); // unrecorded: the next hook process asks again
-    capable
+    if capable && has_now {
+        let _ = crate::lsp::told(session, NOW);
+    }
+    capable.then_some(Gate { name, has_now })
 }
 
 #[cfg(test)]
@@ -320,6 +378,57 @@ mod tests {
                 "{c}"
             );
         }
+    }
+
+    #[test]
+    fn the_bare_advice_names_the_gate_that_is_here() {
+        let parsed = lex("cargo test");
+        let greengate = Gate {
+            name: "greengate",
+            has_now: true,
+        };
+        let remedy = finding(&parsed, &greengate).unwrap().remedy;
+        assert!(
+            remedy.contains("`greengate slot run -- cargo test`"),
+            "{remedy}"
+        );
+        assert!(remedy.contains("`greengate slots`"), "{remedy}");
+        assert!(!remedy.contains("amont"), "{remedy}");
+        assert!(remedy.contains("`--now`"), "{remedy}");
+    }
+
+    #[test]
+    fn a_gate_without_now_is_not_told_to_pass_it() {
+        let parsed = lex("cargo test");
+        let old = Gate {
+            name: "greengate",
+            has_now: false,
+        };
+        let remedy = finding(&parsed, &old).unwrap().remedy;
+        assert!(!remedy.contains("--now"), "{remedy}");
+        assert!(remedy.contains("Retry later."), "{remedy}");
+    }
+
+    #[test]
+    fn a_long_command_is_cut_with_a_mark() {
+        let nine = examine(&lex("cargo test a b c d e f g h")).unwrap();
+        assert!(
+            nine.remedy.contains("test a b c d e f g …`"),
+            "{}",
+            nine.remedy
+        );
+        assert!(!nine.remedy.contains("g h"), "{}", nine.remedy);
+        let eight = examine(&lex("cargo test a b c d e f g")).unwrap();
+        assert!(!eight.remedy.contains('…'), "{}", eight.remedy);
+    }
+
+    #[test]
+    fn the_first_now_version_is_after_the_first_slot_version() {
+        assert!(FIRST_VERSION_WITH_NOW > FIRST_VERSION_WITH_SLOTS);
+        assert!(!crate::gate_version::at_least(
+            (4, 13, 0),
+            FIRST_VERSION_WITH_NOW
+        ));
     }
 
     #[test]
