@@ -1,7 +1,7 @@
 +++
 type = "task"
 mode = "afk"
-status = "open"
+status = "closed"
 blocked_by = []
 repos = ["greenbelay"]
 due = "2026-11-28"
@@ -57,3 +57,40 @@ what did the rule say on UI pushes, and does that meet the plan's bars?
   the rule rests at `observe` (journalled, silent, no questions asked), with
   the reason in the plan's Outcome.
 - Otherwise stay at advise, record why, and set the next date.
+
+## Evidence (counted 2026-11-28)
+
+The journal keeps about 2.5 days: its oldest line is 2026-11-25 10:42 UTC.
+Before that, only the weekly rollup (`~/.claude/greenbelay/rollup.log`) holds
+the counts. It starts at 2026-11-21 08:37 UTC, after 6.6.0 was installed, and
+it does not split advices by `check=`.
+
+| window | passes (bound + remembered + declared) | advices | pass share |
+|---|---|---|---|
+| rollup, week of 11-16 (from 11-21) | 9 + 4 + 0 = 13 | 8 | 62% |
+| rollup, week of 11-23 (to 11-25) | 25 + 27 + 0 = 52 | 30 | 63% |
+| journal, 11-25 → 11-28 | 6 + 2 + 0 = 8 | 17 | 32% |
+| all | 73 | 55 | **57%** |
+
+- Advices by check, journal only: 14 `missing`, 3 `stale`, 0 `unreachable`,
+  0 `gap`. The rollup's 38 advices have no split, so the unreachable share is
+  0 of 17 measured. Demoting would need at least 17 of those 38 to be
+  `unreachable`.
+- Advised twice on one tree: the 17 journal advices fell on 9 trees, and
+  three trees took 11 of them: `851f9014` (cluster-vision) 3 times,
+  `d2d94c06` (happier, two sessions) 5 times, and `b8877b0c` (happier) 3
+  times. Those pushes went out again without a check run.
+- `remember-failed`: 0. `deny denied`: 0.
+- `greenbelay corpus check`: `push-browser-check  17 reviewed (9 negative),
+  0 unreviewed, precision 100%`.
+- Neither bucket (not counted): 374 `no-ui-repository`, 154 `unresolvable`,
+  38 `no-interface-change`, 1 `delete-only` (journal only).
+
+## Resolution
+
+Stay at advise. The pass share is 57%, under the 70% bar, and the latest
+window falls to 32%. No advice is measured as `unreachable`, so this is not
+a demote either. The misses are agents pushing again on an advised tree
+without running the check, not checks that could not run. `graduate` was not
+run, and the plan stays active. Next check: [t09](t09-push-browser-check-day-14.md),
+due 2026-12-05.
