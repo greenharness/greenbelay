@@ -20,6 +20,10 @@ Reached when no ticket here is open.
   ticket, read against Claude Code's session registry (an ADR-0039
   exception); the resume prompt is checked, and pushes are credited only on
   publication evidence (greenbelay 6.13.0).
+- [t01](t01-push-browser-check-day-7.md): push-browser-check stays at
+  advise on day 7 (57% passes, under 70%; 0 of 47 measured advices
+  unreachable); day 14 is [t09](t09-push-browser-check-day-14.md), due
+  2026-12-05.
 
 ## Handoff
 
@@ -35,9 +39,9 @@ Released as greenbelay 6.13.0 and installed here.
   consulting `greenbelay board --json`, and the handoff takeover checking
   liveness. To decisions's inbox: a note scoping ADR-0039's exception for
   the host's session store.
-- Next: [t01](t01-push-browser-check-day-7.md), due 2026-11-28;
-  [t03](t03-size-boundary-day-7.md) and [t04](t04-prompt-cache-ttl-check.md),
-  due 2026-11-30; t06, due 2026-12-02.
+- Next: [t03](t03-size-boundary-day-7.md) and [t04](t04-prompt-cache-ttl-check.md),
+  due 2026-11-30; t06, due 2026-12-02; [t09](t09-push-browser-check-day-14.md),
+  due 2026-12-05.
 
 - Filed from session 43724200's inbox, 2026-11-28:
   [t08](t08-changelog-keep-both-review-test.md), the keep-both CHANGELOG test.
