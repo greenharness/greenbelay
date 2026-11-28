@@ -24,8 +24,11 @@ running the check?
   demote; otherwise stay and record why).
 - The journal rotates in about 2.5 days, and the rollup drops `check=`.
   Before counting, either:
-  - extract this rule's journal lines into a dated file every day or two
-    (`grep ' push-browser-check ' journal.log* >> <extract>`), or
+  - extract this rule's journal lines into a file outside the
+    `journal.log*` glob every day or two, de-duplicated (the rotated files
+    overlap from one run to the next):
+    `grep -h ' push-browser-check ' ~/.claude/greenbelay/journal.log* | sort -u -o <extract> - <extract>`
+    (`touch <extract>` first; the rotated files are plain text), or
   - make the rollup keep `check=` for advise rows,
 
   so that the unreachable share covers the whole window, not the last 2.5
